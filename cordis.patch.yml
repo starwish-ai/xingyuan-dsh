@@ -1,0 +1,22 @@
+# 星愿 bundle 层：只插常驻行（存储后端 / HTTP 路由 / schedule）；preset 由 preset-root.ts 发布到用户根。
+# 语义：`- insert:` 插入新行；裸行按 id 整行替换既有配置（不深合并）。
+# DB 文件固定在 ~/.dsh/xingyuan/：插件卸载 / 升级数据均存活，禁止放入包安装目录。
+- insert:
+    # sqlite 后端：只依赖 storage hub，DB 位于 ~/.dsh/xingyuan/
+    - id: xingyuan-sqlite
+      name: '@starwish-ai/dsh/sqlite'
+      config:
+        path: !!js "dshHomePath('xingyuan', 'xingyuan.sqlite')"
+    # 主行 id 不能与 preset 目录名同名（同为 'xingyuan' 时会话挂载 preset 会死锁），故加 xy- 前缀
+    - id: xy-bundle
+      name: '@starwish-ai/dsh'
+    # 宿主默认组装不含 schedule 行，需补插以满足加载顺序要求
+    - id: schedule
+      name: '@deepseek-ai/dsh-schedule'
+# 领域路由：星愿领域走 sqlite 后端；其余领域维持 json（整行替换须重述 backend）
+- id: storage-domain
+  name: '@deepseek-ai/dsh-storage-domain'
+  config:
+    backend: json
+    routes:
+      xingyuan: sqlite
