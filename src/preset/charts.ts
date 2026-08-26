@@ -1,5 +1,5 @@
 /**
- * 图表数据计算：chartKey 15 选 1，口径与 Java 版 handler/ChartTools 一一对应。
+ * 图表数据计算：chartKey 15 选 1。
  * 数据全部由 storageDomain 现算（打卡明细 + 任务 + 愿望），卡片走 xingyuan/chart 事件。
  */
 import type { XingyuanChartDatum } from '../events.js'

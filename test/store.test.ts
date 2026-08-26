@@ -60,7 +60,7 @@ describe('业务层：创建 → 领取 → 打卡', () => {
     await expect(performCheckIn(store, task.taskId, '2026-08-22', '2026-08-23')).rejects.toThrow('已打卡')
   })
 
-  it('once 无截止日：点击打卡即完成（Java 计算器用例 7 口径），仅限操作当天', async () => {
+  it('once 无截止日：点击打卡即完成，仅限操作当天', async () => {
     const store = memoryStore()
     const task = await createTask(store, { name: '一次性整理书桌', checkInCycle: 'once' }, '2026-08-20')
     expect(task.requiredDays).toBe(1) // once 无截止日 → 1（点击即完成）

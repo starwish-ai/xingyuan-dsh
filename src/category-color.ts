@@ -1,12 +1,10 @@
 /**
- * 愿望分类颜色 —— Web 端 src/utils/wish-category.ts 的 TS 对齐移植（跨端同源口径）。
+ * 愿望分类颜色。
  *
- * - 22 个预设 colorKey（5 中性 + 17 彩色），与 Web CATEGORY_COLOR_KEY_PRESETS 一一对应；
- * - 未设 colorKey 时按分类名哈希到色环取稳定色相（Web resolveHueSpecBySeed 同式），
- *   老数据/未选色的分类也有稳定可辨的颜色；
+ * - 22 个预设 colorKey（5 中性 + 17 彩色）；
+ * - 未设 colorKey 时按分类名哈希到色环取稳定色相，老数据/未选色的分类也有稳定可辨的颜色；
  * - 颜色以「色相 + 饱和度」CSS 变量下发，亮度由样式表按主题切换：
- *   壳内跟随 body[data-ds-dark-theme]，独立页走 prefers-color-scheme——
- *   与 Web「--cat-h 注入 + .dark 覆盖亮度」的分层完全同构。
+ *   壳内跟随 body[data-ds-dark-theme]，独立页走 prefers-color-scheme。
  */
 
 /** 分类颜色白名单（与工具 schema enum、Web 预设表同源；顺序即展示顺序）。 */

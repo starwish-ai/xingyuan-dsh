@@ -1,6 +1,5 @@
 /**
- * 成长统计测试：与 Java CheckInStatsCalculatorTest 逐用例对拍（跨语言同口径回归），
- * 外加等级解析（t_level_config 种子）与聚合汇总。
+ * 成长统计测试：打卡 / 经验 / 连续口径逐用例回归，外加等级解析与聚合汇总。
  */
 import { describe, expect, it } from 'vitest'
 import { xingyuanDomainSpec } from '../src/domain.js'

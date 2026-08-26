@@ -1,5 +1,5 @@
 /**
- * HITL 确认：userQuestions 阻塞式人机确认（替代 Web 端 HitlConfirmCard 交互）。
+ * HITL 确认：userQuestions 阻塞式人机确认。
  * 创建/打卡/取消打卡经「写操作二次确认」开关控制（confirmWrites，可在设置关闭）；
  * 删除（含批量）始终确认；教练风格与画像修改免确认——与设置页文案同一口径。
  */

@@ -1,6 +1,6 @@
 /**
  * 星愿业务操作：工具面与 /xingyuan/* 路由共用的领域逻辑。
- * 口径唯一来源：机会日/达标/复活判定全部走 opportunity.ts（与 Java 版同一计算器语义）。
+ * 口径唯一来源：机会日/达标/复活判定全部走 opportunity.ts。
  */
 import type { CheckinRecord, MemoryRecord, TaskRecord, WishRecord, XingyuanStore } from './domain.js'
 import {
@@ -164,7 +164,7 @@ export async function performCheckIn(
 function validateTargetDate(task: Task, target: string, today: string): void {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(target)) throw new ToolError(`日期格式错误：${target}`)
   if (!task.dueDate && task.checkInCycle === 'once') {
-    // once 无截止日：点击打卡即完成（Java 计算器用例 7 口径），打卡日=操作当天
+    // once 无截止日：点击打卡即完成，打卡日=操作当天
     if (target !== today) throw new ToolError(`该任务为仅一次任务且未设截止日，只能打卡今天（${today}）`)
     return
   }

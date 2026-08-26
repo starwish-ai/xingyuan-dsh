@@ -1,9 +1,8 @@
 /**
- * 成长统计 —— CheckInStatsCalculator.java 的 TS 逐语义移植（跨语言对拍基准）
- * + t_level_config 等级配置（docs/sql/xy_server.sql 种子数据的唯一事实源）。
+ * 成长统计：等级、经验与打卡指标。
  *
  * 全部指标从 checkins 表重放重算（单一事实源），取消中间一天、补卡乱序、
- * 同日多条、未来预勾均精确无漂移。语义（产品确认，与 Java 注释逐字对齐）：
+ * 同日多条、未来预勾均精确无漂移。语义：
  * - 当前连续 = 从「最后一条 ≤ today 的记录」倒推的自然日连续：断更后冻结不衰减；
  *   未来预勾不劫持当前连续，只计入累计/最长/经验。
  * - 最长连续 = 全部记录（含未来段）的最长自然日连续。
@@ -21,7 +20,7 @@ export interface LevelConfig {
   readonly rewardDescription: string
 }
 
-/** 等级表种子（docs/sql/xy_server.sql L1361-1370；与 Java 端同一 DB 事实源）。 */
+/** 等级表（Lv.1–Lv.10）。 */
 export const LEVEL_CONFIGS: readonly LevelConfig[] = [
   { level: 1, levelName: '初心者', requiredExperience: 0, rewardDescription: '开启星愿之旅' },
   { level: 2, levelName: '探索者', requiredExperience: 100, rewardDescription: '解锁更多AI对话功能' },
@@ -38,13 +37,13 @@ export const LEVEL_CONFIGS: readonly LevelConfig[] = [
 /** 每条打卡记录的基础经验。 */
 export const BASE_EXPERIENCE = 10
 
-/** 连续加成：≥7 天 ×1.5、≥3 天 ×1.2，四舍五入取整（Java calculateExperience 同式）。 */
+/** 连续加成：≥7 天 ×1.5、≥3 天 ×1.2，四舍五入取整。 */
 export function calculateExperience(continuousDays: number): number {
   const multiplier = continuousDays >= 7 ? 1.5 : continuousDays >= 3 ? 1.2 : 1.0
   return Math.round(BASE_EXPERIENCE * multiplier)
 }
 
-/** 打卡统计快照（字段名与 Java CheckInStats / Web UserGrowth 对齐）。 */
+/** 打卡统计快照。 */
 export interface CheckInStats {
   /** 累计打卡天数（去重日期数，含未来预勾）。 */
   readonly totalCheckInDays: number

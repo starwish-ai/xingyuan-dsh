@@ -141,7 +141,7 @@ load()
 </script></body></html>`)
 }
 
-/** 双主题：浅色为基，prefers-color-scheme: dark 时整组变量翻转。强调色与 Web 端 primary 蓝系同源。 */
+/** 双主题：浅色为基，prefers-color-scheme: dark 时整组变量翻转。 */
 const STYLE = `<style>
 :root{
   color-scheme:light dark;

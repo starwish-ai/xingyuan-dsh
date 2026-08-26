@@ -16,7 +16,7 @@ export const DOMAIN_VERSION = 1
 export const COACH_STYLES = ['gentle', 'strict', 'humorous'] as const
 export type CoachStyle = (typeof COACH_STYLES)[number]
 
-/** 全局单例：教练配置 + 用户画像（对齐 Java UnifiedMemoryStore 的 config/profile 两节）。 */
+/** 全局单例：教练配置 + 用户画像。 */
 export interface XingyuanGlobal {
   coachStyle: CoachStyle
   profile: {

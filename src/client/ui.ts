@@ -7,7 +7,7 @@ import { createElement, type ReactElement } from 'react'
 import { describeError } from './api.js'
 import { t } from './i18n.js'
 
-// ===== Toast（壳内轻提示；对齐 Web 端 vue-sonner 反馈语义）=====
+// ===== Toast（壳内轻提示）=====
 
 type ToastKind = 'ok' | 'error' | 'info'
 

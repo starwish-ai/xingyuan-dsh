@@ -208,9 +208,9 @@ const DELETE_NOTE = '删除不可恢复：会弹出系统确认卡片，直接�
 const CREATE_NOTE = '会弹出系统确认卡片展示完整创建内容，直接调用等待确认结果即可，无需自行询问用户；用户在确认卡取消则向用户说明并询问要调整的地方。'
 const CANCEL_CHECKIN_NOTE = '会弹出系统确认卡片，直接调用等待确认结果即可，无需自行询问用户。'
 
-/** 分类颜色白名单（与 Web 端 22 键预设同源；schema enum 与展示色共用同一事实源）。 */
+/** 分类颜色白名单（schema enum 与展示色共用同一事实源）。 */
 const COLOR_KEY_ENUM: readonly string[] = CATEGORY_COLOR_KEYS
-const COLOR_KEY_NOTE = `可选值：${CATEGORY_COLOR_KEYS.join('/')}（与 Web 端分类颜色一致；不传则按分类名自动配色）`
+const COLOR_KEY_NOTE = `可选值：${CATEGORY_COLOR_KEYS.join('/')}（不传则按分类名自动配色）`
 
 /** 创建/取消类写操作的确认门闩：设置可关；删除类始终确认（破坏性操作不设开关）。 */
 function confirmGate(config: Config): boolean {

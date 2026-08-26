@@ -11,7 +11,7 @@
 - 成长中心：等级体系（Lv.1–Lv.10）、七项统计卡、近 30 天柱状图
 - 45 个工具仅挂 preset 层，不污染编程会话；愿望 / 任务读路径按今日重算状态
 - 写操作二次确认（可在设置 → 星愿关闭）；删除始终确认
-- 深浅色主题跟随壳令牌；分类色板 22 键与 Web 端预设一一对应
+- 深浅色主题跟随壳令牌；22 键分类色板
 - 数据持久化于 `~/.dsh/xingyuan/xingyuan.sqlite`，卸载 / 升级均存活
 
-[0.4.0-alpha.4]: https://github.com/starwish-ai/dsh/releases/tag/v0.4.0-alpha.4
+[0.4.0-alpha.4]: https://github.com/starwish-ai/XingYuan-Dsh/releases/tag/v0.4.0-alpha.4

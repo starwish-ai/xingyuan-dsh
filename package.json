@@ -7,12 +7,12 @@
   "author": "starwish-ai",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/starwish-ai/dsh.git"
+    "url": "git+https://github.com/starwish-ai/XingYuan-Dsh.git"
   },
   "bugs": {
-    "url": "https://github.com/starwish-ai/dsh/issues"
+    "url": "https://github.com/starwish-ai/XingYuan-Dsh/issues"
   },
-  "homepage": "https://github.com/starwish-ai/dsh#readme",
+  "homepage": "https://github.com/starwish-ai/XingYuan-Dsh#readme",
   "keywords": [
     "deepseek-harness",
     "dsh",
@@ -58,7 +58,9 @@
     "lib",
     "cordis.patch.yml",
     "presets",
-    "README.md"
+    "README.md",
+    "README.en-US.md",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
