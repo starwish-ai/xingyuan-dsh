@@ -24,10 +24,10 @@ Tools are only mounted on sessions using the XingYuan preset; other sessions are
 ## Install
 
 ```sh
-dsh plugin --profile <name> add @starwish-ai/xingyuan-dsh
+dsh plugin --profile web add @starwish-ai/xingyuan-dsh
 ```
 
-`<name>` is a dsh profile name (each profile keeps an independent set of plugins and sessions). For first-time setup just use `default`:
+`<name>` is a dsh profile name (each profile keeps an independent set of plugins and sessions); missing profiles are created automatically, and `default` also works for first-time setup:
 
 ```sh
 dsh plugin --profile default add @starwish-ai/xingyuan-dsh

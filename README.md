@@ -24,10 +24,10 @@
 ## 安装
 
 ```sh
-dsh plugin --profile <name> add @starwish-ai/xingyuan-dsh
+dsh plugin --profile web add @starwish-ai/xingyuan-dsh
 ```
 
-`<name>` 是 dsh 的 profile 名（每套 profile 拥有独立的插件与会话环境），首次安装用 `default` 即可：
+`<name>` 是 dsh 的 profile 名（每套 profile 拥有独立的插件与会话环境），不存在时会自动创建；首次安装也可以用 `default`：
 
 ```sh
 dsh plugin --profile default add @starwish-ai/xingyuan-dsh
