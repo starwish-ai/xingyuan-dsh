@@ -27,6 +27,12 @@ Tools are only mounted on sessions using the XingYuan preset; other sessions are
 dsh plugin --profile <name> add @starwish-ai/dsh
 ```
 
+`<name>` is a dsh profile name (each profile keeps an independent set of plugins and sessions). For first-time setup just use `default`:
+
+```sh
+dsh plugin --profile default add @starwish-ai/dsh
+```
+
 After starting the Web GUI, installation succeeded when「星愿」appears in the agent picker.
 
 ## Data & Backup
@@ -41,12 +47,6 @@ Business data lives at `~/.dsh/xingyuan/xingyuan.sqlite` and survives uninstall 
 | User profile | Nickname, occupation, interests |
 | Write confirmation | Whether create / check-in writes need confirmation (deletion always does) |
 | Memory injection limit | Max memories injected per turn |
-
-## Known Limitations
-
-- No recurring reminders: harness schedules fire once and are session-local
-- No storage migrations: mismatched media versions refuse to open
-- Headless runs auto-approve check-in confirmations when no UI provider exists
 
 ## Development
 

@@ -27,7 +27,11 @@
 dsh plugin --profile <name> add @starwish-ai/dsh
 ```
 
-启动 Web GUI 后，agent 选择器出现「星愿」即安装成功。
+`<name>` 是 dsh 的 profile 名（每套 profile 拥有独立的插件与会话环境），首次安装用 `default` 即可：
+
+```sh
+dsh plugin --profile default add @starwish-ai/dsh
+```
 
 ## 数据与备份
 
@@ -41,12 +45,6 @@ dsh plugin --profile <name> add @starwish-ai/dsh
 | 用户画像 | 昵称、职业、兴趣 |
 | 写操作二次确认 | 创建 / 打卡类写操作是否确认（删除始终确认） |
 | 记忆注入上限 | 每次注入上下文的记忆条数上限 |
-
-## 已知限制
-
-- 周期提醒不支持：harness schedule 仅一次性触发且 session-local
-- 存储无迁移机制：介质版本不符直接拒绝打开
-- headless 场景无确认界面时，打卡确认自动放行
 
 ## 开发
 

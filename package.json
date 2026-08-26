@@ -59,8 +59,7 @@
     "cordis.patch.yml",
     "presets",
     "README.md",
-    "README.en-US.md",
-    "CHANGELOG.md"
+    "README.en-US.md"
   ],
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
