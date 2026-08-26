@@ -7,12 +7,12 @@
   "author": "starwish-ai",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/starwish-ai/XingYuan-Dsh.git"
+    "url": "git+https://github.com/starwish-ai/xingyuan-dsh.git"
   },
   "bugs": {
-    "url": "https://github.com/starwish-ai/XingYuan-Dsh/issues"
+    "url": "https://github.com/starwish-ai/xingyuan-dsh/issues"
   },
-  "homepage": "https://github.com/starwish-ai/XingYuan-Dsh#readme",
+  "homepage": "https://github.com/starwish-ai/xingyuan-dsh#readme",
   "keywords": [
     "deepseek-harness",
     "dsh",

@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@starwish-ai/xingyuan-dsh)](https://www.npmjs.com/package/@starwish-ai/xingyuan-dsh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![CI](https://github.com/starwish-ai/XingYuan-Dsh/actions/workflows/ci.yml/badge.svg)](https://github.com/starwish-ai/XingYuan-Dsh/actions/workflows/ci.yml)
+[![CI](https://github.com/starwish-ai/xingyuan-dsh/actions/workflows/ci.yml/badge.svg)](https://github.com/starwish-ai/xingyuan-dsh/actions/workflows/ci.yml)
 
 简体中文 | [English](./README.en-US.md)
 
