@@ -1,6 +1,6 @@
 {
   "name": "@starwish-ai/xingyuan-dsh",
-  "version": "0.4.0-alpha.4",
+  "version": "0.4.0-alpha.5",
   "description": "星愿 XingYuan for DeepSeek Harness: 对话创建愿望/任务、机会日打卡、微行动、记忆与图表的 Agent Preset 组合包",
   "type": "module",
   "license": "MIT",
@@ -60,7 +60,8 @@
     "cordis.patch.yml",
     "presets",
     "README.md",
-    "README.en-US.md"
+    "README.en-US.md",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
