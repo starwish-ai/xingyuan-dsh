@@ -1,6 +1,6 @@
 # XingYuan for DeepSeek Harness
 
-[![npm version](https://img.shields.io/npm/v/@starwish-ai/dsh)](https://www.npmjs.com/package/@starwish-ai/dsh)
+[![npm version](https://img.shields.io/npm/v/@starwish-ai/xingyuan-dsh)](https://www.npmjs.com/package/@starwish-ai/xingyuan-dsh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![CI](https://github.com/starwish-ai/XingYuan-Dsh/actions/workflows/ci.yml/badge.svg)](https://github.com/starwish-ai/XingYuan-Dsh/actions/workflows/ci.yml)
 
@@ -24,13 +24,13 @@ Tools are only mounted on sessions using the XingYuan preset; other sessions are
 ## Install
 
 ```sh
-dsh plugin --profile <name> add @starwish-ai/dsh
+dsh plugin --profile <name> add @starwish-ai/xingyuan-dsh
 ```
 
 `<name>` is a dsh profile name (each profile keeps an independent set of plugins and sessions). For first-time setup just use `default`:
 
 ```sh
-dsh plugin --profile default add @starwish-ai/dsh
+dsh plugin --profile default add @starwish-ai/xingyuan-dsh
 ```
 
 After starting the Web GUI, installation succeeded when「星愿」appears in the agent picker.

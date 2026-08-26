@@ -22,7 +22,7 @@ export default defineConfig({
   },
   banner: [
     'window.__ModuleLoader__.load({',
-    '\tid: "@starwish-ai/dsh",',
+    '\tid: "@starwish-ai/xingyuan-dsh",',
     '\tfactory: (require) => {',
     '\t\tvar module = { exports: {} };',
     '\t\tvar exports = module.exports;',

@@ -24,12 +24,12 @@ const loader = ctx.loader
 const mount = async (id, name, config) => { await loader.create({ id, name, config }) }
 
 await mount('storage', '@deepseek-ai/dsh-storage')
-await mount('xingyuan-sqlite', '@starwish-ai/dsh/sqlite', { path: ':memory:' })
+await mount('xingyuan-sqlite', '@starwish-ai/xingyuan-dsh/sqlite', { path: ':memory:' })
 await mount('storage-domain', '@deepseek-ai/dsh-storage-domain', { backend: 'sqlite', routes: { xingyuan: 'sqlite' } })
 await mount('system-prompt', '@deepseek-ai/dsh-system-prompt')
 await mount('user-questions', '@deepseek-ai/dsh-user-questions')
 await mount('tools', '@deepseek-ai/dsh-tools')
-await mount('xingyuan-bundle', '@starwish-ai/dsh')
+await mount('xingyuan-bundle', '@starwish-ai/xingyuan-dsh')
 
 console.log('host rows ready; xingyuan service =', ctx.xingyuan !== undefined)
 

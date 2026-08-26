@@ -3,7 +3,7 @@
  * 1) 激活期把包内 preset 发布到用户根（preset-root.ts）；
  * 2) 打开 xingyuan 领域并发布同名服务；
  * 3) 注册 /xingyuan/* 数据 API 与页面路由。
- * （sqlite 后端在独立行 '@starwish-ai/dsh/sqlite'，见 cordis.patch.yml。）
+ * （sqlite 后端在独立行 '@starwish-ai/xingyuan-dsh/sqlite'，见 cordis.patch.yml。）
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'

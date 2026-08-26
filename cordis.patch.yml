@@ -4,12 +4,12 @@
 - insert:
     # sqlite 后端：只依赖 storage hub，DB 位于 ~/.dsh/xingyuan/
     - id: xingyuan-sqlite
-      name: '@starwish-ai/dsh/sqlite'
+      name: '@starwish-ai/xingyuan-dsh/sqlite'
       config:
         path: !!js "dshHomePath('xingyuan', 'xingyuan.sqlite')"
     # 主行 id 不能与 preset 目录名同名（同为 'xingyuan' 时会话挂载 preset 会死锁），故加 xy- 前缀
     - id: xy-bundle
-      name: '@starwish-ai/dsh'
+      name: '@starwish-ai/xingyuan-dsh'
     # 宿主默认组装不含 schedule 行，需补插以满足加载顺序要求
     - id: schedule
       name: '@deepseek-ai/dsh-schedule'

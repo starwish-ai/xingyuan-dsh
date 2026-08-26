@@ -1,6 +1,6 @@
 # 星愿 XingYuan for DeepSeek Harness
 
-[![npm version](https://img.shields.io/npm/v/@starwish-ai/dsh)](https://www.npmjs.com/package/@starwish-ai/dsh)
+[![npm version](https://img.shields.io/npm/v/@starwish-ai/xingyuan-dsh)](https://www.npmjs.com/package/@starwish-ai/xingyuan-dsh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![CI](https://github.com/starwish-ai/XingYuan-Dsh/actions/workflows/ci.yml/badge.svg)](https://github.com/starwish-ai/XingYuan-Dsh/actions/workflows/ci.yml)
 
@@ -24,13 +24,13 @@
 ## 安装
 
 ```sh
-dsh plugin --profile <name> add @starwish-ai/dsh
+dsh plugin --profile <name> add @starwish-ai/xingyuan-dsh
 ```
 
 `<name>` 是 dsh 的 profile 名（每套 profile 拥有独立的插件与会话环境），首次安装用 `default` 即可：
 
 ```sh
-dsh plugin --profile default add @starwish-ai/dsh
+dsh plugin --profile default add @starwish-ai/xingyuan-dsh
 ```
 
 ## 数据与备份
