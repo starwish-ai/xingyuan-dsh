@@ -1,8 +1,7 @@
 /**
  * /xingyuan/* 三张自包含备用页（today/calendar/growth）：零构建依赖的内联 HTML +
  * 原生 fetch + 双主题（prefers-color-scheme）。壳内六标签页是主入口；本文件是无
- * GUI 场景的 URL 直开兜底。文案维持中文单语（壳内已双语，此处跟随 navigator.language
- * 的双语化随 T1-5 备用页补齐一并处理）。
+ * GUI 场景的 URL 直开兜底。文案维持中文单语，双语化待后续统一。
  */
 import { gzipSync } from 'node:zlib'
 import type { ServerResponse } from 'node:http'
@@ -23,7 +22,7 @@ export function pageToday(res: ServerResponse): void {
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>今日打卡 · 星愿</title>${STYLE}
-</head><body><header><h1>⭐ 今日待办</h1><nav><a href="/xingyuan/growth">成长</a><a href="/xingyuan/calendar">日历</a></nav></header>
+</head><body><header><h1>今日待办</h1><nav><a href="/xingyuan/growth">成长</a><a href="/xingyuan/calendar">日历</a></nav></header>
 <main id="app"><p class="muted">加载中…</p></main>
 <script>
 async function post(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})});const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d}
@@ -66,7 +65,7 @@ export function pageCalendar(res: ServerResponse): void {
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>打卡日历 · 星愿</title>${STYLE}
-</head><body><header><h1>📅 打卡日历</h1><nav><a href="/xingyuan/today">今日</a><a href="/xingyuan/growth">成长</a></nav></header>
+</head><body><header><h1>打卡日历</h1><nav><a href="/xingyuan/today">今日</a><a href="/xingyuan/growth">成长</a></nav></header>
 <main><p class="calbar" id="label">…</p><div id="grid" class="cal"></div>
 <p class="legend"><span class="dot c0"></span>无安排<span class="dot c1"></span>待打卡<span class="dot c2"></span>部分完成<span class="dot c3"></span>全部完成</p>
 <p class="muted" id="detail"></p></main>
@@ -106,7 +105,7 @@ export function pageGrowth(res: ServerResponse): void {
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>成长中心 · 星愿</title>${STYLE}
-</head><body><header><h1>🌱 成长中心</h1><nav><a href="/xingyuan/today">今日</a><a href="/xingyuan/calendar">日历</a></nav></header>
+</head><body><header><h1>成长中心</h1><nav><a href="/xingyuan/today">今日</a><a href="/xingyuan/calendar">日历</a></nav></header>
 <main id="app"><p class="muted">加载中…</p></main>
 <script>
 const LEVEL_TINTS=['#475569','#2563eb','#047857','#0e7490','#0369a1','#1d4ed8','#6d28d9','#b45309','#c2410c','#be123c'];
@@ -118,7 +117,7 @@ async function load(){
   const tint=levelTint(g.level);
   const expText = g.nextLevelExperience==null ? '已满级' : (g.totalExperience+' / '+g.nextLevelExperience+' EXP');
   let html =
-   '<div class="hero" style="background:linear-gradient(135deg,'+tint+'e6,'+tint+'99)">'+
+   '<div class="hero" style="background:linear-gradient(135deg,color-mix(in srgb,'+tint+' 76%,#000),'+tint+')">'+
      '<div class="hero-badge" style="background:'+tint+'">Lv.'+g.level+'</div>'+
      '<div class="hero-main"><p class="muted on-hero">当前等级</p><h2>Lv.'+g.level+' · '+esc(g.levelName)+'</h2>'+
      '<div class="bar"><i style="width:'+g.levelProgress+'%"></i></div>'+
@@ -141,20 +140,22 @@ load()
 </script></body></html>`)
 }
 
-/** 双主题：浅色为基，prefers-color-scheme: dark 时整组变量翻转。 */
+/** 双主题：浅色为基，prefers-color-scheme: dark 时整组变量翻转。
+ * 次要文字/无安排格的亮度档按 WCAG AA（正文 ≥4.5:1）校准：
+ * 浅色 muted #6d675d 对 #faf9f7 ≈ 5.2:1，深色 #a29db0 对 #1c1b22 ≈ 4.7:1。 */
 const STYLE = `<style>
 :root{
   color-scheme:light dark;
-  --xy-bg:#faf9f7; --xy-card:#ffffff; --xy-text:#26221e; --xy-muted:#8b857c;
+  --xy-bg:#faf9f7; --xy-card:#ffffff; --xy-text:#26221e; --xy-muted:#6d675d;
   --xy-border:#e2dfd8; --xy-shadow:rgba(30,25,60,.06); --xy-accent:#1a6fe0; --xy-accent-strong:#1e40af;
-  --xy-c0:#f0efec; --xy-c0-t:#a09a90; --xy-c1:#0000; --xy-c1-t:#55504a;
+  --xy-c0:#f0efec; --xy-c0-t:#6d675d; --xy-c1:#0000; --xy-c1-t:#55504a;
   --xy-c2:#ffb267; --xy-c2-t:#5f3c00; --xy-c3:#69db7c; --xy-c3-t:#14532d;
 }
 @media (prefers-color-scheme: dark){
   :root{
-    --xy-bg:#1c1b22; --xy-card:#26252e; --xy-text:#e9e7ee; --xy-muted:#9a95a6;
+    --xy-bg:#1c1b22; --xy-card:#26252e; --xy-text:#e9e7ee; --xy-muted:#a29db0;
     --xy-border:#3a3944; --xy-shadow:rgba(0,0,0,.35); --xy-accent:#60a5fa; --xy-accent-strong:#93c5fd;
-    --xy-c0:#33323c; --xy-c0-t:#8f8a9c; --xy-c1:#0000; --xy-c1-t:#b6b1c4;
+    --xy-c0:#33323c; --xy-c0-t:#a29db0; --xy-c1:#0000; --xy-c1-t:#b6b1c4;
     --xy-c2:#8a5423; --xy-c2-t:#ffd9a8; --xy-c3:#2b7a3f; --xy-c3-t:#a5f0b5;
   }
 }
@@ -175,11 +176,11 @@ nav a{margin-left:14px;color:var(--xy-accent);text-decoration:none;font-size:14p
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:16px 0}
 .card{background:var(--xy-card);border-radius:14px;padding:18px;text-align:center;box-shadow:0 1px 3px var(--xy-shadow)}
 .num{font-size:28px;font-weight:700;color:var(--xy-accent-strong)}
-.hero{display:flex;gap:16px;align-items:center;border-radius:16px;padding:20px;margin-top:4px;box-shadow:0 2px 8px var(--xy-shadow)}
+.hero{display:flex;gap:16px;align-items:center;border-radius:16px;padding:20px;margin-top:4px;border:1px solid rgba(255,255,255,.16);box-shadow:0 2px 8px var(--xy-shadow)}
 .hero-badge{width:56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:17px;flex:none}
 .hero-main{flex:1;min-width:0}
-.hero h2{font-size:19px;margin:2px 0 8px}
-.on-hero{color:rgba(255,255,255,.85)!important}
+.hero h2{font-size:19px;margin:2px 0 8px;color:#fff}
+.on-hero{color:rgba(255,255,255,.92)!important}
 .bar{height:8px;border-radius:99px;background:rgba(255,255,255,.25);overflow:hidden;margin-bottom:6px}
 .bar i{display:block;height:100%;border-radius:99px;background:#fff}
 .lvcard{background:var(--xy-card);border-radius:14px;padding:6px 16px;box-shadow:0 1px 3px var(--xy-shadow);margin-bottom:12px}
@@ -195,7 +196,7 @@ nav a{margin-left:14px;color:var(--xy-accent);text-decoration:none;font-size:14p
 .calbar{display:flex;gap:10px;align-items:center;margin-bottom:10px}
 .cal{display:flex;flex-direction:column;gap:6px;background:var(--xy-card);border-radius:14px;padding:14px;box-shadow:0 1px 3px var(--xy-shadow)}
 .week{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
-.cell{aspect-ratio:1;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer;border:none;padding:0;font-family:inherit;background:transparent;color:inherit}
+.cell{height:38px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer;border:none;padding:0;font-family:inherit;background:transparent;color:inherit}
 .cell.empty{visibility:hidden}
 .c0{background:var(--xy-c0);color:var(--xy-c0-t)}
 .c1{background:var(--xy-c1);color:var(--xy-c1-t);border:1px dashed var(--xy-border)}

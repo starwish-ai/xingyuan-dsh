@@ -6,7 +6,7 @@
 import type { ClientContext, ConversationNodeDefinition } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import { t, XY_NS, setupLocale } from './i18n.js'
-import { disposeToasts } from './ui.js'
+import { disposeConfirms, disposeToasts } from './ui.js'
 import { STYLE_TEXT } from './styles.js'
 import { CARD_VIEWS } from './cards.js'
 import type { XyState } from './types.js'
@@ -88,6 +88,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => () => {
     style.remove()
     disposeToasts()
+    disposeConfirms()
   })
 
   ctx.conversationEvents.register(definition('xy-wish'))

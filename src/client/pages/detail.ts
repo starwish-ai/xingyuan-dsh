@@ -1,5 +1,5 @@
 /**
- * 任务详情聚合视图（T1-1）：行内展开——打卡记录网格（近段机会日 checked/missed/future）、
+ * 任务详情聚合视图：行内展开——打卡记录网格（近段机会日 checked/missed/future）、
  * 接下来机会日、微行动进度、状态机操作栏（领取/打卡/取消今日/删除）与「让 AI 总结」降级入口。
  * 数据经 GET /xingyuan/api/task-detail；动作直连 POST（用户点击即本人授权），动作后原位刷新
  * 详情并回调上层列表刷新。
@@ -7,7 +7,7 @@
 import { createElement, useEffect, useState, type ReactElement } from 'react'
 import { getJson, postAction } from '../api.js'
 import { useXyT, t as translate, activeLocale, type XyT } from '../i18n.js'
-import { localYmd, softConfirm, useActionGuard } from '../hooks.js'
+import { localYmd, softConfirm, softConfirmDanger, useActionGuard } from '../hooks.js'
 import { toast } from '../ui.js'
 import { cycleLabel, durationText } from './format.js'
 import type { ApiTask } from './types.js'
@@ -23,9 +23,11 @@ interface TaskDetailPayload {
   }
 }
 
-/** 「让 AI 总结」提示词（与 prompts.ts 总结分析模式同一结构诉求的页面侧精简版）。 */
+/** 「让 AI 总结」提示词：触发者是人、产物直接可见，模板随界面语言切换（与 prompts.ts 总结分析模式同一结构诉求）。 */
 function summaryPrompt(taskName: string): string {
-  return `请对任务「${taskName}」做一次总结分析：现状、亮点、阻碍、未来7天行动建议、量化指标。数据请先用工具查询后再回答。`
+  return activeLocale() === 'en'
+    ? `Please summarize the task "${taskName}": current status, highlights, obstacles, action suggestions for the next 7 days, and measurable metrics. Query the data with tools before answering.`
+    : `请对任务「${taskName}」做一次总结分析：现状、亮点、阻碍、未来7天行动建议、量化指标。数据请先用工具查询后再回答。`
 }
 
 async function copySummaryPrompt(taskName: string): Promise<void> {
@@ -127,6 +129,19 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
     return t('detail.grid.summary', { total: recent.length, checked, missed, future })
   })()
 
+  // 当前步说明缺失时不产出悬挂的「 · 」（找不到对应步或空说明都整段省略）
+  const micro = detail.micro
+  let microTail = ''
+  if (micro !== undefined && micro.currentStepNumber !== null) {
+    const current = micro.steps.find((s) => s.stepNumber === micro.currentStepNumber)
+    if (current !== undefined && current.instruction !== '') {
+      microTail = ' · ' + t('detail.micro.stepN', {
+        current: micro.currentStepNumber,
+        total: micro.steps.length,
+        instruction: current.instruction,
+      })
+    }
+  }
   const microBlock = detail.micro === undefined
     ? createElement('span', { className: 'xy-meta' }, t('detail.micro.idle'))
     : createElement('span', { className: 'xy-meta' },
@@ -134,13 +149,7 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
           done: detail.micro.steps.filter((s) => s.completed).length,
           total: detail.micro.steps.length,
         }),
-        detail.micro.currentStepNumber !== null
-          ? ' · ' + t('detail.micro.stepN', {
-              current: detail.micro.currentStepNumber,
-              total: detail.micro.steps.length,
-              instruction: detail.micro.steps.find((s) => s.stepNumber === detail.micro!.currentStepNumber)?.instruction ?? '',
-            })
-          : '')
+        microTail)
 
   const ops: ReactElement[] = []
   ops.push(createElement('button', {
@@ -160,8 +169,9 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
       key: 'checkin', className: 'xy-btn xy-btn-primary', disabled: busy,
       onClick: () => {
         const future = task.nextOpportunityDate !== undefined && task.nextOpportunityDate > today ? task.nextOpportunityDate : undefined
-        if (future !== undefined && !softConfirm(translate('confirm.futureCheckin', { name: task.name, date: future }))) return
-        act('checkin', { taskId: task.taskId }, () => translate('toast.checkinOk'))
+        const submit = (): void => act('checkin', { taskId: task.taskId }, () => translate('toast.checkinOk'))
+        if (future === undefined) { submit(); return }
+        void softConfirm(translate('confirm.futureCheckin', { name: task.name, date: future })).then((ok) => { if (ok) submit() })
       },
     }, t('action.checkin')))
   }
@@ -169,16 +179,18 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
     ops.push(createElement('button', {
       key: 'cancel', className: 'xy-btn', disabled: busy,
       onClick: () => {
-        if (!softConfirm(translate('confirm.undoToday', { name: task.name }))) return
-        act('cancel-checkin', { taskId: task.taskId }, () => translate('toast.undoneAt', { date: today }))
+        void softConfirm(translate('confirm.undoToday', { name: task.name })).then((ok) => {
+          if (ok) act('cancel-checkin', { taskId: task.taskId }, () => translate('toast.undoneAt', { date: today }))
+        })
       },
     }, t('action.cancelCheckin')))
   }
   ops.push(createElement('button', {
     key: 'delete', className: 'xy-btn xy-btn-danger xy-detail-danger', disabled: busy,
     onClick: () => {
-      if (!softConfirm(translate('confirm.deleteTask', { name: task.name }))) return
-      act('delete-task', { taskId: task.taskId }, () => translate('toast.deleted', { name: task.name }))
+      void softConfirmDanger(translate('confirm.deleteTask', { name: task.name })).then((ok) => {
+        if (ok) act('delete-task', { taskId: task.taskId }, () => translate('toast.deleted', { name: task.name }))
+      })
     },
   }, t('common.delete')))
 

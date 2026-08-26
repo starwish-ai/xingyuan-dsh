@@ -2,7 +2,7 @@
 import { createElement, useEffect, useRef, useState, type ReactElement } from 'react'
 import { getJson, postAction } from '../api.js'
 import { t } from '../i18n.js'
-import { softConfirm, useActionGuard, usePageData, useStableScrollbar } from '../hooks.js'
+import { softConfirm, useActionGuard, usePageData, useStableScrollbar, localYmd } from '../hooks.js'
 import { PageError, PageSkeleton, toast } from '../ui.js'
 import { cycleLabel, dateSuffix, formatMonth, formatWeekday } from './format.js'
 import type { CalendarPayload, DayPayload } from './types.js'
@@ -59,23 +59,32 @@ export function CalendarPage(): ReactElement {
 
   const data = page.data
   const act = (action: string, taskId: string, taskName: string, date: string): void => {
-    if (action === 'checkin' && date > (data?.today ?? '') && !softConfirm(t('confirm.futureAt', { name: taskName, date }))) return
-    if (action === 'cancel-checkin' && !softConfirm(t('confirm.undoAt', { name: taskName, date }))) return
-    guard(() => postAction(action, { taskId, date }).then(() => {
-      toast(action === 'claim'
-        ? t('toast.claimed', { name: taskName })
-        : action === 'checkin'
-          ? t('toast.checkinOk') + dateSuffix(date)
-          : t('toast.undoneAt', { date }), 'ok')
-      // busy 窗口覆盖月历重取；之后仅当操作日仍是当前选中日才回填详情——
-      // 动作与快速连点另一日期竞争时，慢的旧响应不得覆盖新选中日的面板
-      return page.reload().then(() => {
-        if (pickedDateRef.current !== date) return undefined
-        const seq = ++pickSeqRef.current
-        return getJson<DayPayload>(`/xingyuan/api/day?date=${date}`)
-          .then((dayAfter) => { if (seq === pickSeqRef.current) { setDetail(dayAfter); setPickState('idle') } })
-      })
-    }))
+    // 需要确认的动作先弹应用内确认，通过后才进入写路径；无需确认的动作直接执行
+    const confirmMessage =
+      action === 'checkin' && date > (data?.today ?? '')
+        ? t('confirm.futureAt', { name: taskName, date })
+        : action === 'cancel-checkin'
+          ? t('confirm.undoAt', { name: taskName, date })
+          : undefined
+    const run = (): void => {
+      guard(() => postAction(action, { taskId, date }).then(() => {
+        toast(action === 'claim'
+          ? t('toast.claimed', { name: taskName })
+          : action === 'checkin'
+            ? t('toast.checkinOk') + dateSuffix(date)
+            : t('toast.undoneAt', { date }), 'ok')
+        // busy 窗口覆盖月历重取；之后仅当操作日仍是当前选中日才回填详情——
+        // 动作与快速连点另一日期竞争时，慢的旧响应不得覆盖新选中日的面板
+        return page.reload().then(() => {
+          if (pickedDateRef.current !== date) return undefined
+          const seq = ++pickSeqRef.current
+          return getJson<DayPayload>(`/xingyuan/api/day?date=${date}`)
+            .then((dayAfter) => { if (seq === pickSeqRef.current) { setDetail(dayAfter); setPickState('idle') } })
+        })
+      }))
+    }
+    if (confirmMessage === undefined) { run(); return }
+    void softConfirm(confirmMessage).then((ok) => { if (ok) run() })
   }
 
   if (page.error !== undefined) return createElement(PageError, { message: page.error, onRetry: page.reload })
@@ -86,6 +95,50 @@ export function CalendarPage(): ReactElement {
     return `xy-cell xy-${tone}${date === data.today ? ' xy-today' : ''}${date === pickedDate ? ' xy-picked' : ''}`
   }
   const goMonth = (delta: number): void => setOffset(offset + delta)
+
+  // 邻月补位日（业界月历惯例：Google/Apple Calendar 均渲染邻月日并置灰）：
+  // null 槽位纯客户端推导真实日期——1 号前回填上月尾、月末后续填下月初。
+  // 不依赖宿主路由变更；每周恒为七列，星期对齐语境完整。补位日无打卡数据语义，
+  // 置灰且不可聚焦/不可点（aria-hidden，对读屏整体隐藏）。
+  const leadingDates: string[] = []
+  const trailingDates: string[] = []
+  const flatCells = data.weeks.flat()
+  const firstIdx = flatCells.findIndex((cell) => cell.date !== null)
+  if (firstIdx > 0 && flatCells[firstIdx] !== undefined) {
+    const first = flatCells[firstIdx]!.date!
+    const cursor = new Date(Number(first.slice(0, 4)), Number(first.slice(5, 7)) - 1, 0)
+    for (let i = 0; i < firstIdx; i += 1) {
+      leadingDates.unshift(localYmd(cursor))
+      cursor.setDate(cursor.getDate() - 1)
+    }
+  }
+  let lastIdx = -1
+  for (let i = flatCells.length - 1; i >= 0; i -= 1) {
+    if (flatCells[i]!.date !== null) { lastIdx = i; break }
+  }
+  const trailingCount = lastIdx >= 0 ? flatCells.length - 1 - lastIdx : 0
+  if (trailingCount > 0 && lastIdx >= 0) {
+    const last = flatCells[lastIdx]!.date!
+    const cursor = new Date(Number(last.slice(0, 4)), Number(last.slice(5, 7)), 1)
+    for (let i = 0; i < trailingCount; i += 1) {
+      trailingDates.push(localYmd(cursor))
+      cursor.setDate(cursor.getDate() + 1)
+    }
+  }
+  const outsideBySlot = new Map<string, string>()
+  {
+    let leadCursor = 0
+    let tailCursor = 0
+    data.weeks.forEach((week, wi) => {
+      week.forEach((cell, ci) => {
+        if (cell.date !== null) return
+        const date = leadCursor < leadingDates.length
+          ? leadingDates[leadCursor++]!
+          : trailingDates[tailCursor++] ?? ''
+        outsideBySlot.set(`${wi}:${ci}`, date)
+      })
+    })
+  }
 
   return createElement('div', { className: 'xy-page', ref: stabilize },
     createElement('div', { className: 'xy-page-head' },
@@ -99,18 +152,30 @@ export function CalendarPage(): ReactElement {
         WEEKDAY_KEYS.map((key) => createElement('span', { key, className: 'xy-calhead-cell' }, t(key)))),
       createElement('div', { className: 'xy-cal' },
         ...data.weeks.map((week, wi) => createElement('div', { key: `w${wi}`, className: 'xy-week' },
-          ...week.map((cell) => cell.date === null
-            ? createElement('span', { key: `pad-${cell.date ?? 'x'}-${wi}`, className: 'xy-cell xy-empty', 'aria-hidden': 'true' })
-            : createElement('button', {
-                key: cell.date,
-                className: cellClass(cell.date, cell.checked, cell.due),
-                title: `${cell.date} · ${cell.checked}/${cell.due}`,
-                'aria-label': cell.due === 0
+          ...week.map((cell, ci) => cell.date === null
+            ? (() => {
+                // 邻月补位日：置灰展示、不可聚焦不可点（纯视觉延续，读屏跳过）
+                const outsideDate = outsideBySlot.get(`${wi}:${ci}`) ?? ''
+                return createElement('span', {
+                  key: `out-${wi}-${ci}`,
+                  className: 'xy-cell xy-outside',
+                  'aria-hidden': 'true',
+                }, outsideDate === '' ? null : String(Number(outsideDate.slice(8))))
+              })()
+            : (() => {
+                // 悬停 title 与读屏 aria-label 同源同文案——键盘聚焦用户的原生提示与读屏口径不再分裂
+                const cellLabel = cell.due === 0
                   ? t('cal.cellAria.none', { date: cell.date })
-                  : t('cal.cellAria.some', { date: cell.date, checked: cell.checked, due: cell.due }),
-                ...(cell.date === data.today ? { 'aria-current': 'date' as const } : {}),
-                onClick: () => pick(cell.date!),
-              }, String(Number(cell.date.slice(8)))))))),
+                  : t('cal.cellAria.some', { date: cell.date, checked: cell.checked, due: cell.due })
+                return createElement('button', {
+                  key: cell.date,
+                  className: cellClass(cell.date, cell.checked, cell.due),
+                  title: cellLabel,
+                  'aria-label': cellLabel,
+                  ...(cell.date === data.today ? { 'aria-current': 'date' as const } : {}),
+                  onClick: () => pick(cell.date!),
+                }, String(Number(cell.date.slice(8))))
+              })())))),
       createElement('div', { className: 'xy-legend' },
         createElement('span', null, createElement('i', { className: 'xy-dot xy-c0', 'aria-hidden': 'true' }), t('cal.legend.c0')),
         createElement('span', null, createElement('i', { className: 'xy-dot xy-c1', 'aria-hidden': 'true' }), t('cal.legend.c1')),

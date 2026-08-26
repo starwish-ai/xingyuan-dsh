@@ -62,42 +62,50 @@ function TaskView(props: CardProps<'xy-task'>): ReactElement {
     const future = task.nextOpportunityDate !== undefined && task.nextOpportunityDate > localYmd(new Date())
       ? task.nextOpportunityDate
       : undefined
-    if (action === 'checkin' && future !== undefined && !softConfirm(t('confirm.futureCheckin', { name: task.name, date: future }))) return
-    busyRef.current = true
-    setBusy(true)
-    postAction(action, { taskId: task.taskId })
-      .then((payload) => {
-        if (action === 'claim') {
-          setPhase('claimed')
-          toast(t('toast.claimed', { name: task.name }), 'ok')
-        } else {
-          setPhase('done')
-          setDoneDate(typeof payload.date === 'string' ? payload.date : undefined)
-          toast(t('toast.checkinOk') + dateSuffix(typeof payload.date === 'string' ? payload.date : undefined), 'ok')
-        }
-      })
-      .catch((e: unknown) => {
-        // 会话重放后本地态丢失，服务端状态是事实：按稳定错误码恢复卡片到真实阶段
-        //（store.ToolError 携带 code 经路由透传；文案按 code 本地化，不依赖中文子串）
-        if (e instanceof ActionError) {
-          if (action === 'claim' && e.code === 'already_claimed') {
+    const perform = (): void => {
+      if (busyRef.current) return
+      busyRef.current = true
+      setBusy(true)
+      postAction(action, { taskId: task.taskId })
+        .then((payload) => {
+          if (action === 'claim') {
             setPhase('claimed')
-            toast(describeError(e), 'info')
-            return
-          }
-          if (action === 'checkin' && (e.code === 'already_checked' || e.code === 'task_closed')) {
+            toast(t('toast.claimed', { name: task.name }), 'ok')
+          } else {
             setPhase('done')
-            setDoneDate(typeof e.params?.date === 'string' ? e.params.date : undefined)
-            toast(describeError(e), 'info')
-            return
+            setDoneDate(typeof payload.date === 'string' ? payload.date : undefined)
+            toast(t('toast.checkinOk') + dateSuffix(typeof payload.date === 'string' ? payload.date : undefined), 'ok')
           }
-        }
-        toastError(e)
-      })
-      .finally(() => {
-        busyRef.current = false
-        setBusy(false)
-      })
+        })
+        .catch((e: unknown) => {
+          // 会话重放后本地态丢失，服务端状态是事实：按稳定错误码恢复卡片到真实阶段
+          //（store.ToolError 携带 code 经路由透传；文案按 code 本地化，不依赖中文子串）
+          if (e instanceof ActionError) {
+            if (action === 'claim' && e.code === 'already_claimed') {
+              setPhase('claimed')
+              toast(describeError(e), 'info')
+              return
+            }
+            if (action === 'checkin' && (e.code === 'already_checked' || e.code === 'task_closed')) {
+              setPhase('done')
+              setDoneDate(typeof e.params?.date === 'string' ? e.params.date : undefined)
+              toast(describeError(e), 'info')
+              return
+            }
+          }
+          toastError(e)
+        })
+        .finally(() => {
+          busyRef.current = false
+          setBusy(false)
+        })
+    }
+    if (action === 'checkin' && future !== undefined) {
+      // 未来机会日预勾：应用内确认「承诺当天完成」后再进入写路径
+      void softConfirm(t('confirm.futureCheckin', { name: task.name, date: future })).then((ok) => { if (ok) perform() })
+      return
+    }
+    perform()
   }
   const deleted = event.op === 'deleted'
   const showClaim = !deleted && phase === 'idle' && task.status === 'pending'
@@ -110,7 +118,10 @@ function TaskView(props: CardProps<'xy-task'>): ReactElement {
       createElement('span', { className: 'xy-badge xy-badge-task' }, t('badge.task')),
       createElement('span', { className: 'xy-title' }, deleted ? t('state.deleted', { title: task.name }) : task.name),
       !deleted && phase === 'done'
-        ? createElement('span', { className: 'xy-meta xy-actioned' }, t('state.done') + dateSuffix(doneDate))
+        ? createElement('span', { className: 'xy-meta xy-actioned' },
+            // 勾形装饰对读屏隐藏（语义由文案承担），与今日页行首勾同一语法
+            createElement('span', { className: 'xy-done-glyph', 'aria-hidden': 'true' }, '✓'),
+            t('state.done') + dateSuffix(doneDate))
         : null,
       showClaim
         ? createElement('button', { className: 'xy-btn xy-btn-inline', disabled: busy, onClick: () => run('claim') }, t('action.claim'))
@@ -181,25 +192,35 @@ function CheckinView(props: CardProps<'xy-checkin'>): ReactElement {
 function ChartView(props: CardProps<'xy-chart'>): ReactElement {
   const t = useXyT()
   const event = (props.node.data as XyState).data as XingyuanChartEventData
+  // 悬停柱下标（与成长页悬浮明细同一交互语法；null = 未悬停）
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null)
   return createElement('div', { className: 'xy-card xy-chart' },
     createElement('div', { className: 'xy-card-head' },
       createElement('span', { className: 'xy-badge xy-badge-chart' }, t('badge.chart')),
       createElement('span', { className: 'xy-title' }, event.title),
       event.subtitle !== undefined ? createElement('span', { className: 'xy-meta' }, event.subtitle) : null),
-    chartBody(event, t('chart.noData')))
+    chartBody(event, t('chart.noData'), hoverIdx, setHoverIdx))
 }
 
-/** 图表卡主体：极简 SVG 柱线混合（颜色走主题变量，深浅色自适应）；分组序列附图例。 */
-function chartBody(event: XingyuanChartEventData, noDataText: string): ReactElement {
+/** 图表卡主体：四类渲染路径（占比条/占比列表/热力格/柱图）颜色全部走主题变量，深浅色自适应。 */
+function chartBody(
+  event: XingyuanChartEventData,
+  noDataText: string,
+  hoverIdx: number | null,
+  onHover: (idx: number | null) => void,
+): ReactElement {
   const { chartType, data } = event
   if (data.length === 0) return createElement('div', { className: 'xy-meta' }, noDataText)
   const max = Math.max(...data.map((d) => d.value), 1)
+  const labelValue = (d: XingyuanChartEventData['data'][number]): string =>
+    `${d.label}${activeLocale() === 'en' ? ': ' : '：'}${d.value}`
   if (chartType === 'arcbars') {
-    const ratio = data[0]!.ratio ?? 0
+    const ratio = Math.min(Math.max(data[0]!.ratio ?? 0, 0), 1)
     return createElement('div', { className: 'xy-arcwrap' },
       createElement('div', { className: 'xy-arcnum' }, `${Math.round(ratio * 100)}%`),
+      // 进度条填充走 transform（合成器动画，不触发布局），与全站进度条同一实现
       createElement('div', { className: 'xy-bar' },
-        createElement('div', { className: 'xy-bar-fill', style: { width: `${Math.round(ratio * 100)}%` } })))
+        createElement('div', { className: 'xy-bar-fill', style: { transform: `scaleX(${ratio})` } })))
   }
   if (chartType === 'pie' || chartType === 'radar') {
     // 占比分母守卫：总和为 0 时跳过百分比（避免 NaN%）
@@ -208,7 +229,7 @@ function chartBody(event: XingyuanChartEventData, noDataText: string): ReactElem
       ...data.map((d, i) => createElement('li', { key: i, className: 'xy-row' },
         createElement('span', null, d.label),
         createElement('span', { className: 'xy-rowval' },
-          `${d.value}${chartType === 'pie' && sum > 0 ? `（${Math.round((d.value / sum) * 100)}%）` : ''}`))))
+          `${d.value}${chartType === 'pie' && sum > 0 ? ` · ${Math.round((d.value / sum) * 100)}%` : ''}`))))
   }
   if (chartType === 'heatmap') {
     return createElement('div', null,
@@ -216,12 +237,12 @@ function chartBody(event: XingyuanChartEventData, noDataText: string): ReactElem
         ...data.map((d, i) => createElement('span', {
           key: i,
           className: 'xy-heatcell',
-          title: `${d.label}：${d.value}`,
+          title: labelValue(d),
           style: { opacity: String(0.25 + 0.75 * (d.value / max)) },
         }))),
       // 热力格纯视觉（title 不构成可访问名）：数据以屏内隐藏文本整体提供给读屏
       createElement('span', { className: 'xy-visually-hidden' },
-        data.map((d) => `${d.label} ${d.value}`).join('；')))
+        data.map((d) => `${d.label} ${d.value}`).join(activeLocale() === 'en' ? '; ' : '；')))
   }
   const seriesList = [...new Set(data.map((d) => d.series).filter((s): s is string => s !== undefined))]
   const seriesColor = (index: number): string =>
@@ -229,16 +250,24 @@ function chartBody(event: XingyuanChartEventData, noDataText: string): ReactElem
   const width = 560
   const height = 140
   const step = width / Math.max(data.length, 1)
+  // 只圆顶不圆底：柱脚与基线齐平（rect 的 rx 会四角全圆，悬空感）
+  const topRoundedBar = (x: number, y: number, w: number, h: number): string => {
+    const r = Math.min(2, h, w / 2)
+    return `M${x},${y + h}L${x},${y + r}Q${x},${y} ${x + r},${y}L${x + w - r},${y}Q${x + w},${y} ${x + w},${y + r}L${x + w},${y + h}Z`
+  }
   const bars = data.map((d, i) => {
-    const h = Math.round((d.value / max) * (height - 24))
+    // 微值可见性下限：有值但按比例不足 2px 的柱给 2px，避免「有数据却看不见」
+    const rawH = Math.round((d.value / max) * (height - 24))
+    const h = d.value > 0 ? Math.max(rawH, 2) : rawH
     const seriesIdx = d.series !== undefined ? seriesList.indexOf(d.series) : -1
-    return createElement('rect', {
-      key: i, x: i * step + 2, y: height - 18 - h, width: Math.max(step - 4, 2), height: h,
-      rx: 2,
+    return createElement('path', {
+      key: i,
+      d: topRoundedBar(i * step + 2, height - 18 - h, Math.max(step - 4, 2), h),
       style: { fill: seriesIdx > 0 ? seriesColor(seriesIdx) : 'var(--xyd-accent)', opacity: seriesIdx > 0 ? 0.55 : 0.85 },
+      onMouseEnter: () => onHover(i),
     },
-      // 每根柱子带 <title>：悬停可见数值，读屏可逐条播报
-      createElement('title', null, `${d.label}：${d.value}`))
+      // 每根柱子带 <title>：原生悬停提示；精确数值另由上方悬浮明细条实时呈现
+      createElement('title', null, labelValue(d)))
   })
   // 标签用原始下标定位：indexOf 会把重复标签（如分组系列的「周一」×2）全部钉到首个位置
   const labelStep = data.length <= 10 ? 1 : Math.ceil(data.length / 8)
@@ -247,23 +276,30 @@ function chartBody(event: XingyuanChartEventData, noDataText: string): ReactElem
     .filter(({ i }) => i % labelStep === 0)
     .map(({ d, i }) => createElement('text', {
       key: `l${i}`, x: i * step + step / 2, y: height - 4,
-      fontSize: 10, textAnchor: 'middle', style: { fill: 'var(--dsw-alias-label-secondary)' },
+      fontSize: 11, textAnchor: 'middle', style: { fill: 'var(--dsw-alias-label-secondary)' },
     }, d.label))
   const legend = seriesList.length > 1
     ? createElement('div', { className: 'xy-chart-legend' },
         ...seriesList.map((name, idx) => createElement('span', { key: name },
           createElement('i', { className: 'xy-dot', style: { background: seriesColor(idx), opacity: idx > 0 ? 0.55 : 1 } }), name)))
     : null
+  const hovered = hoverIdx !== null ? data[hoverIdx] : undefined
   return createElement('div', null,
     legend,
-    // 图表整体作为一张图暴露给读屏；柱级数值经 <title> 补充
-    createElement('svg', {
-      viewBox: `0 0 ${width} ${height}`, className: 'xy-svg',
-      role: 'img', 'aria-label': event.title,
-    },
-      createElement('line', { x1: 0, y1: height - 18, x2: width, y2: height - 18, style: { stroke: 'var(--dsw-alias-border-l2)' } }),
-      ...bars,
-      ...labels))
+    createElement('div', { onMouseLeave: () => onHover(null) },
+      // 悬浮明细条：与成长页柱图同一组件语法（恒定占位，无数据时隐藏不跳版）
+      createElement('div', { className: 'xy-tip', role: 'status' },
+        hovered !== undefined ? labelValue(hovered) : ''),
+      // 图表整体作为一张图暴露给读屏；逐条数值以屏内隐藏文本补充
+      createElement('svg', {
+        viewBox: `0 0 ${width} ${height}`, className: 'xy-svg',
+        role: 'img', 'aria-label': event.title,
+      },
+        createElement('line', { x1: 0, y1: height - 18, x2: width, y2: height - 18, style: { stroke: 'var(--dsw-alias-border-l2)' } }),
+        ...bars,
+        ...labels)),
+    createElement('span', { className: 'xy-visually-hidden' },
+      data.map((d) => `${d.label} ${d.value}`).join(activeLocale() === 'en' ? '; ' : '；')))
 }
 
 export const CARD_VIEWS = {

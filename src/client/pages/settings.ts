@@ -171,28 +171,31 @@ export function SettingsSection(props: { scope: SettingsScopeLike }): ReactEleme
         createElement('span', { className: 'xy-quick-label' }, t('settings.profile.nickname')),
         createElement('input', {
           className: 'xy-input xy-input-wide', placeholder: t('settings.profile.nicknamePlaceholder'), maxLength: 50,
-          autoComplete: 'off',
+          autoComplete: 'off', name: 'xy-nickname',
           value: nicknameDraft, onChange: (e: { target: { value: string } }) => setNicknameDraft(e.target.value),
         })),
       createElement('label', { className: 'xy-field' },
         createElement('span', { className: 'xy-quick-label' }, t('settings.profile.occupation')),
         createElement('input', {
           className: 'xy-input xy-input-wide', placeholder: t('settings.profile.occupationPlaceholder'), maxLength: 100,
-          autoComplete: 'off',
+          autoComplete: 'off', name: 'xy-occupation',
           value: occupationDraft, onChange: (e: { target: { value: string } }) => setOccupationDraft(e.target.value),
         })),
       createElement('label', { className: 'xy-field' },
         createElement('span', { className: 'xy-quick-label' }, t('settings.profile.interests')),
         createElement('input', {
           className: 'xy-input xy-input-wide', placeholder: t('settings.profile.interestsPlaceholder'),
-          autoComplete: 'off',
+          autoComplete: 'off', name: 'xy-interests',
           value: interestsDraft, onChange: (e: { target: { value: string } }) => setInterestsDraft(e.target.value),
         })),
       createElement('div', { className: 'xy-save-row' },
         createElement('button', {
           className: 'xy-btn xy-btn-primary', disabled: saving, onClick: saveProfile,
         }, saving ? t('settings.profile.saving') : t('settings.profile.save')),
-        savedMsg !== '' ? createElement('span', { className: 'xy-saved', role: 'status' }, `✓ ${savedMsg}`) : null),
+        savedMsg !== '' ? createElement('span', { className: 'xy-saved', role: 'status' },
+          // 勾形装饰对读屏隐藏（语义由文案承担），与卡片完成态同一语法
+          createElement('span', { 'aria-hidden': 'true' }, '✓ '),
+          savedMsg) : null),
       createElement('p', { className: 'xy-hint' }, t('settings.profile.sharedHint'))),
     createElement('section', { className: 'xy-panel' },
       createElement('h3', { className: 'xy-panel-head' }, t('settings.pref.title')),
@@ -206,6 +209,7 @@ export function SettingsSection(props: { scope: SettingsScopeLike }): ReactEleme
           createElement('input', {
             type: 'checkbox',
             className: 'xy-toggle',
+            name: 'confirmWrites',
             checked: confirmWrites,
             disabled: !writable || pendingToggle !== undefined,
             onChange: (e: { target: { checked: boolean } }) => {
@@ -226,7 +230,7 @@ export function SettingsSection(props: { scope: SettingsScopeLike }): ReactEleme
       createElement('label', { className: 'xy-field' },
         createElement('span', { className: 'xy-field-head' }, t('settings.pref.memoryLimit')),
         createElement('input', {
-          type: 'number', min: 5, max: 200, className: 'xy-input',
+          type: 'number', min: 5, max: 200, className: 'xy-input', name: 'memoryInjectLimit', inputMode: 'numeric',
           'aria-label': t('settings.pref.memoryLimit'),
           'aria-invalid': limitError || undefined,
           ...(limitError ? { 'aria-describedby': 'xy-limit-error' } : {}),

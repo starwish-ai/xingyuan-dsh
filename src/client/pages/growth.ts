@@ -1,4 +1,4 @@
-/** 成长页：等级英雄卡 + 七项统计 + 近 30 天柱图（T1-7：悬浮明细/全勤高亮/图例）+ 等级说明。 */
+/** 成长页：等级英雄卡 + 七项统计 + 近 30 天柱状图（悬浮明细/全勤高亮/图例）+ 等级说明。 */
 import { createElement, useState, type ReactElement } from 'react'
 import { useXyT } from '../i18n.js'
 import { recentRangeDays, usePageData, useStableScrollbar } from '../hooks.js'
@@ -8,7 +8,7 @@ import type { GrowthPayload, RangePayload } from './types.js'
  * 等级色阶（Lv.1 灰 → Lv.10 玫瑰红）：全部选用深色档（slate-600 → rose-700），
  * 白字对比 ≥4.5:1，深浅两种壳主题下都成立；standalone /xingyuan/growth 页内联同表。
  */
-export const LEVEL_TINTS = ['#475569', '#2563eb', '#047857', '#0e7490', '#0369a1', '#1d4ed8', '#6d28d9', '#b45309', '#c2410c', '#be123c'] as const
+const LEVEL_TINTS = ['#475569', '#2563eb', '#047857', '#0e7490', '#0369a1', '#1d4ed8', '#6d28d9', '#b45309', '#c2410c', '#be123c'] as const
 
 function levelTint(level: number): string {
   return LEVEL_TINTS[Math.min(LEVEL_TINTS.length, Math.max(1, level)) - 1] ?? LEVEL_TINTS[0]
@@ -22,7 +22,7 @@ export function GrowthPage(): ReactElement {
     const { start, end } = recentRangeDays(30)
     return `/xingyuan/api/range?start=${start}&end=${end}`
   }, [])
-  // 悬停列（T1-7 明细浮层的数据源；null = 未悬停）
+  // 悬停列数据源（null = 未悬停）
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
 
   // 整页错误只看主端点：区间图失败不拖垮已加载的英雄卡与统计——
@@ -46,9 +46,11 @@ export function GrowthPage(): ReactElement {
     const max = Math.max(...r.days.map((day) => day.total), 1)
     const count = r.days.length
     const cols = r.days.map((day, i) => {
-      const h = Math.round((day.checked / max) * 100)
+      // 微值可见性下限：有数据但按比例不足 2% 的段给 2%，避免「有记录却看不见」；
+      // 缺口段封顶 100-h，两段取整叠加不会溢出柱体
+      const h = day.checked > 0 ? Math.max(Math.round((day.checked / max) * 100), 2) : 0
       const missed = day.total - day.checked
-      const mh = Math.round((missed / max) * 100)
+      const mh = missed > 0 ? Math.min(Math.max(Math.round((missed / max) * 100), 2), 100 - h) : 0
       const full = day.total > 0 && day.checked >= day.total
       return createElement('button', {
         key: day.date,
@@ -107,14 +109,16 @@ export function GrowthPage(): ReactElement {
   return createElement('div', { className: 'xy-page', ref: stabilize },
     createElement('div', {
       className: 'xy-hero',
-      style: { background: `linear-gradient(135deg, ${tint}d9, ${tint}73)` },
+      // 实色双档渐变（78% 混黑深档 → 基档）：白色文字对底色对比 ≥4.5:1 在两种壳主题下
+      // 都恒成立；半透明渐变（旧版 tint+d9/tint+73）在浅色壳会混入页面白底，右端跌破 3:1
+      style: { background: `linear-gradient(135deg, color-mix(in srgb, ${tint} 76%, #000), ${tint})` },
     },
       createElement('div', { className: 'xy-herobadge', style: { background: tint } }, `Lv.${levelNumber}`),
       createElement('div', { className: 'xy-heromain' },
         createElement('div', { className: 'xy-meta xy-onhero' }, t('growth.levelLabel')),
         createElement('h2', { className: 'xy-herotitle' }, `Lv.${levelNumber} · ${g.levelName ?? t('growth.levelFallback')}`),
         createElement('div', { className: 'xy-bar xy-bar-onhero' },
-          createElement('div', { className: 'xy-bar-fill xy-bar-fill-solid', style: { width: `${g.levelProgress ?? 0}%` } })),
+          createElement('div', { className: 'xy-bar-fill xy-bar-fill-solid', style: { transform: `scaleX(${Math.min(Math.max(g.levelProgress ?? 0, 0), 100) / 100})` } })),
         createElement('div', { className: 'xy-meta xy-onhero' }, expText))),
     g.rewardDescription !== undefined
       ? createElement('div', { className: 'xy-meta xy-heroreward' }, t('growth.rewardPrefix', { reward: g.rewardDescription }))
@@ -149,10 +153,10 @@ export function GrowthPage(): ReactElement {
                     : ''),
                 createElement('div', { className: 'xy-growth' }, chart.cols),
                 createElement('div', { className: 'xy-growth-axis' }, chart.ticks)),
-              // 图例与柱体编码一致：蓝柱 = 已打卡，灰柱 = 当日未完成缺口（非日历语义色）
+              // 图例与柱体编码一致：蓝柱 = 已打卡，斜纹柱 = 当日未完成缺口，绿柱 = 全勤日
               createElement('div', { key: 'xy-chart-legend', className: 'xy-legend' },
-                createElement('span', null, createElement('i', { className: 'xy-dot', style: { background: 'var(--xyd-accent)' }, 'aria-hidden': 'true' }), t('growth.chart.legend.checked')),
-                createElement('span', null, createElement('i', { className: 'xy-dot', style: { background: 'var(--dsw-alias-bg-layer-2)', border: '1px solid var(--dsw-alias-border-l2)' }, 'aria-hidden': 'true' }), t('growth.chart.legend.missed')),
+                createElement('span', null, createElement('i', { className: 'xy-dot xy-dot-checked', 'aria-hidden': 'true' }), t('growth.chart.legend.checked')),
+                createElement('span', null, createElement('i', { className: 'xy-dot xy-dot-gap', 'aria-hidden': 'true' }), t('growth.chart.legend.missed')),
                 createElement('span', { className: 'xy-meta' }, t('growth.chart.hint')))]),
     createElement('h3', { className: 'xy-section-title' }, t('growth.levels.title')),
     createElement('div', { className: 'xy-levels' }, ...levelRows))

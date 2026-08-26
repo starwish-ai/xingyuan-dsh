@@ -1,15 +1,16 @@
 /**
- * 分类管理（T1-3）：愿望页顶部入口的面板——分类列表（计数）、改名（批量同步同名愿望，
+ * 分类管理：愿望页顶部入口的面板——分类列表（计数）、改名（批量同步同名愿望，
  * 确认后提交）、22 键配色（写入 global 覆盖，作为该分类默认色）、删空分类（仅清覆盖记录）。
  * 数据经 GET /api/categories；动作 POST category-rename / category-color。
  */
 import { createElement, useEffect, useRef, useState, type ReactElement } from 'react'
 import { getJson, postAction, describeError } from '../api.js'
-import { useXyT, t as translate } from '../i18n.js'
-import { softConfirm, useActionGuard } from '../hooks.js'
+import { useXyT } from '../i18n.js'
+import { softConfirm, softConfirmDanger, useActionGuard } from '../hooks.js'
 import { toast } from '../ui.js'
 import { categoryVars } from '../../category-color.js'
 import { SwatchRow } from './color-swatch.js'
+import { countKey } from './format.js'
 
 interface CategoryRow {
   readonly name: string
@@ -30,8 +31,8 @@ function ColorPicker(props: { name: string; current: string | null; onDone: () =
     guard(() => postAction('category-color', { name: props.name, colorKey }).then(() => {
       // 「跟随愿望」= 重置覆盖，不是删除分类——反馈必须如实区分两种语义
       toast(colorKey === ''
-        ? translate('toast.categoryColorReset', { name: props.name })
-        : translate('toast.categoryColored', { name: props.name }), 'ok')
+        ? t('toast.categoryColorReset', { name: props.name })
+        : t('toast.categoryColored', { name: props.name }), 'ok')
       props.onDone()
     }))
   }
@@ -62,19 +63,17 @@ function RenameEditor(props: {
     const newName = draft.trim()
     if (newName === '') { setError(t('quick.fieldRequired')); return }
     if (newName === props.original) { props.onCancel(); return }
-    if (!softConfirm(translate('confirm.renameCategory', { old: props.original, new: newName, count: props.wishCount }))) {
-      props.onCancel()
-      return
-    }
-    props.onCommit(newName)
+    void softConfirm(t('confirm.renameCategory', { old: props.original, new: newName, count: props.wishCount }))
+      .then((ok) => { ok ? props.onCommit(newName) : props.onCancel() })
   }
 
   return createElement('div', { className: 'xy-rename' },
     createElement('input', {
       ref: inputRef,
       className: 'xy-input', maxLength: 6, value: draft,
-      'aria-label': translate('catmgr.newName'),
-      placeholder: translate('catmgr.newName'),
+      name: 'category-rename',
+      'aria-label': t('catmgr.newName'),
+      placeholder: t('catmgr.newName'),
       'aria-invalid': error !== undefined || undefined,
       ...(error !== undefined ? { 'aria-describedby': 'xy-rename-error' } : {}),
       onChange: (e: { target: { value: string } }) => { setDraft(e.target.value); setError(undefined) },
@@ -113,7 +112,7 @@ export function CategoryManager(props: { readonly onChanged?: () => void }): Rea
 
   const commitRename = (oldName: string, newName: string): void => {
     guard(() => postAction('category-rename', { oldName, newName }).then(() => {
-      toast(translate('toast.categoryRenamed', { name: newName }), 'ok')
+      toast(t('toast.categoryRenamed', { name: newName }), 'ok')
       setRenaming(undefined)
       reload()
     }))
@@ -134,7 +133,7 @@ export function CategoryManager(props: { readonly onChanged?: () => void }): Rea
       ? // 取数中：骨架占位（面板不再空白等待）
         createElement('div', { className: 'xy-catloading', role: 'status', 'aria-busy': 'true' },
           createElement('div', { className: 'xy-skel xy-pickline' }),
-          createElement('span', { className: 'xy-visually-hidden' }, translate('common.loading')))
+          createElement('span', { className: 'xy-visually-hidden' }, t('common.loading')))
       : data !== undefined && rows.length === 0
         ? createElement('div', { className: 'xy-meta' }, t('catmgr.empty'))
         : rows.map((row) => createElement('div', { key: row.name, className: 'xy-catrow' },
@@ -142,7 +141,7 @@ export function CategoryManager(props: { readonly onChanged?: () => void }): Rea
               className: 'xy-badge xy-badge-cat',
               style: row.colorKey !== null ? categoryVars(row.colorKey, row.name) : categoryVars(undefined, row.name),
             }, row.name),
-            createElement('span', { className: 'xy-meta xy-catcount' }, t('catmgr.count', { n: row.wishCount })),
+            createElement('span', { className: 'xy-meta xy-catcount' }, t(countKey(row.wishCount, 'catmgr.countOne', 'catmgr.count'), { n: row.wishCount })),
             createElement('span', { className: 'xy-catops' },
               createElement('button', {
                 className: 'xy-btn',
@@ -159,11 +158,13 @@ export function CategoryManager(props: { readonly onChanged?: () => void }): Rea
                     className: 'xy-btn xy-btn-danger',
                     disabled: busy,
                     onClick: () => {
-                      if (!softConfirm(translate('confirm.deleteEmptyCategory', { name: row.name }))) return
-                      guard(() => postAction('category-color', { name: row.name, colorKey: '' }).then(() => {
-                        toast(translate('toast.categoryDeleted', { name: row.name }), 'ok')
-                        reload()
-                      }))
+                      void softConfirmDanger(t('confirm.deleteEmptyCategory', { name: row.name })).then((ok) => {
+                        if (!ok) return
+                        guard(() => postAction('category-color', { name: row.name, colorKey: '' }).then(() => {
+                          toast(t('toast.categoryDeleted', { name: row.name }), 'ok')
+                          reload()
+                        }))
+                      })
                     },
                   }, t('catmgr.deleteEmpty'))
                 : null),

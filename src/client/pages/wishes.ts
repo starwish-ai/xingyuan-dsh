@@ -2,7 +2,7 @@
 import { createElement, useState, type ReactElement } from 'react'
 import { postAction } from '../api.js'
 import { useXyT } from '../i18n.js'
-import { softConfirm, useActionGuard, usePageData, useStableScrollbar } from '../hooks.js'
+import { softConfirmDanger, useActionGuard, usePageData, useStableScrollbar } from '../hooks.js'
 import { PageEmpty, PageError, PageSkeleton, toast } from '../ui.js'
 import { categoryVars } from '../../category-color.js'
 import { TaskLine } from './task-line.js'
@@ -38,11 +38,13 @@ export function WishesPage(): ReactElement {
 
   /** 删除愿望（级联下属任务与打卡记录，服务端同一写路径）：确认后直连动作并整页刷新。 */
   const removeWish = (wish: ApiWish): void => {
-    if (!softConfirm(t('confirm.deleteWish', { name: wish.title }))) return
-    deleteGuard(() => postAction('delete-wish', { wishId: wish.wishId }).then(() => {
-      toast(t('toast.deleted', { name: wish.title }), 'ok')
-      return page.reload().then(() => undefined)
-    }))
+    void softConfirmDanger(t('confirm.deleteWish', { name: wish.title })).then((ok) => {
+      if (!ok) return
+      deleteGuard(() => postAction('delete-wish', { wishId: wish.wishId }).then(() => {
+        toast(t('toast.deleted', { name: wish.title }), 'ok')
+        return page.reload().then(() => undefined)
+      }))
+    })
   }
 
   /** 愿望下属任务行（含详情展开）；返回片段数组供 wishtasks 容器平铺。 */
@@ -85,7 +87,7 @@ export function WishesPage(): ReactElement {
         ? createElement('div', { className: 'xy-meta' }, t('wish.eta', { date: wish.estimatedCompletionDate }))
         : null,
       createElement('div', { className: 'xy-bar' },
-        createElement('div', { className: 'xy-bar-fill', style: { width: `${wish.progress}%` } })),
+        createElement('div', { className: 'xy-bar-fill', style: { transform: `scaleX(${Math.min(wish.progress, 100) / 100})` } })),
       wish.tasks.length > 0
         ? createElement('div', { className: 'xy-wishtasks' }, ...wishTasks(wish))
         : createElement('div', { className: 'xy-meta' }, t('wish.noTasks')))

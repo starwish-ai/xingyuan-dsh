@@ -1,5 +1,5 @@
 /**
- * 快速新建轻表单（T1-4）：愿望（标题+分类+颜色）与任务（名称+周期+截止日）两版。
+ * 快速新建轻表单：愿望（标题+分类+颜色）与任务（名称+周期+截止日）两版。
  * POST 直连 create-wish / create-task（与工具层同校验口径：分类 2-6 字、截止≥今天）；
  * 文案明示复杂拆解请走对话。字段 label 在上、错误在下；成功 toast 后回调刷新。
  */
@@ -119,6 +119,7 @@ export function TaskQuickForm(props: { today: string; onCreated: () => void }): 
         createElement('span', { className: 'xy-quick-label' }, t('quick.task.name')),
         createElement('input', {
           className: 'xy-input', maxLength: 100, value: name,
+          name: 'task-name', autoComplete: 'off',
           placeholder: t('quick.task.namePlaceholder'),
           'aria-invalid': fieldError !== undefined || undefined,
           onChange: (e: { target: { value: string } }) => onNameChange(e.target.value),
@@ -126,13 +127,14 @@ export function TaskQuickForm(props: { today: string; onCreated: () => void }): 
       createElement('label', { className: 'xy-quick-field' },
         createElement('span', { className: 'xy-quick-label' }, t('quick.cycle')),
         createElement('select', {
-          className: 'xy-input', value: cycle,
+          className: 'xy-input', value: cycle, name: 'task-cycle',
           onChange: (e: { target: { value: string } }) => setCycle(e.target.value),
         }, ...CYCLE_KEYS.map((c) => createElement('option', { key: c, value: c }, cycleLabel(c))))),
       createElement('label', { className: 'xy-quick-field' },
         createElement('span', { className: 'xy-quick-label' }, t('quick.due')),
         createElement('input', {
           type: 'date', className: 'xy-input', min: props.today || localYmd(new Date()), value: dueDate,
+          name: 'task-due',
           'aria-invalid': fieldError !== undefined || undefined,
           onChange: (e: { target: { value: string } }) => onDueChange(e.target.value),
         }))),

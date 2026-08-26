@@ -44,7 +44,7 @@ export function TodayPage(): ReactElement {
       ? createElement('button', {
           className: 'xy-btn xy-btn-primary',
           disabled: busy || !task.canCheckIn,
-          title: task.canCheckIn ? undefined : t('cal.state.todo'),
+          title: task.canCheckIn ? undefined : t('today.notCheckinDay'),
           onClick: () => act('checkin', { taskId: task.taskId }, (p) =>
             t('toast.checkinOk') + dateSuffix(typeof p.date === 'string' ? String(p.date) : undefined)),
         }, t('action.checkin'))
@@ -59,10 +59,12 @@ export function TodayPage(): ReactElement {
         task.name),
       createElement('span', { className: 'xy-meta' }, cycleLabel(task.cycle))),
     createElement('button', { className: 'xy-btn', disabled: busy, onClick: () => {
-      if (!softConfirm(t('confirm.undoToday', { name: task.name }))) return
-      act('cancel-checkin', { taskId: task.taskId }, (p) => typeof p.date === 'string'
-        ? t('toast.undoneAt', { date: String(p.date) })
-        : t('toast.undone'))
+      void softConfirm(t('confirm.undoToday', { name: task.name })).then((ok) => {
+        if (!ok) return
+        act('cancel-checkin', { taskId: task.taskId }, (p) => typeof p.date === 'string'
+          ? t('toast.undoneAt', { date: String(p.date) })
+          : t('toast.undone'))
+      })
     } }, t('action.undoCheckin'))))
 
   const allDone = data.total > 0 && data.uncheckedCount === 0
@@ -85,7 +87,7 @@ export function TodayPage(): ReactElement {
             'aria-valuenow': ratio,
             'aria-label': t('today.title', { date: data.today }),
           },
-            createElement('div', { className: 'xy-bar-fill', style: { width: `${ratio}%` } }))
+            createElement('div', { className: 'xy-bar-fill', style: { transform: `scaleX(${ratio / 100})` } }))
         : null,
       allDone ? createElement('div', { className: 'xy-banner-ok' }, t('today.allDone')) : null),
     rows.length > 0 ? createElement('section', { className: 'xy-group' },

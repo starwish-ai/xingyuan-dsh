@@ -1,5 +1,5 @@
 /**
- * 共享 UI 原语：Toast 轻提示、页面级 加载/错误/空态，与空态线性插画（T1-8）。
+ * 共享 UI 原语：Toast 轻提示、页面级 加载/错误/空态，与空态线性插画。
  * 插画为内联 SVG 线稿（stroke 走主题令牌、点缀走品牌强调色），深浅色自适应，
  * aria-hidden（语义文案由调用方提供）——替代 emoji 主视觉的「廉价感」。
  */
@@ -58,6 +58,109 @@ export function toastError(e: unknown): void {
   toast(describeError(e), 'error')
 }
 
+// ===== 应用内确认弹窗 =====
+
+/**
+ * 原生 window.confirm 的替代：与壳主题同源的面板卡 + 背板遮罩。
+ * Promise 结算 true/false；Esc / 背板点击 / 取消键 = false，确认键或 Enter = true。
+ * 焦点进入弹窗并在关闭后归还；Tab 在两键间循环（双键弹窗无需完整 trap）。
+ * 危险动作传 danger:true，确认键呈实心危险色。
+ */
+
+interface ConfirmDialogOptions {
+  readonly message: string
+  /** 删除类不可逆动作：确认按钮使用实心危险色。 */
+  readonly danger?: boolean
+}
+
+interface OpenConfirm {
+  readonly backdrop: HTMLElement
+  resolve(ok: boolean): void
+}
+
+const openConfirms: OpenConfirm[] = []
+
+export function confirmDialog(options: ConfirmDialogOptions | string): Promise<boolean> {
+  const { message, danger } = typeof options === 'string' ? { message: options, danger: false } : options
+  return new Promise((resolve) => {
+    const backdrop = document.createElement('div')
+    backdrop.className = 'xy-modal-backdrop'
+    const titleId = `xy-modal-title-${Date.now().toString(36)}-${openConfirms.length}`
+    const panel = document.createElement('div')
+    panel.className = 'xy-modal'
+    panel.setAttribute('role', 'dialog')
+    panel.setAttribute('aria-modal', 'true')
+    panel.setAttribute('aria-labelledby', titleId)
+    const messageEl = document.createElement('p')
+    messageEl.className = 'xy-modal-msg'
+    messageEl.id = titleId
+    messageEl.textContent = message
+    const actions = document.createElement('div')
+    actions.className = 'xy-modal-actions'
+    const cancelBtn = document.createElement('button')
+    cancelBtn.type = 'button'
+    cancelBtn.className = 'xy-btn'
+    cancelBtn.textContent = t('common.cancel')
+    const okBtn = document.createElement('button')
+    okBtn.type = 'button'
+    okBtn.className = danger ? 'xy-btn xy-btn-danger-solid' : 'xy-btn xy-btn-primary'
+    okBtn.textContent = t('common.confirm')
+    actions.append(cancelBtn, okBtn)
+    panel.append(messageEl, actions)
+    backdrop.append(panel)
+
+    let settled = false
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const entry: OpenConfirm = { backdrop, resolve: finish }
+
+    function finish(ok: boolean): void {
+      if (settled) return
+      settled = true
+      const index = openConfirms.indexOf(entry)
+      if (index >= 0) openConfirms.splice(index, 1)
+      backdrop.classList.add('xy-modal-out')
+      window.setTimeout(() => backdrop.remove(), 160)
+      if (previousFocus !== null && previousFocus.isConnected) previousFocus.focus()
+      resolve(ok)
+    }
+
+    // 初始焦点给安全选项：危险动作聚焦「取消」（回车误触不致不可逆），常规动作聚焦确认键
+    const initialFocus = danger ? cancelBtn : okBtn
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        finish(false)
+        return
+      }
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        const buttons = [cancelBtn, okBtn]
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+        const next = event.shiftKey
+          ? (index <= 0 ? buttons.length - 1 : index - 1)
+          : (index === -1 || index === buttons.length - 1 ? 0 : index + 1)
+        buttons[next]!.focus()
+      }
+    }
+    backdrop.addEventListener('keydown', onKeyDown)
+    cancelBtn.addEventListener('click', () => finish(false))
+    okBtn.addEventListener('click', () => finish(true))
+    // 点击背板空白处 = 取消；点在面板上不关（误触保护）
+    backdrop.addEventListener('click', (event: MouseEvent) => {
+      if (event.target === backdrop) finish(false)
+    })
+
+    openConfirms.push(entry)
+    document.body.append(backdrop)
+    initialFocus.focus()
+  })
+}
+
+/** 插件卸载时结算全部未决确认框（一律按取消），调用方 Promise 不悬挂。 */
+export function disposeConfirms(): void {
+  for (const entry of [...openConfirms]) entry.resolve(false)
+}
+
 // ===== 页面三态 =====
 
 export function PageError(props: { message: string; onRetry: () => void; retryLabel?: string }): ReactElement {
@@ -86,7 +189,7 @@ export function PageEmpty(props: { art?: EmptyArtKind; title: string; hint?: str
     props.hint !== undefined ? createElement('div', { className: 'xy-meta xy-empty-hint' }, props.hint) : null)
 }
 
-// ===== 空态线性插画（T1-8：SVG 线稿替代 emoji，双主题令牌供色）=====
+// ===== 空态线性插画（SVG 线稿，双主题令牌供色）=====
 
 export type EmptyArtKind =
   | 'star'      // 愿望

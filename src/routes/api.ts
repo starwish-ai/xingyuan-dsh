@@ -327,7 +327,7 @@ function tasks(deps: ApiDeps): Record<string, unknown> {
   return { today: todayIso(), tasks: list.sort(byDisplayOrder) }
 }
 
-/** 任务详情聚合（T1-1）：任务快照 + 全部机会日网格事实 + 未来预览 + 微行动状态。 */
+/** 任务详情聚合：任务快照 + 全部机会日网格事实 + 未来预览 + 微行动状态。 */
 function taskDetail(deps: ApiDeps, taskId: string | undefined): Record<string, unknown> {
   const { store } = deps
   if (taskId === undefined || taskId.trim() === '') throw new ActionError('missing_field', '缺少必填字段：taskId', { field: 'taskId' })
@@ -361,7 +361,7 @@ function taskDetail(deps: ApiDeps, taskId: string | undefined): Record<string, u
   }
 }
 
-/** 分类清单（T1-3）：名称来自愿望分组；颜色解析顺序 global 覆盖 > 首个愿望显式键。 */
+/** 分类清单：名称来自愿望分组；颜色解析顺序 global 覆盖 > 首个愿望显式键。 */
 function categoriesPayload(deps: ApiDeps): Record<string, unknown> {
   const { store } = deps
   const counts = new Map<string, { count: number; wishColorKey?: string }>()
@@ -483,7 +483,7 @@ async function actionMemoryClear(deps: ApiDeps): Promise<unknown> {
   return { ok: true, count: keys.length }
 }
 
-// ===== 快速新建 / 删除（T1-4 / T1-1 操作栏）=====
+// ===== 快速新建 / 删除 =====
 
 function validateCategoryName(name: string): string {
   if (name.length < 2 || name.length > 6) {
@@ -576,7 +576,7 @@ async function actionDeleteWish(deps: ApiDeps, body: JsonBody): Promise<unknown>
   return { ok: true, wishId, title: wish.title }
 }
 
-// ===== 分类管理（T1-3）=====
+// ===== 分类管理 =====
 
 async function setCategoryOverride(deps: ApiDeps, name: string, colorKey: string | null): Promise<void> {
   const global = deps.store.domain.global.get()

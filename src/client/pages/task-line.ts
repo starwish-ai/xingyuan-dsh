@@ -4,7 +4,7 @@ import { postAction } from '../api.js'
 import { toast } from '../ui.js'
 import { useXyT } from '../i18n.js'
 import { softConfirm, useActionGuard } from '../hooks.js'
-import { cycleLabel, durationText, statusLabel, dateSuffix } from './format.js'
+import { cycleLabel, durationText, statusLabel, dateSuffix, formatShortDate } from './format.js'
 import type { ApiTask } from './types.js'
 
 export function TaskLine(props: {
@@ -12,7 +12,7 @@ export function TaskLine(props: {
   today: string
   /** 写成功后的上层刷新；返回 Promise 时 busy 窗口延伸到刷新完成。 */
   onChanged: () => void | Promise<void>
-  /** 展开详情控件插槽（详情聚合视图 T1-1 接线点）。 */
+  /** 展开详情控件插槽（TaskDetailPanel 接线点）。 */
   trailing?: ReactElement
 }): ReactElement {
   const t = useXyT()
@@ -27,9 +27,11 @@ export function TaskLine(props: {
   // 未来机会日：预勾 = 承诺当天完成（与对话侧确认语义一致），按钮如实标注并二次确认
   const futureDate = task.nextOpportunityDate !== undefined && task.nextOpportunityDate > today ? task.nextOpportunityDate : undefined
   const checkIn = (): void => {
-    if (futureDate !== undefined && !softConfirm(t('confirm.futureCheckin', { name: task.name, date: futureDate }))) return
-    act('checkin', { taskId: task.taskId }, (p) =>
-      t('toast.checkinOk') + dateSuffix(typeof p.date === 'string' ? String(p.date) : undefined))
+    const submit = (): void =>
+      act('checkin', { taskId: task.taskId }, (p) =>
+        t('toast.checkinOk') + dateSuffix(typeof p.date === 'string' ? String(p.date) : undefined))
+    if (futureDate === undefined) { submit(); return }
+    void softConfirm(t('confirm.futureCheckin', { name: task.name, date: futureDate })).then((ok) => { if (ok) submit() })
   }
   return createElement('div', { className: 'xy-taskline' },
     createElement('span', { className: 'xy-taskname' }, task.name),
@@ -45,7 +47,7 @@ export function TaskLine(props: {
           }, t('action.claim'))
         : task.status === 'in_progress'
           ? createElement('button', { className: 'xy-btn xy-btn-primary', disabled: busy, onClick: checkIn },
-              futureDate !== undefined ? t('action.checkinFuture', { date: futureDate.slice(5) }) : t('action.checkin'))
+              futureDate !== undefined ? t('action.checkinFuture', { date: formatShortDate(futureDate) }) : t('action.checkin'))
           : null,
       trailing),
   )

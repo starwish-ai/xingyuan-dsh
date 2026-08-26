@@ -20,6 +20,9 @@ export const STYLE_TEXT = `
   --xyd-danger-bg:#c0392b;
   --xyd-warn:#b45309;
   --xyd-ok:#0f766e;
+  /* 彩底小圆标的前景对：按主题配对保证 ≥4.5:1（深色亮底配深字） */
+  --xyd-on-ok:#ffffff;
+  --xyd-on-danger:#ffffff;
   /* 空态插画线稿色（结构色的弱化档） */
   --xyd-art-line:color-mix(in srgb, var(--dsw-alias-label-secondary) 72%, transparent);
   /* 圆角刻度 */
@@ -34,6 +37,8 @@ body[data-ds-dark-theme]{
   --xyd-danger-bg:#e2635a;
   --xyd-warn:#fbbf24;
   --xyd-ok:#34d399;
+  --xyd-on-ok:#052e21;
+  --xyd-on-danger:#3f1008;
 }
 
 .xy-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
@@ -64,9 +69,9 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-micro{border-color:rgba(255,169,77,.4)}
 .xy-microsteps{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
 .xy-microstep{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-inner);background:var(--dsw-alias-bg-layer-2)}
-.xy-microstep.xy-done{opacity:.66}
+.xy-microstep.xy-done{opacity:.74}
 .xy-microstep.xy-done .xy-microsteptext{text-decoration:line-through}
-.xy-microstep.xy-skipped{opacity:.5}
+.xy-microstep.xy-skipped{opacity:.58}
 .xy-microstepnum{flex:none;width:20px;height:20px;border-radius:50%;background:var(--xyd-accent);color:var(--xyd-on-accent);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;margin-top:1px}
 .xy-microsteptext{font-size:13px;display:flex;flex-direction:column;min-width:0}
 .xy-microstate{margin-left:auto;flex:none}
@@ -77,7 +82,8 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-arcwrap{margin-top:8px}
 .xy-arcnum{font-size:22px;font-weight:700;color:var(--xyd-accent);font-variant-numeric:tabular-nums}
 .xy-bar{height:8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);margin-top:6px;overflow:hidden}
-.xy-bar-fill{height:100%;border-radius:inherit;background:var(--xyd-accent);transition:width .35s cubic-bezier(.22,1,.36,1)}
+/* 填充走 scaleX（合成器动画）：width 过渡会逐帧触发布局，transform 只进合成器 */
+.xy-bar-fill{height:100%;border-radius:inherit;background:var(--xyd-accent);transform-origin:0 50%;transition:transform .35s cubic-bezier(.22,1,.36,1)}
 .xy-rows{list-style:none;margin-top:6px;display:flex;flex-direction:column;gap:4px;padding:0}
 .xy-row{display:flex;justify-content:space-between;font-size:13px}
 .xy-rowval{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
@@ -90,10 +96,27 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-toast{pointer-events:auto;display:flex;align-items:center;gap:9px;padding:9px 14px;border-radius:var(--xyd-r-card);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-primary);font-size:13px;box-shadow:0 8px 24px -8px rgba(15,23,42,.2),0 2px 8px -2px rgba(15,23,42,.1);animation:xy-toast-in .24s cubic-bezier(.22,1,.36,1);cursor:pointer}
 .xy-toast-out{opacity:0;transform:translateY(-6px);transition:opacity .22s ease,transform .22s ease}
 @keyframes xy-toast-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
-.xy-toast-glyph{flex:none;width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff}
-.xy-toast-ok .xy-toast-glyph{background:var(--dsw-alias-state-success-primary,var(--xyd-ok))}
+.xy-toast-glyph{flex:none;width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+.xy-toast-ok .xy-toast-glyph{background:var(--dsw-alias-state-success-primary,var(--xyd-ok));color:var(--xyd-on-ok)}
 .xy-toast-info .xy-toast-glyph{background:var(--xyd-accent);color:var(--xyd-on-accent)}
-.xy-toast-error .xy-toast-glyph{background:var(--xyd-danger-bg)}
+.xy-toast-error .xy-toast-glyph{background:var(--xyd-danger-bg);color:var(--xyd-on-danger)}
+.xy-toast-text{min-width:0;overflow-wrap:anywhere}
+
+/* ===== 应用内确认弹窗 =====
+ * 原生 window.confirm 的替代：遮罩 + 面板卡，全部走主题令牌（深浅色自适应）。
+ * 动效只用 opacity/transform；z-index 压过 toast 层，避免轻提示浮在弹窗之上。 */
+.xy-modal-backdrop{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--dsw-alias-bg-mask-1,rgba(15,23,42,.45));animation:xy-fade-in .16s ease-out}
+.xy-modal-backdrop.xy-modal-out{opacity:0;transition:opacity .15s ease}
+.xy-modal{width:min(400px,100%);background:var(--dsw-alias-bg-overlay,var(--dsw-alias-bg-layer-1));border:1px solid var(--dsw-alias-border-l2);border-radius:var(--xyd-r-card);padding:16px 18px;box-shadow:0 24px 48px -16px rgba(15,23,42,.35),0 4px 12px -4px rgba(15,23,42,.2);animation:xy-pop-in .18s cubic-bezier(.22,1,.36,1)}
+body[data-ds-dark-theme] .xy-modal{box-shadow:0 24px 48px -16px rgba(0,0,0,.55),0 4px 12px -4px rgba(0,0,0,.4)}
+.xy-modal-out .xy-modal{transform:scale(.98);transition:transform .15s ease}
+.xy-modal-msg{margin:0;font-size:14px;line-height:1.65;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere;max-height:min(56vh,440px);overflow-y:auto}
+.xy-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+@keyframes xy-fade-in{from{opacity:0}to{opacity:1}}
+@keyframes xy-pop-in{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}
+/* 实心危险确认键（删除类动作专用）：与描边危险键区分「已确认将执行」的重量 */
+.xy-btn-danger-solid{background:var(--xyd-danger-bg);border-color:transparent;color:var(--xyd-on-danger)}
+.xy-btn-danger-solid:hover:not(:disabled){filter:brightness(1.08);color:var(--xyd-on-danger)}
 
 /* ===== 骨架屏加载态 ===== */
 .xy-skel{border-radius:var(--xyd-r-inner);background:linear-gradient(90deg,var(--dsw-alias-bg-layer-2) 25%,var(--dsw-alias-bg-layer-1) 45%,var(--dsw-alias-bg-layer-2) 65%);background-size:200% 100%;animation:xy-shimmer 1.4s ease infinite}
@@ -101,7 +124,7 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-skel-row{height:64px;margin-top:10px}
 @keyframes xy-shimmer{from{background-position:180% 0}to{background-position:-20% 0}}
 
-/* ===== 空态插画（T1-8）===== */
+/* ===== 空态插画 ===== */
 .xy-page-center{display:flex;flex-direction:column;align-items:center;gap:6px;padding:44px 0;text-align:center}
 .xy-art{opacity:.92;margin-bottom:2px}
 .xy-empty-title{font-weight:600;color:var(--dsw-alias-label-primary);margin-top:4px}
@@ -109,7 +132,7 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 
 /* ===== 会话视图页骨架 ===== */
 /* 节奏锁：页 padding 18/20 · 区块间 14（section-title 上边距）· 行间距 6/10 */
-.xy-page{padding:18px 20px 26px;max-width:780px;margin:0 auto;color:var(--dsw-alias-label-primary);font-size:14px}
+.xy-page{box-sizing:border-box;width:100%;max-width:min(780px,100%);min-width:0;margin:0 auto;padding:18px 20px 26px;color:var(--dsw-alias-label-primary);font-size:14px;overflow-x:clip}
 .xy-page-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
 .xy-page-title{font-size:17px;font-weight:700;margin:0;color:var(--dsw-alias-label-primary)}
 .xy-section-title{font-size:12px;color:var(--dsw-alias-label-secondary);margin:14px 0 6px;font-weight:600;letter-spacing:.02em}
@@ -117,15 +140,15 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-page-actions{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap}
 
 /* 控件体系 */
-.xy-btn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-radius:var(--xyd-r-ctl);padding:4px 12px;font-size:13px;cursor:pointer;line-height:1.5;transition:border-color .15s ease,background-color .15s ease,color .15s ease,filter .15s ease,transform .12s ease}
+.xy-btn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-radius:var(--xyd-r-ctl);padding:5px 12px;min-height:28px;font-size:13px;cursor:pointer;line-height:1.5;transition:border-color .15s ease,background-color .15s ease,color .15s ease,filter .15s ease,transform .12s ease}
 .xy-btn:hover:not(:disabled){border-color:var(--xyd-accent);color:var(--xyd-accent)}
 .xy-btn:active:not(:disabled){transform:scale(.97)}
 .xy-btn:disabled{opacity:.55;cursor:not-allowed}
 .xy-btn:focus-visible,.xy-input:focus-visible,.xy-cell:focus-visible,.xy-seg-btn:focus-visible,.xy-toggle:focus-visible,.xy-swatch:focus-visible,.xy-growth-col:focus-visible{outline:2px solid var(--xyd-accent);outline-offset:2px}
 /* 触控基线：消除移动端双击缩放延迟与系统点按高亮（交互反馈统一由 hover/active 承担） */
 .xy-btn,.xy-seg-btn,.xy-cell,.xy-swatch,.xy-toggle,.xy-growth-col{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
-/* 行内按钮：≥24px 命中目标（卡片头/操作行的紧凑主战按钮） */
-.xy-btn-inline{margin-left:auto;padding:3px 10px;font-size:12px;min-height:24px;display:inline-flex;align-items:center}
+/* 行内按钮：≥26px 命中目标（卡片头/操作行的紧凑主战按钮） */
+.xy-btn-inline{margin-left:auto;padding:3px 10px;font-size:12px;min-height:26px;display:inline-flex;align-items:center}
 .xy-btn-primary{background:var(--xyd-accent);border-color:transparent;color:var(--xyd-on-accent)}
 .xy-btn-primary:hover:not(:disabled){filter:brightness(1.06);color:var(--xyd-on-accent)}
 .xy-btn-danger{color:var(--xyd-danger);border-color:color-mix(in srgb, var(--xyd-danger) 40%, transparent);background:transparent}
@@ -137,17 +160,13 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-field-err{color:var(--xyd-danger);font-size:12px;margin-top:4px}
 
 /* 列表行 */
-.xy-listrows{list-style:none;padding:0;margin:8px 0 0;display:flex;flex-direction:column;gap:6px}
-.xy-rowitem{list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-inner);background:var(--dsw-alias-bg-layer-1);transition:border-color .15s ease,box-shadow .15s ease}
-.xy-rowitem:hover{border-color:var(--dsw-alias-border-l2);box-shadow:0 1px 4px rgba(15,23,42,.06)}
-body[data-ds-dark-theme] .xy-rowitem:hover{box-shadow:0 1px 4px rgba(0,0,0,.3)}
 .xy-rowmain{display:flex;flex-direction:column;gap:2px;min-width:0}
 .xy-rowtitle{font-weight:600;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere}
 /* 完成态行首装饰勾（aria-hidden，语义由行文案承担） */
 .xy-done-glyph{color:var(--dsw-alias-state-success-primary,var(--xyd-ok));margin-right:2px}
 /* 高重要度星标：琥珀警示色（不复用完成勾的绿色，语义不撞车） */
 .xy-star-hi{color:var(--xyd-warn);margin-right:2px}
-.xy-done{opacity:.72}
+.xy-done{opacity:.78}
 .xy-banner-ok{margin-top:10px;padding:10px 12px;border-radius:var(--xyd-r-inner);background:rgba(56,217,169,.09);border:1px solid rgba(56,217,169,.35);font-size:13px}
 
 /* ===== 分组卡（任务页状态分桶 / 今日页待打卡·已完成共用）=====
@@ -200,37 +219,52 @@ body[data-ds-dark-theme] .xy-wishcard:hover{box-shadow:0 2px 10px rgba(0,0,0,.32
 .xy-taskname{grid-column:1;grid-row:1;font-weight:600;font-size:13px;overflow-wrap:anywhere}
 .xy-taskline>.xy-meta{grid-column:1;grid-row:2;margin-top:0}
 .xy-taskline>div:last-child{grid-column:2;grid-row:1/span 2;justify-self:end}
-/* 愿望卡删除：紧凑危险键，hover/focus 才显底色（低频高危动作不抢视觉；键盘聚焦与鼠标等效） */
-.xy-wishdel{padding:2px 8px;font-size:11px;opacity:.62}
+/* 愿望卡删除：紧凑危险键，hover/focus 才显底色（低频高危动作不抢视觉；键盘聚焦与鼠标等效）。
+ * 基础透明度 0.78 起步：危险色文字在任何主题下都保持 ≥4.5:1 可读，不靠「看不清」做弱化。 */
+.xy-wishdel{padding:2px 8px;font-size:11px;opacity:.78}
 .xy-wishdel:hover:not(:disabled),.xy-wishdel:focus-visible{opacity:1}
 
 /* ===== 日历 ===== */
-.xy-calhead{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:8px}
+/* 连续网格表（卡即表）：去格间隙、共享 1px 分割线、整卡单一圆角；星期头与图例自带内边距。
+ * 首尾空白补位是网格的延续（可见但无内容），切月时残行不再像断开的碎片。
+ * 密度：固定 40px 行高——正方格在 780 页宽下每格 ~96px 见方，整月占半屏以上。 */
+.xy-calcard{padding:0;overflow:hidden}
+.xy-calhead{display:grid;grid-template-columns:repeat(7,1fr);padding:9px 0 7px}
 .xy-calhead-cell{text-align:center;font-size:11px;color:var(--dsw-alias-label-secondary)}
-.xy-cal{display:flex;flex-direction:column;gap:6px;margin-top:4px}
-.xy-week{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
-.xy-cell{aspect-ratio:1;border-radius:var(--xyd-r-inner);border:none;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;padding:0;font-family:inherit;transition:box-shadow .15s ease}
-.xy-empty{visibility:hidden}
-.xy-c0{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);cursor:default}
-/* 待打卡 = 空心虚线格（与部分完成的实心琥珀拉开明度与质感双重差距） */
-.xy-c1{background:transparent;border:1px dashed var(--dsw-alias-border-l3);color:var(--dsw-alias-label-primary)}
+.xy-cal{display:flex;flex-direction:column;border-top:1px solid var(--dsw-alias-border-l1)}
+.xy-week{display:grid;grid-template-columns:repeat(7,1fr)}
+.xy-cell{height:40px;border:none;border-right:1px solid var(--dsw-alias-border-l1);border-bottom:1px solid var(--dsw-alias-border-l1);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;padding:0;font-family:inherit;background:transparent;color:var(--dsw-alias-label-primary);transition:box-shadow .15s ease}
+/* 每行第 7 格与末行去掉靠外分割线；焦点环内收（offset 负值）避免被卡片裁切或压到邻格 */
+.xy-week .xy-cell:nth-child(7n){border-right:none}
+.xy-week:last-child .xy-cell{border-bottom:none}
+.xy-cell:focus-visible{outline-offset:-3px}
+/* 邻月补位日：置灰、不可选（保持七列连续与星期对齐；纯视觉延续，读屏跳过） */
+.xy-outside{color:var(--dsw-alias-label-secondary);opacity:.55;cursor:default}
+/* 无安排 = 表底色留白 + 次要文字：连续网格下灰块反而显重 */
+.xy-c0{color:var(--dsw-alias-label-secondary);cursor:default}
+/* 待打卡 = 内嵌虚线框：负偏移 outline 不参与布局，与共享分割线互不干扰 */
+.xy-c1{outline:1px dashed var(--dsw-alias-border-l3);outline-offset:-4px}
 .xy-c2{background:rgba(255,169,77,.48);color:#5f3c00}
 .xy-c3{background:rgba(56,217,169,.42);color:#0b3d26}
 body[data-ds-dark-theme] .xy-c2{background:rgba(255,169,77,.26);color:#ffd9a8}
 body[data-ds-dark-theme] .xy-c3{background:rgba(46,160,105,.32);color:#a7f3c9}
-.xy-today{outline:2px solid var(--xyd-accent);outline-offset:1px}
-.xy-cell:not(.xy-empty):hover{box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--xyd-accent) 45%, transparent)}
+/* 今日/选中环走 inset box-shadow：不与 c1 的虚线 outline 抢同一属性，也不溢出到邻格 */
+.xy-today{box-shadow:inset 0 0 0 2px var(--xyd-accent)}
+.xy-cell:not(.xy-outside):hover{box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--xyd-accent) 45%, transparent)}
 .xy-picked{box-shadow:inset 0 0 0 2px var(--xyd-accent)}
-.xy-legend{display:flex;gap:14px;margin-top:10px;font-size:12px;color:var(--dsw-alias-label-secondary);align-items:center}
+.xy-legend{display:flex;gap:14px;margin-top:10px;font-size:12px;color:var(--dsw-alias-label-secondary);align-items:center;flex-wrap:wrap}
 .xy-dot{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:4px;vertical-align:-1px}
-.xy-dot.xy-c0{background:var(--dsw-alias-bg-layer-2)}
+.xy-dot.xy-dot-checked{background:var(--xyd-accent)}
+/* 图例缺口点：与柱体同一斜纹语法（单一事实源，两处永不漂移） */
+.xy-dot.xy-dot-gap{border:1px solid var(--dsw-alias-border-l2);background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--dsw-alias-label-secondary) 55%,transparent) 0 2px,transparent 2px 4px)}
+.xy-dot.xy-c0{background:transparent;border:1px solid var(--dsw-alias-border-l1)}
 .xy-dot.xy-c1{background:transparent;border:1px dashed var(--dsw-alias-border-l3)}
 .xy-dot.xy-c2{background:rgba(255,169,77,.48)}
 .xy-dot.xy-c3{background:rgba(56,217,169,.42)}
 body[data-ds-dark-theme] .xy-dot.xy-c2{background:rgba(255,169,77,.26)}
 body[data-ds-dark-theme] .xy-dot.xy-c3{background:rgba(46,160,105,.32)}
-/* 月历收进面板卡：星期头贴卡顶（抵消裸排版时代的 margin-top），图例随卡内节奏 */
-.xy-calcard .xy-calhead{margin-top:0}
+/* 卡即表后：图例自带侧边距贴卡底，替代旧面板内边距 */
+.xy-calcard .xy-legend{margin-top:0;padding:10px 14px 12px}
 /* 详情面板常驻并升级为附卡：固定最小高度 + 超长内部滚动，点击不同日期不再引起整页高度抖动 */
 .xy-daypanel{margin-top:10px;min-height:112px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-card);background:var(--dsw-alias-bg-layer-1);padding:11px 14px}
 .xy-daypanel .xy-daydetail{max-height:300px;overflow-y:auto;scrollbar-gutter:stable}
@@ -250,28 +284,34 @@ body[data-ds-dark-theme] .xy-dot.xy-c3{background:rgba(46,160,105,.32)}
 .xy-growth-stack{flex:1;display:flex;flex-direction:column;justify-content:flex-end;width:100%}
 .xy-growth-bar{background:var(--xyd-accent);border-radius:2px 2px 0 0;width:100%;transition:height .35s cubic-bezier(.22,1,.36,1)}
 .xy-growth-col.xy-full .xy-growth-bar{background:var(--dsw-alias-state-success-primary,var(--xyd-ok))}
-.xy-growth-missed{background:var(--dsw-alias-bg-layer-2);border-radius:2px 2px 0 0;width:100%}
+/* 未完成缺口：斜纹冗余编码（跟随主题文字色混合）——layer-2 实色在深色壳与面板底
+ * 几乎同亮度而隐形，斜纹在两种主题下都有稳定的纹理可见度，且与实心完成柱形成
+ * 「形状 × 颜色」双通道区分，不依赖色觉单通道 */
+.xy-growth-missed{width:100%;border-radius:2px 2px 0 0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--dsw-alias-label-secondary) 55%,transparent) 0 2px,transparent 2px 5px),color-mix(in srgb,var(--dsw-alias-label-secondary) 14%,transparent)}
 button.xy-growth-col{cursor:pointer}
-button.xy-growth-col:hover,button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--xyd-accent) 55%, transparent)}
-.xy-growth-axis{position:relative;height:16px;margin-top:4px}
-.xy-growth-tick{position:absolute;top:0;font-size:10px;line-height:16px;color:var(--dsw-alias-label-secondary);white-space:nowrap;font-variant-numeric:tabular-nums}
-/* 成长页悬浮明细（T1-7） */
+button.xy-growth-col:hover,button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--xyd-accent) 72%, transparent)}
+/* 基线贴柱底（与聊天图表卡的 SVG 基线同一语法），刻度层下移让出线的位置 */
+.xy-growth-axis{position:relative;height:20px;margin-top:0;border-top:1px solid var(--dsw-alias-border-l2)}
+.xy-growth-tick{position:absolute;top:4px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);white-space:nowrap;font-variant-numeric:tabular-nums}
+/* 成长页悬浮明细 */
 .xy-tip{position:relative;margin-top:0;min-height:20px;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-inner);padding:3px 10px;display:inline-block;font-variant-numeric:tabular-nums}
 .xy-tip:empty{visibility:hidden}
 /* 图表加载占位：与成品图等高，数据到达不引起下方内容位移 */
 .xy-chartload{height:150px;margin-top:8px}
 
 /* ===== 成长页：等级英雄卡 + 等级说明 ===== */
-.xy-hero{display:flex;gap:14px;align-items:center;border-radius:var(--xyd-r-card);padding:18px;margin-top:12px;box-shadow:0 2px 10px rgba(30,25,60,.12)}
+/* 渐变两端均为实色（深档→基档，见 growth.ts 的 color-mix 内联），白字对底色 ≥4.5:1
+ * 在浅色壳下同样成立——半透明渐变混入页面白底后右端会跌破 3:1，已弃用。 */
+.xy-hero{display:flex;gap:14px;align-items:center;border-radius:var(--xyd-r-card);padding:18px;margin-top:12px;border:1px solid rgba(255,255,255,.16);box-shadow:0 2px 10px rgba(30,25,60,.16)}
 .xy-herobadge{width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px;flex:none;text-shadow:0 1px 2px rgba(0,0,0,.18)}
 .xy-heromain{flex:1;min-width:0}
-.xy-onhero{color:rgba(255,255,255,.88)!important}
+.xy-onhero{color:rgba(255,255,255,.92)!important}
 .xy-herotitle{font-size:19px;font-weight:700;margin:3px 0 8px;color:#fff}
 .xy-bar-onhero{background:rgba(255,255,255,.28)}
 .xy-bar-fill-solid{background:#fff}
 .xy-heroreward{margin-top:8px}
 .xy-levels{display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-card);padding:4px 14px}
-.xy-levelrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--dsw-alias-border-l1);opacity:.55;font-size:13px}
+.xy-levelrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--dsw-alias-border-l1);opacity:.68;font-size:13px}
 .xy-levelrow:last-child{border-bottom:none}
 .xy-levelhit{opacity:1}
 .xy-lvnum{width:42px;height:24px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex:none}
@@ -300,7 +340,7 @@ button.xy-growth-col:hover,button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 
 .xy-field-head{display:flex;align-items:center;gap:8px;font-weight:600}
 .xy-input-wide{width:100%;max-width:360px;box-sizing:border-box}
 .xy-seg{display:flex;gap:6px;flex-wrap:wrap}
-.xy-seg-btn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border-radius:999px;padding:4px 14px;font-size:13px;cursor:pointer;transition:border-color .15s ease,background-color .15s ease,color .15s ease}
+.xy-seg-btn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border-radius:999px;padding:5px 14px;font-size:13px;cursor:pointer;transition:border-color .15s ease,background-color .15s ease,color .15s ease}
 .xy-seg-btn:hover{border-color:var(--xyd-accent)}
 /* 选中态双选择器：类名与 aria-pressed 属性等价（组件侧用属性表达状态语义） */
 .xy-seg-btn.xy-on,.xy-seg-btn[aria-pressed='true']{background:var(--xyd-accent);border-color:transparent;color:var(--xyd-on-accent)}
@@ -311,7 +351,7 @@ button.xy-growth-col:hover,button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 
 .xy-toggle:checked::after{left:18px;background:var(--xyd-on-accent)}
 .xy-hint{color:var(--dsw-alias-label-secondary);font-size:12px;margin:0}
 
-/* ===== 详情聚合视图（T1-1）===== */
+/* ===== 详情聚合视图 ===== */
 .xy-detail{margin-top:8px;border-top:1px dashed var(--dsw-alias-border-l1);padding-top:8px;display:flex;flex-direction:column;gap:8px}
 .xy-detail-grid{display:flex;flex-wrap:wrap;gap:4px;padding:4px 0}
 /* 打卡格：22px + 11px 数字（可读性下限）；radius 6 为徽章级微元素例外档 */
@@ -330,7 +370,7 @@ body[data-ds-dark-theme] .xy-dot.xy-dcell-checked{background:rgba(46,160,105,.45
 /* 危险删除右置：与常规动作拉开距离，防误触邻接 */
 .xy-detail-danger{margin-left:auto}
 
-/* ===== 分类管理（T1-3）===== */
+/* ===== 分类管理 ===== */
 .xy-catpanel{margin-top:10px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-card);background:var(--dsw-alias-bg-layer-1);padding:12px 14px}
 .xy-catrow{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .xy-catrow:last-child{border-bottom:none}
@@ -340,11 +380,13 @@ body[data-ds-dark-theme] .xy-dot.xy-dcell-checked{background:rgba(46,160,105,.45
 /* 色板格：24px 命中目标 + hover 描边 + 主题令牌描边（深色下不再隐身） */
 .xy-swatch{width:24px;height:24px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);cursor:pointer;padding:0;position:relative;transition:box-shadow .15s ease}
 .xy-swatch:hover{box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--xyd-accent) 55%, transparent)}
-.xy-swatch.xy-picked::after{content:'✓';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;text-shadow:0 1px 2px rgba(0,0,0,.55)}
+/* 选中态双环（内白隙 + 外强调圈）：任何色相下都清晰可辨，不依赖对勾本身的对冲 */
+.xy-swatch.xy-picked{box-shadow:inset 0 0 0 2px rgba(255,255,255,.85),0 0 0 2px var(--xyd-accent)}
+.xy-swatch.xy-picked::after{content:'✓';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700;text-shadow:0 0 2px rgba(0,0,0,.85),0 1px 3px rgba(0,0,0,.6)}
 .xy-catloading{padding:6px 0}
 .xy-rename{display:flex;gap:6px;align-items:center;margin-top:8px}
 
-/* ===== 快速新建（T1-4）===== */
+/* ===== 快速新建 ===== */
 .xy-quick{margin-top:10px;border:1px dashed var(--dsw-alias-border-l2);border-radius:var(--xyd-r-card);padding:12px 14px;display:flex;flex-direction:column;gap:10px;background:var(--dsw-alias-bg-layer-1)}
 .xy-quick-row{display:flex;gap:10px;flex-wrap:wrap}
 .xy-quick-field{display:flex;flex-direction:column;gap:4px;min-width:150px;flex:1}
@@ -352,16 +394,17 @@ body[data-ds-dark-theme] .xy-dot.xy-dcell-checked{background:rgba(46,160,105,.45
 .xy-quick-actions{display:flex;gap:10px;align-items:center}
 
 /* ===== 滚动条槽位恒定（宽度防抖第二道保险）=====
- * 壳在输入框浮层模式下把滚动容器 gutter 放开为 auto，经典滚动条按需出现会抽走
- * ~15px 宽度（点「新建」展开表单即触发）。这里按 CSS Modules「哈希前缀_语义后缀」
- * 的稳定命名惯例匹配壳滚动容器，浮层模式也强制常驻槽位；与 useStableScrollbar
- * 运行时钉住互为冗余。 */
-[class*='_scrollBody']:has([data-conversation-composer-overlay]){scrollbar-gutter:stable!important}
+ * 壳的会话滚动容器（CSS Modules「哈希前缀_语义后缀」稳定命名 + data-conversation-scroll
+ * 标记）默认 gutter stable，但输入框浮层模式会主动放开为 auto——经典滚动条按需出现会抽走
+ * ~15px 宽度（点「新建」展开表单、展开详情即触发），居中页面随之整帧左右弹跳。
+ * 这里对滚动容器本身无条件强制常驻槽位；与 useStableScrollbar 的 useLayoutEffect
+ * 运行时钉住互为冗余（样式先于首帧，运行时兜底壳侧节点替换）。 */
+[class*='_scrollBody'][data-conversation-scroll]{scrollbar-gutter:stable!important}
 
-/* 弱化动画偏好：尊重 prefers-reduced-motion（含开关滑块、hover 过渡、插画无动画、toast 进出场） */
+/* 弱化动画偏好：尊重 prefers-reduced-motion（含开关滑块、hover 过渡、插画无动画、toast 进出场、确认弹窗） */
 @media (prefers-reduced-motion: reduce){
-  .xy-skel,.xy-toast{animation:none}
-  .xy-toast-out{transition:none}
-  .xy-bar-fill,.xy-btn,.xy-toggle,.xy-toggle::after,.xy-rowitem,.xy-wishcard,.xy-cell,.xy-growth-bar,.xy-seg-btn,.xy-input,.xy-swatch,.xy-grouprow{transition:none}
+  .xy-skel,.xy-toast,.xy-modal-backdrop,.xy-modal{animation:none}
+  .xy-toast-out,.xy-modal-backdrop.xy-modal-out,.xy-modal-out .xy-modal{transition:none}
+  .xy-bar-fill,.xy-btn,.xy-toggle,.xy-toggle::after,.xy-wishcard,.xy-cell,.xy-growth-bar,.xy-seg-btn,.xy-input,.xy-swatch,.xy-grouprow{transition:none}
 }
 `

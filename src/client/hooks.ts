@@ -3,9 +3,9 @@
  * 滚动条槽位稳定（useStableScrollbar）、本地日期口径（localYmd）、近 N 天窗口。
  * 六页取数样板统一收口——新页面取数 ≤3 行起步（T2-1）。
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { getJson, describeError } from './api.js'
-import { toastError } from './ui.js'
+import { confirmDialog, toastError } from './ui.js'
 
 /** 本地时区 yyyy-MM-dd（与机会日计算器的本地「今天」同口径；禁用 toISOString 的 UTC 偏移）。 */
 export function localYmd(date: Date): string {
@@ -95,8 +95,10 @@ export function useStableScrollbar(): (node: HTMLElement | null) => void {
     }
   }, [])
 
-  // 无依赖数组：每次提交后执行，捕捉壳侧节点替换与结构变化（幂等，已钉的跳过）
-  useEffect(() => { pin() })
+  // 无依赖数组：每次提交后执行，捕捉壳侧节点替换与结构变化（幂等，已钉的跳过）。
+  // 用 useLayoutEffect：钉住发生在浏览器绘制前——展开详情/新建让内容变高时，
+  // 竖向滚动条出现的同一帧槽位已就位，经典滚动条不再引起整页宽度抖动。
+  useLayoutEffect(() => { pin() })
 
   // 仅最终卸载时还原，避免逐次提交的样式抖动
   useEffect(() => () => {
@@ -112,7 +114,16 @@ export function useStableScrollbar(): (node: HTMLElement | null) => void {
   }, [pin])
 }
 
-/** 破坏性轻操作的防误触确认（撤销/预勾未来日）；正向操作不拦。 */
-export function softConfirm(message: string): boolean {
-  return window.confirm(message)
+/**
+ * 写操作确认（应用内弹窗，替代原生 window.confirm）：Promise 结算；
+ * 调用方以 `softConfirm(msg).then((ok) => { if (ok) … })` 表达「确认后才继续」。
+ * 删除类不可逆动作请再传 danger 语义（见 confirmDialog）。
+ */
+export function softConfirm(message: string): Promise<boolean> {
+  return confirmDialog(message)
+}
+
+/** 删除类确认（实心危险键）：与 softConfirm 同一交互闭环，仅视觉强调不可逆。 */
+export function softConfirmDanger(message: string): Promise<boolean> {
+  return confirmDialog({ message, danger: true })
 }

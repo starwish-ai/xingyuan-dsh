@@ -30,7 +30,7 @@ export interface XingyuanGlobal {
    */
   microActions?: Record<string, MicroActionState>
   /**
-   * 分类颜色覆盖（T1-3）：分类名 → 22 键 colorKey。解析顺序 = 此覆盖 > 愿望显式
+   * 分类颜色覆盖：分类名 → 22 键 colorKey。解析顺序 = 此覆盖 > 愿望显式
    * colorKey > 分类名哈希兜底；optional 字段同款向后兼容模式。
    */
   categoryColors?: Record<string, string>

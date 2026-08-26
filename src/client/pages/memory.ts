@@ -1,8 +1,8 @@
-/** 记忆页：搜索/新增/编辑/删除/清空 + 分页加载更多（T1-6：offset/limit 端点，任意条数可浏览）。 */
+/** 记忆页：搜索/新增/编辑/删除/清空 + 分页加载更多（offset/limit，任意条数可浏览）。 */
 import { createElement, useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import { getJson, postAction, ActionError } from '../api.js'
 import { useXyT, t as translate } from '../i18n.js'
-import { softConfirm, useActionGuard, usePageData, useStableScrollbar } from '../hooks.js'
+import { softConfirm, softConfirmDanger, useActionGuard, usePageData, useStableScrollbar } from '../hooks.js'
 import { PageEmpty, PageError, PageSkeleton, toast } from '../ui.js'
 import type { MemoriesPayload, MemoryItem } from './types.js'
 
@@ -46,7 +46,7 @@ export function MemoryPage(): ReactElement {
   )
   const { busy, guard } = useActionGuard()
 
-  // 加载更多（T1-6）：追加页累积；搜索词变化时重置（usePageData 换首屏，more 必须清空）。
+  // 加载更多：追加页累积；搜索词变化时重置（usePageData 换首屏，more 必须清空）。
   // 追加请求带代数守卫：防抖换词/写后刷新触发的重置会让在途旧页失效——慢响应不得再追加
   const [more, setMore] = useState<ReadonlyArray<MemoryItem>>([])
   const [loadingMore, setLoadingMore] = useState(false)
@@ -126,7 +126,7 @@ export function MemoryPage(): ReactElement {
     window.setTimeout(() => valueInputRef.current?.focus(), 0)
   }
 
-  /** 保存记忆；服务端因「已存在未带 overwrite」拒绝时（code=overwrite_required）补确认重试一次。 */
+  /** 保存记忆本体（写成功 → 刷新 + 短通知 + 复位表单）。 */
   const submitMemory = (overwrite: boolean): Promise<void> =>
     postAction('memory-add', { key: keyDraft.trim(), value: valueDraft.trim(), category, importance, overwrite })
       .then((payload) => {
@@ -137,45 +137,61 @@ export function MemoryPage(): ReactElement {
         resetForm()
       })
 
+  /** 实际保存：服务端因「已存在未带 overwrite」拒绝时（code=overwrite_required）补确认重试一次。 */
+  const doSave = (overwrite: boolean): void => {
+    guard(() =>
+      submitMemory(overwrite).catch((e: unknown) => {
+        // 稳定错误码判定（不再嗅探 message 文本）：需要覆盖确认时弹应用内确认重试一次；
+        // 用户拒绝则维持原错误（toast 呈现 overwrite_required 文案）
+        if (e instanceof ActionError && e.code === 'overwrite_required') {
+          return softConfirm(t('memory.overwriteAsk', { key: keyDraft.trim() })).then((ok) => {
+            if (!ok) throw e
+            return submitMemory(true)
+          })
+        }
+        throw e
+      }))
+  }
+
   const saveForm = (): void => {
     const key = keyDraft.trim()
     const value = valueDraft.trim()
     if (key === '' || value === '') { setFormError(t('memory.needKeyAndValue')); return }
     setFormError(undefined)
     const knownExists = editingKey !== undefined || allItems.some((m) => m.key === key)
-    if (knownExists && editingKey === undefined && !softConfirm(t('memory.overwriteAsk', { key }))) return
-    guard(() =>
-      submitMemory(knownExists).catch((e: unknown) => {
-        // 稳定错误码判定（不再嗅探 message 文本）：需要覆盖确认时补确认重试一次
-        if (e instanceof ActionError && e.code === 'overwrite_required' && softConfirm(t('memory.overwriteAsk', { key }))) {
-          return submitMemory(true)
-        }
-        throw e
-      }))
+    if (knownExists && editingKey === undefined) {
+      void softConfirm(t('memory.overwriteAsk', { key })).then((ok) => { if (ok) doSave(false) })
+      return
+    }
+    doSave(knownExists)
   }
 
   const removeOne = (m: MemoryItem): void => {
-    if (!softConfirm(t('memory.confirmDelete', { key: m.key, value: m.value }))) return
-    // 删除的正是正在编辑的条目：成功后必须复位编辑态，否则残留的 editingKey
-    // 会让下一次保存以 overwrite:true 静默重建这条已删除记录（无确认、无感知）。
-    // 复位挂在成功分支——删除失败时草稿照常保留
-    const wasEditing = editingKey === m.key
-    guard(() => postAction('memory-delete', { key: m.key }).then(() => {
-      refreshAll()
-      flash(t('memory.deletedOne', { key: m.key }))
-      if (wasEditing) resetForm()
-    }))
+    void softConfirmDanger(t('memory.confirmDelete', { key: m.key, value: m.value })).then((ok) => {
+      if (!ok) return
+      // 删除的正是正在编辑的条目：成功后必须复位编辑态，否则残留的 editingKey
+      // 会让下一次保存以 overwrite:true 静默重建这条已删除记录（无确认、无感知）。
+      // 复位挂在成功分支——删除失败时草稿照常保留
+      const wasEditing = editingKey === m.key
+      guard(() => postAction('memory-delete', { key: m.key }).then(() => {
+        refreshAll()
+        flash(t('memory.deletedOne', { key: m.key }))
+        if (wasEditing) resetForm()
+      }))
+    })
   }
 
   const clearAll = (): void => {
     if (data.total === 0) return
-    if (!softConfirm(t('memory.confirmClear', { total: data.total }))) return
     // 清空后任何编辑态都失去载体（同 removeOne 的复活风险），成功后一并复位
-    guard(() => postAction('memory-clear', {}).then(() => {
-      refreshAll()
-      flash(t('memory.clearedAll'))
-      resetForm()
-    }))
+    void softConfirmDanger(t('memory.confirmClear', { total: data.total })).then((ok) => {
+      if (!ok) return
+      guard(() => postAction('memory-clear', {}).then(() => {
+        refreshAll()
+        flash(t('memory.clearedAll'))
+        resetForm()
+      }))
+    })
   }
 
   const rows = filtered.map((m) => createElement('li', { key: m.key, className: 'xy-grouprow' },
@@ -203,24 +219,24 @@ export function MemoryPage(): ReactElement {
     createElement('div', { className: 'xy-compose' },
       createElement('input', {
         className: 'xy-input xy-input-grow', placeholder: t('memory.keyPlaceholder'), maxLength: 50,
-        'aria-label': t('memory.fieldKey'), autoComplete: 'off',
+        'aria-label': t('memory.fieldKey'), autoComplete: 'off', name: 'memory-key', spellCheck: false,
         disabled: editingKey !== undefined,
         value: keyDraft, onChange: (e: { target: { value: string } }) => { setKeyDraft(e.target.value); setFormError(undefined) },
       }),
       createElement('input', {
         className: 'xy-input xy-input-grow', placeholder: t('memory.valuePlaceholder'), maxLength: 1000,
-        'aria-label': t('memory.fieldValue'), autoComplete: 'off',
+        'aria-label': t('memory.fieldValue'), autoComplete: 'off', name: 'memory-value',
         ref: valueInputRef,
         'aria-invalid': formError !== undefined || undefined,
         ...(formError !== undefined ? { 'aria-describedby': 'xy-memory-form-error' } : {}),
         value: valueDraft, onChange: (e: { target: { value: string } }) => { setValueDraft(e.target.value); setFormError(undefined) },
       }),
       createElement('select', {
-        className: 'xy-input', value: category, 'aria-label': t('memory.fieldCategory'),
+        className: 'xy-input', value: category, 'aria-label': t('memory.fieldCategory'), name: 'memory-category',
         onChange: (e: { target: { value: string } }) => setCategory(e.target.value),
       }, ...MEMORY_CATEGORY_IDS.map((id, i) => createElement('option', { key: id, value: id }, t(MEMORY_CATEGORY_KEYS[i]!)))),
       createElement('select', {
-        className: 'xy-input', value: importance, 'aria-label': t('memory.fieldImportance'),
+        className: 'xy-input', value: importance, 'aria-label': t('memory.fieldImportance'), name: 'memory-importance',
         onChange: (e: { target: { value: string } }) => setImportance(e.target.value),
       }, ...MEMORY_IMPORTANCE_IDS.map((id, i) => createElement('option', { key: id, value: id }, t(MEMORY_IMPORTANCE_KEYS[i]!)))),
       createElement('button', { className: 'xy-btn xy-btn-primary', disabled: busy, onClick: saveForm },
@@ -231,7 +247,7 @@ export function MemoryPage(): ReactElement {
     createElement('div', { className: 'xy-membar' },
       createElement('input', {
         type: 'search', className: 'xy-input xy-input-search', placeholder: t('memory.searchPlaceholder'),
-        'aria-label': t('memory.searchAria'), autoComplete: 'off',
+        'aria-label': t('memory.searchAria'), autoComplete: 'off', name: 'memory-search', enterKeyHint: 'search',
         value: query, onChange: (e: { target: { value: string } }) => setQuery(e.target.value),
       }),
       notice !== undefined ? createElement('span', { className: 'xy-saved', role: 'status' }, notice) : null),

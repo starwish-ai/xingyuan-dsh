@@ -26,16 +26,38 @@ export function statusLabel(status: string): string {
   return key !== undefined ? t(key) : status
 }
 
-/** 进度时长：「{done}/{required} 天」或无上限时「{done} 次」。 */
+/**
+ * 进度时长：「{done}/{required} 天」或无上限时「{done} 次」。
+ * 计数在英文下经 Intl.PluralRules 分单复数（1 time / n times）；zh 两键同文无感。
+ */
 export function durationText(completed: number, required: number): string {
-  return required > 0
-    ? t('common.dayUnit', { n: `${completed}/${required}` })
-    : t('common.countUnit', { n: completed })
+  if (required > 0) return t('common.dayUnit', { n: `${completed}/${required}` })
+  const key = englishPlural(completed) ? 'common.countUnit' : 'common.countUnitOne'
+  return t(key, { n: completed })
+}
+
+/** 英文语境下名词是否应用复数键（其他 locale 恒 false，调用方两键同文即可）。 */
+export function englishPlural(n: number): boolean {
+  return activeLocale() === 'en' && new Intl.PluralRules('en-US').select(n) !== 'one'
+}
+
+/** 单复数键选择：zh 两键同文取 manyKey 即可；en 经 Intl.PluralRules 分档。 */
+export function countKey<K extends XyKey>(n: number, oneKey: K, manyKey: K): K {
+  return englishPlural(n) ? manyKey : oneKey
 }
 
 /** 打卡日期后缀（toast/完成态用）：zh 全角括号 / en 半角括号，由词典统一口径。 */
 export function dateSuffix(date: string | undefined): string {
   return date !== undefined && date !== '' ? t('common.dateSuffix', { date }) : ''
+}
+
+/** 紧凑按钮内的本地化短日期：'2026-03-05' → 「3月5日」/「Mar 5」（解析失败原样回显）。 */
+export function formatShortDate(ymd: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd)
+  if (match === null) return ymd
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12)
+  if (Number.isNaN(date.getTime())) return ymd
+  return new Intl.DateTimeFormat(LOCALE_TAG[activeLocale()], { month: 'short', day: 'numeric' }).format(date)
 }
 
 // ===== Intl 日历文案（业界实践：本地化交给 Intl.DateTimeFormat，不手写格式） =====
