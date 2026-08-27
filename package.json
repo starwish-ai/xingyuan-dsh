@@ -42,8 +42,8 @@
       "default": "./lib/sqlite.js"
     },
     "./routes": {
-      "types": "./lib/types/routes.d.ts",
-      "default": "./lib/routes.js"
+      "types": "./lib/types/routes/index.d.ts",
+      "default": "./lib/routes/index.js"
     },
     "./preset/side": {
       "types": "./lib/types/preset/side.d.ts",
