@@ -60,6 +60,26 @@ export function formatShortDate(ymd: string): string {
   return new Intl.DateTimeFormat(LOCALE_TAG[activeLocale()], { month: 'short', day: 'numeric' }).format(date)
 }
 
+/**
+ * 友好全称日期：'2026-08-27' → 「8月27日 周四」/「Thu, Aug 27」。
+ * 展示性标题统一走这里，杜绝界面裸奔 ISO 串；解析失败回退原值（防御脏数据）。
+ */
+export function formatFriendlyDate(ymd: string): string {
+  const short = formatShortDate(ymd)
+  const wd = formatWeekday(ymd)
+  if (short === ymd || wd === '') return ymd
+  return activeLocale() === 'en' ? `${wd}, ${short}` : `${short} ${wd}`
+}
+
+/** 带年份的中格式（远期目标日）：'2026-11-24' → 「2026年11月24日」/「Nov 24, 2026」。 */
+export function formatMediumDate(ymd: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd)
+  if (match === null) return ymd
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12)
+  if (Number.isNaN(date.getTime())) return ymd
+  return new Intl.DateTimeFormat(LOCALE_TAG[activeLocale()], { dateStyle: 'medium' }).format(date)
+}
+
 // ===== Intl 日历文案（业界实践：本地化交给 Intl.DateTimeFormat，不手写格式） =====
 
 const LOCALE_TAG: Record<'zh' | 'en', string> = { zh: 'zh-CN', en: 'en-US' }

@@ -355,7 +355,7 @@ const MEMORY_GUIDE = `# 记忆操作指南
 
 ## 注意事项
 - 首次保存使用save_memory，修改使用update_memory
-- 高重要性（high）的记忆会自动加载到上下文（上限见系统上下文注入）`
+- 高（high）/中（medium）重要性的记忆会自动加载到上下文，低（low）不会注入`
 
 const CONFIG_GUIDE = `# 用户配置指南
 
@@ -470,7 +470,7 @@ export function registerPrompts(ctx: Context & { xingyuan: XingyuanStore }, conf
         '<user_profile>',
         '# 用户画像与长期记忆',
         ...lines,
-        overflow > 0 ? `- …另有 ${overflow} 条较低价值记忆未注入，可用 search_memory 检索` : '',
+        overflow > 0 ? `- …另有 ${overflow} 条中高重要性记忆超出注入上限，可用 search_memory 检索` : '',
         '</user_profile>',
       ].filter((line) => line !== '').join('\n')
     },

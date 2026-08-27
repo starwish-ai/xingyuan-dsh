@@ -40,7 +40,8 @@ export interface Config {
 
 /** 配置 schema（默认值写进 schema；加载期校验失败即响亮报错）。 */
 export const Config: z<Config> = z.object({
-  memoryInjectLimit: z.number().default(40),
+  // 5-200 与设置页文案/客户端夹取范围同口径，服务端兜底防越界
+  memoryInjectLimit: z.number().default(40).min(5).max(200),
   batchWishLimit: z.number().default(50),
   batchTaskLimit: z.number().default(100),
   chartTrendDays: z.number().default(14),

@@ -3,9 +3,10 @@ import { createElement, useState, type ReactElement } from 'react'
 import { postAction } from '../api.js'
 import { useXyT } from '../i18n.js'
 import { softConfirmDanger, useActionGuard, usePageData, useStableScrollbar } from '../hooks.js'
-import { PageEmpty, PageError, PageSkeleton, toast } from '../ui.js'
+import { PageEmpty, PageError, PageSkeleton, toast, IconTrash } from '../ui.js'
 import { categoryVars } from '../../category-color.js'
 import { TaskLine } from './task-line.js'
+import { formatMediumDate } from './format.js'
 import { DetailToggle, TaskDetailPanel } from './detail.js'
 import { CategoryManager } from './categories.js'
 import { WishQuickForm } from './quick-create.js'
@@ -76,15 +77,15 @@ export function WishesPage(): ReactElement {
         createElement('span', { className: 'xy-title' }, wish.title),
         createElement('span', { className: 'xy-progress-num' }, t('wish.progress', { percent: wish.progress })),
         createElement('button', {
-          className: 'xy-btn xy-btn-danger xy-wishdel',
+          className: 'xy-btn xy-btn-danger xy-btn-icon xy-wishdel',
           disabled: deleting,
           'aria-label': t('common.delete') + ' · ' + wish.title,
           title: t('common.delete'),
           onClick: () => removeWish(wish),
-        }, t('common.delete'))),
+        }, createElement(IconTrash))),
       wish.description !== undefined ? createElement('div', { className: 'xy-meta' }, wish.description) : null,
       wish.estimatedCompletionDate !== undefined
-        ? createElement('div', { className: 'xy-meta' }, t('wish.eta', { date: wish.estimatedCompletionDate }))
+        ? createElement('div', { className: 'xy-meta' }, t('wish.eta', { date: formatMediumDate(wish.estimatedCompletionDate) }))
         : null,
       createElement('div', { className: 'xy-bar' },
         createElement('div', { className: 'xy-bar-fill', style: { transform: `scaleX(${Math.min(wish.progress, 100) / 100})` } })),

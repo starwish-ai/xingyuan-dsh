@@ -49,10 +49,10 @@ const ERROR_KEY: Record<ActionErrorCode, XyKey> = {
 
 /** 把任意抛错转成用户可读文案：ActionError 按键本地化；其余直出消息。 */
 export function describeError(e: unknown): string {
-  if (e instanceof ActionError) return t(ERROR_KEY[e.code], e.params)
-  const message = e instanceof Error ? e.message : String(e)
-  // 兼容旧口径服务端纯中文消息里的「${date} 已打卡」模式（恢复卡片态用）
-  return message
+  if (!(e instanceof ActionError)) return e instanceof Error ? e.message : String(e)
+  // 服务端新增未知 code 时回落原始消息，避免渲染 undefined 或插值崩溃
+  const key = ERROR_KEY[e.code]
+  return key !== undefined ? t(key, e.params) : e.message
 }
 
 export async function postAction(path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {

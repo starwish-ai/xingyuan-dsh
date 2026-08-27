@@ -5,32 +5,33 @@
  *
  * 校验失败抛 ActionError（400 + 稳定 code）；未知路径抛 HttpError(404)。
  */
-import type { XingyuanStore, TaskRecord, MemoryRecord, WishRecord } from '../domain.js'
+import type { XingyuanStore, TaskRecord, MemoryRecord } from '../domain.js'
 import { COACH_STYLES } from '../domain.js'
 import type { DayPlan } from '../store.js'
 import {
   allMemories,
   anchorOf,
   checkedDatesOf,
+  createTask,
+  createWish,
+  cancelCheckIn,
+  claimTask,
   freshTask,
   freshWish,
   monthRange,
+  performCheckIn,
   planForDay,
   planForRange,
+  renameCategory,
   saveMemory,
   searchMemories,
-  createTask,
-  cancelCheckIn,
-  claimTask,
-  performCheckIn,
-  renameCategory,
-  syncWishProgress,
+  validateCategoryName,
+  validateColorKey,
 } from '../store.js'
 import { addDays, calculateOpportunityDates, findFirstUncheckedOpportunityDate, todayIso } from '../opportunity.js'
 import { LEVEL_CONFIGS, growthSummary } from '../growth.js'
 import { getMicroAction } from '../micro.js'
 import { removeTaskCompletely, removeWishCompletely } from '../cascade.js'
-import { CATEGORY_COLOR_KEYS } from '../category-color.js'
 import { ActionError, HttpError } from './errors.js'
 import type { RoutesConfig } from './config.js'
 
@@ -436,7 +437,7 @@ async function actionUpdateProfile(deps: ApiDeps, body: JsonBody): Promise<unkno
   return profilePayload(deps)
 }
 
-/** 记忆列表（支持 offset/limit 分页与 q 搜索；搜索不受分页影响——搜索走全量匹配）。 */
+/** 记忆列表（q 命中后与全量同样按 offset/limit 切页；limit 缺省走 bundle 配置）。 */
 function memoriesPayload(deps: ApiDeps, keyword?: string, offset?: number, limit?: number): Record<string, unknown> {
   const { store } = deps
   const list = keyword !== undefined && keyword.trim() !== '' ? searchMemories(store, keyword) : allMemories(store)
@@ -485,49 +486,19 @@ async function actionMemoryClear(deps: ApiDeps): Promise<unknown> {
 
 // ===== 快速新建 / 删除 =====
 
-function validateCategoryName(name: string): string {
-  if (name.length < 2 || name.length > 6) {
-    throw new ActionError('bad_category_name', '分类名需 2-6 个字符', { name })
-  }
-  return name
-}
-
-function validateColorKey(colorKey: string | undefined): string | undefined {
-  if (colorKey === undefined || colorKey === '') return undefined
-  if (!(CATEGORY_COLOR_KEYS as readonly string[]).includes(colorKey)) {
-    throw new ActionError('bad_color_key', `未知颜色键：${colorKey}`, { colorKey })
-  }
-  return colorKey
-}
+// 分类名/颜色键校验已收口至 store（validateCategoryName/validateColorKey），
+// 与对话工具同源抛稳定 code，客户端本地化文案保持一致。
 
 async function actionCreateWish(deps: ApiDeps, body: JsonBody): Promise<unknown> {
   requireFields(body, ['title', 'categoryName'])
-  const title = clampStr(body.title, 50)
-  if (title === '') throw new ActionError('missing_field', '标题不能为空', { field: 'title' })
-  const categoryName = validateCategoryName(clampStr(body.categoryName, 6))
-  const colorKey = validateColorKey(strOrUndef(body.colorKey))
-  const description = strOrUndef(body.description)
-  const today = todayIso()
-  let estimatedCompletionDate: string | undefined
-  const etaRaw = strOrUndef(body.estimatedCompletionDate)
-  if (etaRaw !== undefined) {
-    estimatedCompletionDate = isoDateOrThrow(etaRaw)
-    if (estimatedCompletionDate < today) throw new ActionError('due_past', '预计完成日期不能早于今天')
-  }
-  const wish: WishRecord = {
-    wishId: deps.store.newId(),
-    title,
-    categoryName,
-    ...(colorKey !== undefined ? { colorKey } : {}),
-    ...(description !== undefined ? { description } : {}),
-    ...(estimatedCompletionDate !== undefined ? { estimatedCompletionDate } : {}),
-    progress: 0,
-    totalRequiredDays: 0,
-    totalCompletedDays: 0,
-    archived: false,
-    createdAt: `${today}T00:00:00`,
-  }
-  await deps.store.domain.table('wishes').put(wish.wishId, wish)
+  // 记录构造与校验统一走 store.createWish（工具面同一收口）；此处不再静默截断字段
+  const wish = await createWish(deps.store, {
+    title: String(body.title),
+    categoryName: String(body.categoryName),
+    ...(strOrUndef(body.colorKey) !== undefined ? { colorKey: strOrUndef(body.colorKey) } : {}),
+    ...(strOrUndef(body.description) !== undefined ? { description: strOrUndef(body.description) } : {}),
+    ...(strOrUndef(body.estimatedCompletionDate) !== undefined ? { estimatedCompletionDate: strOrUndef(body.estimatedCompletionDate) } : {}),
+  }, todayIso())
   return { ok: true, wish: { ...freshWish(deps.store, wish) } }
 }
 
@@ -551,7 +522,7 @@ async function actionCreateTask(deps: ApiDeps, body: JsonBody): Promise<unknown>
     ...(hint !== undefined ? { hint } : {}),
     source: 'user',
   }, todayIso())
-  if (task.wishId !== undefined) await syncWishProgress(deps.store, task.wishId)
+  // 愿望库存进度由 createTask 内部联动落库（与工具面同一收口）
   return { ok: true, task: taskView(deps.store, task) }
 }
 
@@ -561,7 +532,6 @@ async function actionDeleteTask(deps: ApiDeps, body: JsonBody): Promise<unknown>
   const taskId = String(body.taskId)
   const task = await removeTaskCompletely(store, taskId)
   if (task === undefined) throw new ActionError('not_found', `任务不存在：${taskId}`)
-  if (task.wishId !== undefined) await syncWishProgress(store, task.wishId)
   return { ok: true, taskId: task.taskId, name: task.name }
 }
 

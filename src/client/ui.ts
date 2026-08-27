@@ -161,6 +161,32 @@ export function disposeConfirms(): void {
   for (const entry of [...openConfirms]) entry.resolve(false)
 }
 
+// ===== 功能性小图标（编辑/删除，行内幽灵键用）=====
+// 与空态插画同一线稿语言（stroke 2、圆角端点）；stroke=currentColor 继承按钮
+// 危险/普通字色。仅几何基元组合（盖+桶身、笔杆），尺寸由 CSS 按钮档约束。
+
+/** 垃圾桶线性图标（aria-hidden；语义由宿主按钮 aria-label 承担）。 */
+export function IconTrash(): ReactElement {
+  return createElement('svg', {
+    viewBox: '0 0 24 24', width: 15, height: 15, 'aria-hidden': 'true', focusable: 'false',
+    style: { display: 'block', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const },
+  },
+    createElement('path', { d: 'M4 7h16' }),
+    createElement('path', { d: 'M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2' }),
+    createElement('path', { d: 'M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12' }),
+    createElement('path', { d: 'M10 11v6M14 11v6', opacity: 0.55 }))
+}
+
+/** 铅笔线性图标（编辑动作）。 */
+export function IconEdit(): ReactElement {
+  return createElement('svg', {
+    viewBox: '0 0 24 24', width: 15, height: 15, 'aria-hidden': 'true', focusable: 'false',
+    style: { display: 'block', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const },
+  },
+    createElement('path', { d: 'M13.5 5l5.5 5.5' }),
+    createElement('path', { d: 'M5 19l1-4L17.5 3.5a2.12 2.12 0 0 1 3 3L9 18z' }))
+}
+
 // ===== 页面三态 =====
 
 export function PageError(props: { message: string; onRetry: () => void; retryLabel?: string }): ReactElement {
@@ -180,7 +206,8 @@ export function PageSkeleton(): ReactElement {
 
 /**
  * 空态：线性插画 + 主文案 + 辅助引导（Web EmptyState 三段式升级版）。
- * icon 参数保留兼容旧调用点（不再使用 emoji 时可删）。
+ * 页面自带的动作入口（页头「＋新建」等）就是空态的出口——不再重复渲染
+ * 同意图 CTA；icon 参数保留兼容旧调用点（不再使用 emoji 时可删）。
  */
 export function PageEmpty(props: { art?: EmptyArtKind; title: string; hint?: string }): ReactElement {
   return createElement('div', { className: 'xy-page-center' },

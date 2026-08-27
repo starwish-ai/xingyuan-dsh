@@ -6,3 +6,6 @@ lib/
 .DS_Store
 debug/ui-mock*.html
 .playwright/
+# AGENTS.md 是本仓库的权威开发文档，必须入库；
+# 常见「全局忽略 AGENTS.md」的个人配置由本行覆盖（仓库级规则优先于全局 excludesFile）
+!AGENTS.md

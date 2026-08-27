@@ -6,7 +6,7 @@
  * node:sqlite 同步写 + WAL；写入即持久（putRecord resolve 后崩溃重开可见）。
  */
 import { DatabaseSync } from 'node:sqlite'
-import { mkdir } from 'node:fs/promises'
+import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
@@ -165,6 +165,13 @@ export function apply(ctx: Context, config: Config): void {
 /** 注册后端本体（供独立 apply 与测试复用）。 */
 export function registerSqliteBackend(ctx: Context, path: string): void {
   const file = expandHome(path)
+  // 目录必须在激活期同步就绪：领域 open 可能在事件循环下一拍触发 touch()，
+  // 异步 mkdir 会与首次建库竞态（冷启动 ENOENT）
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+  } catch {
+    // 目录创建失败时不阻断挂载；打开阶段会以更明确的存储错误暴露
+  }
   const backend = new SqliteBackend(file)
   ctx.effect(() => {
     const unregister = ctx.storage.backend.register('sqlite', backend)
@@ -174,6 +181,4 @@ export function registerSqliteBackend(ctx: Context, path: string): void {
     }
   })
   ctx.provide(storageBackendServiceKey('sqlite'), backend)
-  // DB 目录可能不存在：激活期确保一次（首次安装体验）
-  void mkdir(dirname(file), { recursive: true }).catch(() => {})
 }

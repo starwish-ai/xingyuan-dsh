@@ -65,7 +65,6 @@ const ZH_DICT = {
   'common.countUnit': '{n} 次',
   'common.countUnitOne': '{n} 次',
   'common.dateSuffix': '（{date}）',
-  'common.statusSuffix': '（{status}）',
 
   // --- 卡片徽章与状态 ---
   'badge.wish': '愿望',
@@ -171,7 +170,6 @@ const ZH_DICT = {
   'cal.cellAria.some': '{date}，已完成 {checked}/{due}',
   'cal.panelHint': '点击日期查看当日任务，可直接补卡或取消打卡。',
   'cal.dayLoadFailed': '当日任务加载失败，请重试。',
-  'cal.dayTitle': '{date} 的任务',
   'cal.dayEmpty': '这一天没有任务安排。',
   'cal.state.checked': '✓ 已打卡',
   'cal.state.todo': '○ 待打卡',
@@ -191,6 +189,7 @@ const ZH_DICT = {
   'growth.stat.wishDone': '已实现愿望',
   'growth.stat.taskTotal': '累计任务',
   'growth.stat.taskDone': '已达成任务',
+  'growth.stat.none': '暂无',
   'growth.chart.title': '近 30 天打卡',
   'growth.chart.empty': '暂无打卡数据，完成第一次打卡后这里会长出你的趋势图。',
   'growth.chart.hint': '蓝色为已打卡，斜纹为当日未完成缺口，绿色柱为全勤日；悬停或聚焦柱子可看逐日明细。',
@@ -397,7 +396,6 @@ const EN_DICT: Record<XyKey, string> = {
   'common.countUnit': '{n} times',
   'common.countUnitOne': '{n} time',
   'common.dateSuffix': ' ({date})',
-  'common.statusSuffix': ' ({status})',
 
   'badge.wish': 'Wish',
   'badge.task': 'Task',
@@ -497,7 +495,6 @@ const EN_DICT: Record<XyKey, string> = {
   'cal.cellAria.some': '{date}, completed {checked}/{due}',
   'cal.panelHint': 'Pick a date to see its tasks; make up or cancel check-ins inline.',
   'cal.dayLoadFailed': 'Failed to load tasks for this day. Please retry.',
-  'cal.dayTitle': 'Tasks on {date}',
   'cal.dayEmpty': 'Nothing scheduled on this day.',
   'cal.state.checked': '✓ Checked in',
   'cal.state.todo': '○ To check in',
@@ -516,6 +513,7 @@ const EN_DICT: Record<XyKey, string> = {
   'growth.stat.wishDone': 'Wishes achieved',
   'growth.stat.taskTotal': 'Tasks created',
   'growth.stat.taskDone': 'Tasks achieved',
+  'growth.stat.none': 'None',
   'growth.chart.title': 'Last 30 days',
   'growth.chart.empty': 'No data yet. Your trend chart grows after the first check-in.',
   'growth.chart.hint': 'Blue = checked in, striped = missed gap, green = full day. Hover or focus a bar for daily details.',

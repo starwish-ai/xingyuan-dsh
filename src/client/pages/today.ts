@@ -5,7 +5,7 @@ import { toast } from '../ui.js'
 import { useXyT } from '../i18n.js'
 import { softConfirm, useActionGuard, usePageData, useStableScrollbar, localYmd } from '../hooks.js'
 import { PageEmpty, PageError, PageSkeleton } from '../ui.js'
-import { cycleLabel, dateSuffix } from './format.js'
+import { cycleLabel, dateSuffix, formatFriendlyDate } from './format.js'
 import type { DayPayload, OverviewPayload } from './types.js'
 
 export function TodayPage(): ReactElement {
@@ -57,7 +57,8 @@ export function TodayPage(): ReactElement {
       createElement('span', { className: 'xy-rowtitle' },
         createElement('span', { className: 'xy-done-glyph', 'aria-hidden': 'true' }, '✓'),
         task.name),
-      createElement('span', { className: 'xy-meta' }, cycleLabel(task.cycle))),
+      // 与待完成行同口径：周期 + 所属愿望（hint 是当天行动备忘，完成后不再展示）
+      createElement('span', { className: 'xy-meta' }, `${cycleLabel(task.cycle)}${task.wishName !== undefined ? ` · ${task.wishName}` : ''}`)),
     createElement('button', { className: 'xy-btn', disabled: busy, onClick: () => {
       void softConfirm(t('confirm.undoToday', { name: task.name })).then((ok) => {
         if (!ok) return
@@ -68,12 +69,14 @@ export function TodayPage(): ReactElement {
     } }, t('action.undoCheckin'))))
 
   const allDone = data.total > 0 && data.uncheckedCount === 0
+  // 展示性日期走 Intl 本地化短格式（含星期）；aria 与标题同源，读屏不再播 ISO 串
+  const heroTitle = t('today.title', { date: formatFriendlyDate(data.today) })
   return createElement('div', { className: 'xy-page', ref: stabilize },
     // 概览卡：标题、计数与进度条同卡呈现——进度条不再作为裸条悬在页头下方，
     // 0% 时也有明确的「今日进度」语境（即旧版页头下的空白横条）。
     createElement('section', { className: `xy-todayhero${allDone ? ' xy-todayhero-all' : ''}` },
       createElement('div', { className: 'xy-todayhero-top' },
-        createElement('h2', { className: 'xy-page-title' }, t('today.title', { date: data.today })),
+        createElement('h2', { className: 'xy-page-title' }, heroTitle),
         data.total === 0
           ? createElement('span', { className: 'xy-meta' }, t('today.noneToday'))
           : createElement('span', { className: 'xy-todayhero-num' },
@@ -85,7 +88,7 @@ export function TodayPage(): ReactElement {
             'aria-valuemin': 0,
             'aria-valuemax': 100,
             'aria-valuenow': ratio,
-            'aria-label': t('today.title', { date: data.today }),
+            'aria-label': heroTitle,
           },
             createElement('div', { className: 'xy-bar-fill', style: { transform: `scaleX(${ratio / 100})` } }))
         : null,

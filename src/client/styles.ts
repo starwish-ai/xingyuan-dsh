@@ -149,6 +149,9 @@ body[data-ds-dark-theme] .xy-modal{box-shadow:0 24px 48px -16px rgba(0,0,0,.55),
 .xy-btn,.xy-seg-btn,.xy-cell,.xy-swatch,.xy-toggle,.xy-growth-col{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 /* 行内按钮：≥26px 命中目标（卡片头/操作行的紧凑主战按钮） */
 .xy-btn-inline{margin-left:auto;padding:3px 10px;font-size:12px;min-height:26px;display:inline-flex;align-items:center}
+/* 图标幽灵键（≥26px 方形命中目标）：编辑/删除这类高频重复的行内低频动作降噪——
+ * 图标线稿承许可义、文字语义走 aria-label；hover/focus 才显底色。 */
+.xy-btn-icon{width:26px;height:26px;min-height:26px;padding:0;display:inline-flex;align-items:center;justify-content:center;flex:none}
 .xy-btn-primary{background:var(--xyd-accent);border-color:transparent;color:var(--xyd-on-accent)}
 .xy-btn-primary:hover:not(:disabled){filter:brightness(1.06);color:var(--xyd-on-accent)}
 .xy-btn-danger{color:var(--xyd-danger);border-color:color-mix(in srgb, var(--xyd-danger) 40%, transparent);background:transparent}
@@ -158,6 +161,8 @@ body[data-ds-dark-theme] .xy-modal{box-shadow:0 24px 48px -16px rgba(0,0,0,.55),
 .xy-input::placeholder{color:var(--dsw-alias-label-secondary)}
 .xy-input:disabled{opacity:.55;cursor:not-allowed}
 .xy-field-err{color:var(--xyd-danger);font-size:12px;margin-top:4px}
+/* 数字微输入（设置页注入上限等）：按内容长度定宽，不随浏览器默认 size 拉成宽条 */
+.xy-input-num{width:96px}
 
 /* 列表行 */
 .xy-rowmain{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -198,7 +203,8 @@ body[data-ds-dark-theme] .xy-modal{box-shadow:0 24px 48px -16px rgba(0,0,0,.55),
  * （0% 时即用户所见「空白横条」）；品牌色轻晕染提供今日页的视觉锚点。 */
 .xy-todayhero{margin-top:12px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-card);padding:13px 16px;display:flex;flex-direction:column;gap:9px;background:linear-gradient(135deg,var(--xyd-accent-soft),transparent 55%),var(--dsw-alias-bg-layer-1)}
 .xy-todayhero-top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-.xy-todayhero-num{margin-left:auto;font-size:15px;font-weight:700;color:var(--xyd-accent);font-variant-numeric:tabular-nums}
+/* 完成计数是今日页的视觉锚点（habit 类 App 头部惯例）：升大号 tabular 数字 */
+.xy-todayhero-num{margin-left:auto;font-size:22px;font-weight:700;color:var(--xyd-accent);font-variant-numeric:tabular-nums;line-height:1.2}
 .xy-todayhero-all .xy-todayhero-num{color:var(--dsw-alias-state-success-primary,var(--xyd-ok))}
 .xy-todayhero .xy-bar{height:10px;margin-top:0}
 .xy-todayhero .xy-banner-ok{margin-top:0}
@@ -221,9 +227,10 @@ body[data-ds-dark-theme] .xy-wishcard:hover{box-shadow:0 2px 10px rgba(0,0,0,.32
 .xy-taskname{grid-column:1;grid-row:1;font-weight:600;font-size:13px;overflow-wrap:anywhere}
 .xy-taskline>.xy-meta{grid-column:1;grid-row:2;margin-top:0}
 .xy-taskline>div:last-child{grid-column:2;grid-row:1/span 2;justify-self:end}
-/* 愿望卡删除：紧凑危险键，hover/focus 才显底色（低频高危动作不抢视觉；键盘聚焦与鼠标等效）。
- * 基础透明度 0.78 起步：危险色文字在任何主题下都保持 ≥4.5:1 可读，不靠「看不清」做弱化。 */
-.xy-wishdel{padding:2px 8px;font-size:11px;opacity:.78}
+/* 愿望卡删除：图标幽灵危险键（.xy-btn-icon 方形 + 线稿垃圾桶），hover/focus 才显底色——
+ * 低频高危动作不抢卡头视觉（文字语义由 aria-label「删除 · 标题」承担）。
+ * 基础透明度 0.78 起步：危险色描边在任何主题下都保持 ≥4.5:1 可读，不靠「看不清」做弱化。 */
+.xy-wishdel{opacity:.78}
 .xy-wishdel:hover:not(:disabled),.xy-wishdel:focus-visible{opacity:1}
 
 /* ===== 日历 ===== */
@@ -290,7 +297,13 @@ body[data-ds-dark-theme] .xy-dot.xy-c3{background:rgba(52,211,153,.30)}
 /* ===== 统计卡 & 成长 ===== */
 .xy-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:8px}
 .xy-statcard{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-card);padding:14px;text-align:center}
-.xy-statnum{font-size:24px;font-weight:700;color:var(--xyd-accent);font-variant-numeric:tabular-nums}
+/* 层级：普通统计数字用主文字色（页面更安静），仅「当前连续」这张卡以品牌色+浅晕底突出
+ * （habit 类 App 把 streak 作为英雄指标置于热力图旁的惯例） */
+.xy-statnum{font-size:24px;font-weight:700;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}
+.xy-statcard-hot{border-color:color-mix(in srgb, var(--xyd-accent) 38%, transparent);background:linear-gradient(160deg,var(--xyd-accent-soft),transparent 62%),var(--dsw-alias-bg-layer-1)}
+.xy-statcard-hot .xy-statnum{color:var(--xyd-accent)}
+/* 缺省值（暂无/N/A）：次要色小一号，缺失信息不得比真实数据更响 */
+.xy-statcard-muted .xy-statnum{color:var(--dsw-alias-label-secondary);font-size:18px}
 .xy-growth{display:flex;gap:3px;align-items:stretch;height:120px;margin-top:10px}
 .xy-growth-col{flex:1;display:flex;flex-direction:column;height:100%;min-width:0;border:none;background:transparent;padding:0;cursor:default;border-radius:3px 3px 0 0}
 .xy-growth-stack{flex:1;display:flex;flex-direction:column;justify-content:flex-end;width:100%}
@@ -370,9 +383,14 @@ button.xy-growth-col:hover,button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 
 .xy-detail{margin-top:8px;margin-bottom:8px;border-top:1px dashed var(--dsw-alias-border-l1);padding-top:10px;display:flex;flex-direction:column;gap:10px}
 .xy-detail>div{display:flex;flex-direction:column;gap:5px;align-items:flex-start;min-width:0}
 .xy-detail>div>.xy-meta{margin-top:0}
-.xy-detail-grid{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0}
-/* 打卡格：22px + 11px 数字（可读性下限）；radius 6 为徽章级微元素例外档 */
+.xy-detail-grid{display:grid;grid-template-columns:repeat(7,max-content);gap:4px;padding:2px 0}
+/* 打卡格：22px + 11px 数字（可读性下限）；radius 6 为徽章级微元素例外档。
+ * 网格按周对齐（周一始，与日历页表头同构）：连续性一眼可读（GitHub/Streaks 惯例），
+ * 首行前置空位由 .xy-dcell-blank 占位。 */
 .xy-dcell{width:22px;height:22px;border-radius:6px;font-size:11px;display:inline-flex;align-items:center;justify-content:center;font-family:inherit;padding:0;border:none;cursor:default;font-variant-numeric:tabular-nums}
+.xy-dcell-blank{visibility:hidden}
+/* 今日格 = accent 环包底色：与日历页圆章的 today 环同一语法 */
+.xy-dcell.xy-dcell-today{box-shadow:0 0 0 2px var(--xyd-accent)}
 .xy-dcell-checked{background:rgba(56,217,169,.42);color:#0b3d26}
 body[data-ds-dark-theme] .xy-dcell-checked{background:rgba(46,160,105,.32);color:#a7f3c9}
 .xy-dcell-missed{background:transparent;border:1px dashed var(--dsw-alias-border-l3);color:var(--dsw-alias-label-secondary)}

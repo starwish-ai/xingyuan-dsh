@@ -1,7 +1,8 @@
 /**
  * HITL 确认：userQuestions 阻塞式人机确认。
  * 创建/打卡/取消打卡经「写操作二次确认」开关控制（confirmWrites，可在设置关闭）；
- * 删除（含批量）始终确认；教练风格与画像修改免确认——与设置页文案同一口径。
+ * 删除（含批量）始终确认；教练风格、画像与记忆保存/更新免确认（记忆采集刻意零摩擦，
+ * 删除记忆仍走「始终确认」）——与设置页文案同一口径。
  */
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { Context } from '@deepseek-ai/cordis'

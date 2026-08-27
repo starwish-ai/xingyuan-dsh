@@ -5,6 +5,38 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-27
+
+Write-path unification and read-side freshness alignment between the chat tools,
+the `/xingyuan` page actions, and the charts. No schema or configuration changes;
+existing data stays compatible.
+
+### Added
+- Clearable update fields: `update_task` and `update_wish` accept an **empty string**
+  to clear task hint / due date and wish description / color key / estimated
+  completion date (`undefined` still means "not mentioned — keep current value").
+- Wish creation and updates are unified store use cases shared by chat tools and
+  page actions; validation failures carry stable error codes on both faces.
+- Regression tests for plan-view freshness, clearing semantics, chart freshness,
+  and the calendar one-year window.
+
+### Changed
+- Plan views refresh stale task state on read and offer check-in only for
+  in-progress tasks: a past-day button can no longer be enabled while the write
+  path would reject it with "task already closed".
+- Status/progress charts (`taskStatus`, `wishProgress`, `wishAchievement`) use the
+  same fresh reads as the pages; the check-in calendar heatmap now actually covers
+  only the trailing year its subtitle promises.
+- Deleting a task re-syncs its wish totals inside the delete cascade.
+
+### Fixed
+- Prompt drift: memory guide now states high *and* medium importance memories are
+  auto-injected; the overflow note no longer calls cut-off memories "low value".
+- SQLite backend creates its data directory synchronously at activation, removing
+  a cold-start race on first install.
+- Client error toasts fall back to the server message for unknown error codes
+  instead of rendering `undefined`; `memoryInjectLimit` gains server-side bounds.
+
 ## [0.4.0] - 2026-08-27
 
 First stable release of the 0.4.x line: memory search fix, calendar and task-detail

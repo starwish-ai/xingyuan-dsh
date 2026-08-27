@@ -3,7 +3,7 @@ import { createElement, useCallback, useEffect, useRef, useState, type ReactElem
 import { getJson, postAction, ActionError } from '../api.js'
 import { useXyT, t as translate } from '../i18n.js'
 import { softConfirm, softConfirmDanger, useActionGuard, usePageData, useStableScrollbar } from '../hooks.js'
-import { PageEmpty, PageError, PageSkeleton, toast } from '../ui.js'
+import { PageEmpty, PageError, PageSkeleton, toast, IconEdit, IconTrash } from '../ui.js'
 import type { MemoriesPayload, MemoryItem } from './types.js'
 
 const MEMORY_CATEGORY_KEYS = ['memory.cat.personal', 'memory.cat.preference', 'memory.cat.habit', 'memory.cat.event', 'memory.cat.other'] as const
@@ -207,8 +207,15 @@ export function MemoryPage(): ReactElement {
       createElement('span', { className: 'xy-meta' },
         `${catLabel(m.category)} · ${t('memory.importanceLabel', { level: impLabel(m.importance) })} · ${m.createdAt.slice(0, 10)}`)),
     createElement('div', { className: 'xy-memactions' },
-      createElement('button', { className: 'xy-btn', disabled: busy, onClick: () => startEdit(m) }, t('common.edit')),
-      createElement('button', { className: 'xy-btn xy-btn-danger', disabled: busy, onClick: () => removeOne(m) }, t('common.delete')))))
+      // 行内图标幽灵键（≥26px 命中目标）：长列表降噪，语义走 aria-label 带 key 上下文
+      createElement('button', {
+        className: 'xy-btn xy-btn-icon', disabled: busy, onClick: () => startEdit(m),
+        'aria-label': `${t('common.edit')} · ${m.key}`, title: t('common.edit'),
+      }, createElement(IconEdit)),
+      createElement('button', {
+        className: 'xy-btn xy-btn-danger xy-btn-icon', disabled: busy, onClick: () => removeOne(m),
+        'aria-label': `${t('common.delete')} · ${m.key}`, title: t('common.delete'),
+      }, createElement(IconTrash)))))
 
   return createElement('div', { className: 'xy-page', ref: stabilize },
     createElement('div', { className: 'xy-page-head' },

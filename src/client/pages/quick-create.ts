@@ -3,7 +3,7 @@
  * POST 直连 create-wish / create-task（与工具层同校验口径：分类 2-6 字、截止≥今天）；
  * 文案明示复杂拆解请走对话。字段 label 在上、错误在下；成功 toast 后回调刷新。
  */
-import { createElement, useState, type ReactElement } from 'react'
+import { createElement, useEffect, useRef, useState, type ReactElement } from 'react'
 import { postAction } from '../api.js'
 import { useXyT, t as translate } from '../i18n.js'
 import { localYmd, useActionGuard } from '../hooks.js'
@@ -26,6 +26,9 @@ function ColorField(props: { value: string; onPick: (key: string) => void }): Re
 
 export function WishQuickForm(props: { onCreated: () => void }): ReactElement {
   const t = useXyT()
+  // 展开即聚焦首个字段：点「新建」后可直接打字，不再多点一跳（表单条件挂载，挂载=展开）
+  const titleRef = useRef<HTMLInputElement | null>(null)
+  useEffect(() => { titleRef.current?.focus() }, [])
   const [title, setTitle] = useState('')
   const [categoryName, setCategoryName] = useState('')
   const [colorKey, setColorKey] = useState('')
@@ -59,6 +62,7 @@ export function WishQuickForm(props: { onCreated: () => void }): ReactElement {
       createElement('label', { className: 'xy-quick-field' },
         createElement('span', { className: 'xy-quick-label' }, t('quick.wish.name')),
         createElement('input', {
+          ref: titleRef,
           className: 'xy-input', maxLength: 50, value: title,
           name: 'wish-title', autoComplete: 'off',
           placeholder: t('quick.wish.namePlaceholder'),
@@ -86,6 +90,9 @@ export function WishQuickForm(props: { onCreated: () => void }): ReactElement {
 
 export function TaskQuickForm(props: { today: string; onCreated: () => void }): ReactElement {
   const t = useXyT()
+  // 同 WishQuickForm：展开即聚焦名称字段
+  const nameRef = useRef<HTMLInputElement | null>(null)
+  useEffect(() => { nameRef.current?.focus() }, [])
   const [name, setName] = useState('')
   const [cycle, setCycle] = useState<string>('daily')
   const [dueDate, setDueDate] = useState('')
@@ -118,6 +125,7 @@ export function TaskQuickForm(props: { today: string; onCreated: () => void }): 
       createElement('label', { className: 'xy-quick-field' },
         createElement('span', { className: 'xy-quick-label' }, t('quick.task.name')),
         createElement('input', {
+          ref: nameRef,
           className: 'xy-input', maxLength: 100, value: name,
           name: 'task-name', autoComplete: 'off',
           placeholder: t('quick.task.namePlaceholder'),

@@ -4,7 +4,7 @@ import { getJson, postAction } from '../api.js'
 import { t } from '../i18n.js'
 import { softConfirm, useActionGuard, usePageData, useStableScrollbar, localYmd } from '../hooks.js'
 import { PageError, PageSkeleton, toast } from '../ui.js'
-import { cycleLabel, dateSuffix, formatMonth, formatWeekday } from './format.js'
+import { cycleLabel, dateSuffix, formatFriendlyDate, formatMonth } from './format.js'
 import type { CalendarPayload, DayPayload } from './types.js'
 
 function monthOf(offset: number): string {
@@ -67,7 +67,8 @@ export function CalendarPage(): ReactElement {
           ? t('confirm.undoAt', { name: taskName, date })
           : undefined
     const run = (): void => {
-      guard(() => postAction(action, { taskId, date }).then(() => {
+      // claim 服务端只读 taskId；checkin/cancel-checkin 的 date 是必读参数
+      guard(() => postAction(action, action === 'claim' ? { taskId } : { taskId, date }).then(() => {
         toast(action === 'claim'
           ? t('toast.claimed', { name: taskName })
           : action === 'checkin'
@@ -201,11 +202,8 @@ export function CalendarPage(): ReactElement {
               : detail === undefined
                 ? createElement('div', { className: 'xy-meta xy-dayhint' }, t('cal.panelHint'))
                 : createElement('div', { className: 'xy-daydetail' },
-                    createElement('h3', { className: 'xy-section-title' },
-                      t('cal.dayTitle', { date: detail.date }),
-                      formatWeekday(detail.date) !== ''
-                        ? createElement('span', { style: { fontWeight: 400, marginLeft: 6 } }, formatWeekday(detail.date))
-                        : null),
+                    // 面板头 = 本地化友好日期（含星期），与今日页标题同一语法；不再裸奔 ISO
+                    createElement('h3', { className: 'xy-section-title' }, formatFriendlyDate(detail.date)),
                 detail.tasks.length === 0
                   ? createElement('div', { className: 'xy-meta' }, t('cal.dayEmpty'))
                   : createElement('ul', { className: 'xy-grouplist' }, detail.tasks.map((task) => {

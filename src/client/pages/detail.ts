@@ -9,6 +9,7 @@ import { getJson, postAction } from '../api.js'
 import { useXyT, t as translate, activeLocale, type XyT } from '../i18n.js'
 import { localYmd, softConfirm, softConfirmDanger, useActionGuard } from '../hooks.js'
 import { toast } from '../ui.js'
+import { formatShortDate } from './format.js'
 import type { ApiTask } from './types.js'
 
 /** /api/task-detail 响应叶子形状。 */
@@ -48,6 +49,12 @@ export function DetailToggle(props: { open: boolean; onToggle: () => void; contr
     ...(props.controlsId !== undefined ? { 'aria-controls': props.controlsId } : {}),
     onClick: props.onToggle,
   }, props.open ? t('action.collapse') : t('action.expand'))
+}
+
+/** 'yyyy-MM-dd' → 周一为 0 的星期序号（与日历页表头「一..日」同构）；解析失败回落 0。 */
+function weekdayMon0(ymd: string): number {
+  const date = new Date(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1, Number(ymd.slice(8)), 12)
+  return Number.isNaN(date.getTime()) ? 0 : (date.getDay() + 6) % 7
 }
 
 /**
@@ -105,23 +112,29 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
   const checkedToday = detail.grid.some((cell) => cell.date === today && cell.state === 'checked')
 
   // 网格可访问性：28 格逐格播报是读屏灾难——格子 aria-hidden，整体以一条
-  // 汇总 aria-label 暴露（role=img），逐日细节保留 title 供鼠标悬停
-  const gridCells = detail.grid.slice(-28).map((cell) => {
-    const label = cell.state === 'checked'
-      ? t('detail.grid.checked', { date: cell.date })
-      : cell.state === 'missed'
-        ? t('detail.grid.missed', { date: cell.date })
-        : t('detail.grid.future', { date: cell.date })
-    const tone = cell.state === 'checked' ? 'xy-dcell-checked' : cell.state === 'future' ? 'xy-dcell-future' : 'xy-dcell-missed'
-    return createElement('span', {
-      key: cell.date,
-      className: `xy-dcell ${tone}`,
-      title: label,
-      'aria-hidden': 'true',
-    }, String(Number(cell.date.slice(8))))
-  })
+  // 汇总 aria-label 暴露（role=img），逐日细节保留 title 供鼠标悬停。
+  // 视觉按周对齐（周一始，GitHub/Streaks 惯例）：首行前置隐形占位，今日格加 accent 环，
+  // 连续坚持一眼可读；换月错位不再出现流式换行的参差断行。
+  const recent = detail.grid.slice(-28)
+  const gridCells = [
+    ...Array.from({ length: recent.length > 0 ? weekdayMon0(recent[0]!.date) : 0 }, (_, i) =>
+      createElement('span', { key: `pad-${i}`, className: 'xy-dcell xy-dcell-blank', 'aria-hidden': 'true' })),
+    ...recent.map((cell) => {
+      const label = cell.state === 'checked'
+        ? t('detail.grid.checked', { date: cell.date })
+        : cell.state === 'missed'
+          ? t('detail.grid.missed', { date: cell.date })
+          : t('detail.grid.future', { date: cell.date })
+      const tone = cell.state === 'checked' ? 'xy-dcell-checked' : cell.state === 'future' ? 'xy-dcell-future' : 'xy-dcell-missed'
+      return createElement('span', {
+        key: cell.date,
+        className: `xy-dcell ${tone}${cell.date === today ? ' xy-dcell-today' : ''}`,
+        title: label,
+        'aria-hidden': 'true',
+      }, String(Number(cell.date.slice(8))))
+    }),
+  ]
   const gridSummary = ((): string => {
-    const recent = detail.grid.slice(-28)
     const checked = recent.filter((c) => c.state === 'checked').length
     const missed = recent.filter((c) => c.state === 'missed').length
     const future = recent.length - checked - missed
@@ -209,7 +222,10 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
       : null,
     detail.upcoming.length > 0
       ? createElement('div', { className: 'xy-detail-next' },
-          t('detail.next.title', { dates: detail.upcoming.join(activeLocale() === 'en' ? ', ' : '、') }))
+          // 机会日列表与「提前打卡」按钮同一短格式口径（ISO 只留给确认文案与读屏）
+          t('detail.next.title', {
+            dates: detail.upcoming.map((d) => formatShortDate(d)).join(activeLocale() === 'en' ? ', ' : '、'),
+          }))
       : null,
     createElement('div', null,
       createElement('span', { className: 'xy-quick-label' }, t('detail.micro.title')),

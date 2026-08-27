@@ -230,7 +230,7 @@ export function SettingsSection(props: { scope: SettingsScopeLike }): ReactEleme
       createElement('label', { className: 'xy-field' },
         createElement('span', { className: 'xy-field-head' }, t('settings.pref.memoryLimit')),
         createElement('input', {
-          type: 'number', min: 5, max: 200, className: 'xy-input', name: 'memoryInjectLimit', inputMode: 'numeric',
+          type: 'number', min: 5, max: 200, className: 'xy-input xy-input-num', name: 'memoryInjectLimit', inputMode: 'numeric',
           'aria-label': t('settings.pref.memoryLimit'),
           'aria-invalid': limitError || undefined,
           ...(limitError ? { 'aria-describedby': 'xy-limit-error' } : {}),

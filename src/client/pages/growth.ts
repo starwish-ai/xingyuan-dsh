@@ -3,6 +3,7 @@ import { createElement, useState, type ReactElement } from 'react'
 import { useXyT } from '../i18n.js'
 import { recentRangeDays, usePageData, useStableScrollbar } from '../hooks.js'
 import { PageError, PageSkeleton } from '../ui.js'
+import { formatShortDate } from './format.js'
 import type { GrowthPayload, RangePayload } from './types.js'
 /**
  * 等级色阶（Lv.1 灰 → Lv.10 玫瑰红）：全部选用深色档（slate-600 → rose-700），
@@ -55,7 +56,8 @@ export function GrowthPage(): ReactElement {
       return createElement('button', {
         key: day.date,
         className: `xy-growth-col${full ? ' xy-full' : ''}${hoverIdx === i ? ' xy-hover' : ''}`,
-        'aria-label': t('growth.chart.tooltip', { date: day.date, checked: day.checked, total: day.total }),
+        // 读屏与可见悬浮条同一短日期口径（aria 与 tooltip 同源同文案）
+        'aria-label': t('growth.chart.tooltip', { date: formatShortDate(day.date), checked: day.checked, total: day.total }),
         onMouseEnter: () => setHoverIdx(i),
         onFocus: () => setHoverIdx(i),
         onBlur: () => setHoverIdx(null),
@@ -79,8 +81,10 @@ export function GrowthPage(): ReactElement {
     return { cols, ticks, days: r.days }
   })()
 
-  const stat = (value: string | number, label: string): ReactElement =>
-    createElement('div', { className: 'xy-statcard' },
+  /** 统计卡：hot = 强调变体（当前连续是习惯坚持的核心指标）；muted = 缺省值弱化，
+   * 「暂无」不得比真实数据更响。 */
+  const stat = (value: string | number, label: string, variant?: 'hot' | 'muted'): ReactElement =>
+    createElement('div', { className: `xy-statcard${variant === 'hot' ? ' xy-statcard-hot' : ''}${variant === 'muted' ? ' xy-statcard-muted' : ''}` },
       createElement('div', { className: 'xy-statnum' }, String(value)),
       createElement('div', { className: 'xy-meta' }, label))
 
@@ -125,12 +129,12 @@ export function GrowthPage(): ReactElement {
       : null,
     createElement('div', { className: 'xy-stats' },
       stat(g.totalCheckinDays ?? g.totalCheckins ?? 0, t('growth.stat.checkinDays')),
-      stat(g.currentStreak, t('growth.stat.streak')),
+      stat(g.currentStreak, t('growth.stat.streak'), 'hot'),
       stat(g.maxStreak, t('growth.stat.maxStreak')),
       stat(g.wishTotal, t('growth.stat.wishTotal')),
       stat(g.wishAchieved, t('growth.stat.wishDone')),
-      stat(g.taskTotal ?? '—', t('growth.stat.taskTotal')),
-      stat(g.taskAchieved ?? '—', t('growth.stat.taskDone'))),
+      stat(g.taskTotal ?? t('growth.stat.none'), t('growth.stat.taskTotal'), g.taskTotal === undefined ? 'muted' : undefined),
+      stat(g.taskAchieved ?? t('growth.stat.none'), t('growth.stat.taskDone'), g.taskAchieved === undefined ? 'muted' : undefined)),
     createElement('h3', { className: 'xy-section-title' }, t('growth.chart.title')),
     // 图表三态整体收进面板卡（加载/失败/空数据/就绪同一容器，与全站卡片语言一致）：
     // 「加载中」不得误报为「暂无打卡数据」；区间为空时同样走 empty 文案而非渲染空白坐标系。
@@ -149,7 +153,7 @@ export function GrowthPage(): ReactElement {
             : [createElement('div', { key: 'xy-chart-body' },
                 createElement('div', { className: 'xy-tip', role: 'status' },
                   hoverDay !== undefined
-                    ? t('growth.chart.tooltip', { date: hoverDay.date, checked: hoverDay.checked, total: hoverDay.total })
+                    ? t('growth.chart.tooltip', { date: formatShortDate(hoverDay.date), checked: hoverDay.checked, total: hoverDay.total })
                     : ''),
                 createElement('div', { className: 'xy-growth' }, chart.cols),
                 createElement('div', { className: 'xy-growth-axis' }, chart.ticks)),

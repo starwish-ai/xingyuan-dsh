@@ -36,9 +36,13 @@ export function TaskLine(props: {
   return createElement('div', { className: 'xy-taskline' },
     createElement('span', { className: 'xy-taskname' }, task.name),
     createElement('span', { className: 'xy-meta' },
-      `${cycleLabel(task.cycle)} · ${durationText(task.completedDays, task.requiredDays)} · ${statusLabel(task.status)}`
-      + `${futureDate !== undefined ? ` · ${t('task.nextDate', { date: futureDate })}` : ''}`
-      + `${task.dueDate !== undefined ? ` · ${t('task.due', { date: task.dueDate })}` : ''}`),
+      `${cycleLabel(task.cycle)} · ${durationText(task.completedDays, task.requiredDays)}`
+      // 状态词仅在无动作可推断时保留（已完结）：进行中/待领取的状态由旁侧
+      // 打卡/领取按钮自解释，任务页还叠加了状态分组头——再报一遍是噪音
+      + `${task.status === 'closed' ? ` · ${statusLabel(task.status)}` : ''}`
+      // 近期行动日期走短格式（与「提前打卡」按钮同口径）；ISO 只留给确认文案与读屏
+      + `${futureDate !== undefined ? ` · ${t('task.nextDate', { date: formatShortDate(futureDate) })}` : ''}`
+      + `${task.dueDate !== undefined ? ` · ${t('task.due', { date: formatShortDate(task.dueDate) })}` : ''}`),
     createElement('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
       task.status === 'pending'
         ? createElement('button', {

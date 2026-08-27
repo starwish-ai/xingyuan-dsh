@@ -5,7 +5,9 @@
 import { describe, expect, it } from 'vitest'
 import { xingyuanDomainSpec } from '../src/domain.js'
 import type { XingyuanStore } from '../src/domain.js'
-import { createTask, performCheckIn, cancelCheckIn, claimTask, planForDay, updateTask } from '../src/store.js'
+import { createTask, createWish, performCheckIn, cancelCheckIn, claimTask, planForDay, updateTask, updateWish } from '../src/store.js'
+import { removeTaskCompletely } from '../src/cascade.js'
+import { addDays, todayIso } from '../src/opportunity.js'
 
 /** 内存域桩：直接以 Map 实现 KvTable 语义（写链在单测内串行）。 */
 function memoryStore(): XingyuanStore {
@@ -187,5 +189,105 @@ describe('业务层：延迟领取（锚点 = 领取日，requiredDays 同口径
     await claimTask(store, task.taskId, '2026-08-05')
     const stored = store.domain.table('wishes').get(wishId)!
     expect(stored.totalRequiredDays).toBe(6)
+  })
+})
+
+describe('业务层：计划面新鲜化与按钮态口径', () => {
+  it('过期关闭任务：过往机会日 canCheckIn=false（按钮不再可点后必失败）', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    const anchor = addDays(today, -5)
+    const task = await createTask(store, { name: '过期任务', checkInCycle: 'daily', dueDate: addDays(today, -3) }, anchor)
+    await claimTask(store, task.taskId, anchor)
+    const plan = planForDay(store, addDays(today, -4))
+    expect(plan.items).toHaveLength(1)
+    expect(plan.items[0]!.task.status).toBe('closed')
+    expect(plan.items[0]!.canCheckIn).toBe(false)
+  })
+
+  it('读侧新鲜化：跨日未落库的陈旧状态，计划面按今日重算', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    // 直写一份「昨天就该过期但状态仍进行中」的陈旧记录，模拟无写路径的跨日
+    await store.domain.table('tasks').put('stale', {
+      taskId: 'stale', name: '陈旧任务', checkInCycle: 'daily', source: 'ai',
+      status: 'in_progress', claimDate: addDays(today, -4), dueDate: addDays(today, -1),
+      requiredDays: 3, completedDays: 0, createdAt: `${addDays(today, -4)}T00:00:00`,
+    } as never)
+    const plan = planForDay(store, addDays(today, -2))
+    expect(plan.items).toHaveLength(1)
+    expect(plan.items[0]!.task.status).toBe('closed')
+    expect(plan.items[0]!.task.closedReason).toBe('expired')
+    expect(plan.items[0]!.canCheckIn).toBe(false)
+  })
+})
+
+describe('业务层：update_task 空串清除语义', () => {
+  it('清除 hint/dueDate 并按锚点重算应打天数（无截止日 daily → 不限）', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    const task = await createTask(store, { name: '提示任务', hint: '原提示', checkInCycle: 'daily', dueDate: addDays(today, 7) }, today)
+    expect(task.requiredDays).toBeGreaterThan(0)
+    const updated = await updateTask(store, task.taskId, { hint: '', dueDate: '' }, today)
+    expect(updated.hint).toBeUndefined()
+    expect(updated.dueDate).toBeUndefined()
+    expect(updated.requiredDays).toBe(0)
+  })
+
+  it('once 任务清除截止日后应打 1 天；undefined=保留原值不误清', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    const task = await createTask(store, { name: '一次性', checkInCycle: 'once', dueDate: addDays(today, 3) }, today)
+    const kept = await updateTask(store, task.taskId, { name: '一次性改名' }, today)
+    expect(kept.dueDate).toBe(task.dueDate)
+    const cleared = await updateTask(store, task.taskId, { dueDate: '' }, today)
+    expect(cleared.dueDate).toBeUndefined()
+    expect(cleared.requiredDays).toBe(1)
+  })
+})
+
+describe('愿望收口：createWish/updateWish 校验同源', () => {
+  it('分类长度/颜色键/预计日期过去/标题超长分别抛稳定错误', async () => {
+    const store = memoryStore()
+    await expect(createWish(store, { title: '学琴', categoryName: '学' }, '2026-08-01')).rejects.toMatchObject({ code: 'bad_category_name' })
+    await expect(createWish(store, { title: '学琴', categoryName: '学习', colorKey: 'notacolor' }, '2026-08-01')).rejects.toMatchObject({ code: 'bad_color_key' })
+    await expect(createWish(store, { title: '学琴', categoryName: '学习', estimatedCompletionDate: '2026-07-31' }, '2026-08-01')).rejects.toMatchObject({ code: 'due_past' })
+    await expect(createWish(store, { title: 'x'.repeat(51), categoryName: '学习' }, '2026-08-01')).rejects.toThrow('标题不能超过')
+  })
+
+  it('部分更新保留未提及字段；空串/空白清除可选字段；title 清除被拒', async () => {
+    const store = memoryStore()
+    const wish = await createWish(store, {
+      title: '读书', categoryName: '学习', description: '每日一章', colorKey: 'blue', estimatedCompletionDate: '2027-01-01',
+    }, '2026-08-01')
+    const updated = await updateWish(store, wish.wishId, { description: '', estimatedCompletionDate: '  ', title: '读完十本书' }, '2026-08-02')
+    expect(updated.title).toBe('读完十本书')
+    expect(updated.description).toBeUndefined()
+    expect(updated.estimatedCompletionDate).toBeUndefined()
+    expect(updated.colorKey).toBe('blue') // 未提及保留
+    const clearedColor = await updateWish(store, wish.wishId, { colorKey: '' }, '2026-08-02')
+    expect(clearedColor.colorKey).toBeUndefined()
+    await expect(updateWish(store, wish.wishId, { title: '' }, '2026-08-02')).rejects.toThrow('标题不能为空')
+    await expect(updateWish(store, 'no-such-wish', { title: '任意' }, '2026-08-02')).rejects.toMatchObject({ code: 'not_found' })
+  })
+
+  it('createTask 内置进度联动；删除任务后回写归零（收口后调用方无需手抄）', async () => {
+    const store = memoryStore()
+    const wishId = 'w-auto'
+    await store.domain.table('wishes').put(wishId, {
+      wishId, title: '学琴', categoryName: '学习', progress: 0,
+      totalRequiredDays: 0, totalCompletedDays: 0, archived: false, createdAt: '2026-08-01T00:00:00',
+    } as never)
+    const task = await createTask(store, { wishId, name: '练琴', checkInCycle: 'daily', dueDate: '2026-08-10' }, '2026-08-05')
+    // createTask 返回前已完成联动（此前需调用方各自 sync）：应打 08-05..08-10 共 6 天
+    expect(task.requiredDays).toBe(6)
+    let stored = store.domain.table('wishes').get(wishId)!
+    expect(stored.totalRequiredDays).toBe(6)
+    expect(await removeTaskCompletely(store, 'no-such-task')).toBeUndefined()
+    await removeTaskCompletely(store, task.taskId)
+    stored = store.domain.table('wishes').get(wishId)!
+    expect(stored.totalRequiredDays).toBe(0)
+    expect(stored.totalCompletedDays).toBe(0)
+    expect(stored.archived).toBe(false)
   })
 })

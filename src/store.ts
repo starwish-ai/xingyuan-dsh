@@ -3,6 +3,7 @@
  * 口径唯一来源：机会日/达标/复活判定全部走 opportunity.ts。
  */
 import type { CheckinRecord, MemoryRecord, TaskRecord, WishRecord, XingyuanStore } from './domain.js'
+import { CATEGORY_COLOR_KEYS } from './category-color.js'
 import {
   addDays,
   calculateOpportunityDates,
@@ -50,14 +51,23 @@ export function anchorOf(task: Task): string {
   return task.claimDate ?? task.createdAt.slice(0, 10)
 }
 
+/** 打卡计数索引：读侧新鲜化（计划/图表）共用，一次全表扫描得全部任务计数。 */
+export function checkinCountIndex(store: XingyuanStore): Map<string, number> {
+  const index = new Map<string, number>()
+  for (const [, record] of store.domain.table('checkins').entries()) {
+    index.set(record.taskId, (index.get(record.taskId) ?? 0) + 1)
+  }
+  return index
+}
+
 /** 重算并写回任务状态/进度（打卡、取消打卡、更新、领取后调用）。 */
 export async function syncTaskProgress(store: XingyuanStore, taskId: string, today = todayIso()): Promise<Task> {
   return store.domain.table('tasks').update(taskId, (task) => syncTaskValue(store, task, today))
 }
 
-/** 纯函数版状态推进（供 update 内使用）。 */
-function syncTaskValue(store: XingyuanStore, task: Task, today: string): Task {
-  const completed = countCheckins(store, task.taskId)
+/** 纯函数版状态推进（供 update 内使用）；counts 为可选的预聚合打卡计数。 */
+function syncTaskValue(store: XingyuanStore, task: Task, today: string, counts?: Map<string, number>): Task {
+  const completed = counts !== undefined ? counts.get(task.taskId) ?? 0 : countCheckins(store, task.taskId)
   const next: Task = { ...task, completedDays: completed }
   if (isTaskDone(next.requiredDays, completed)) {
     return { ...next, status: 'closed', closedReason: 'achieved' }
@@ -84,6 +94,127 @@ function countCheckins(store: XingyuanStore, taskId: string): number {
   return n
 }
 
+// ===== 愿望（创建/更新唯一写路径；工具面与路由面共用）=====
+
+/** 分类名约束（2-6 字符）；工具面确认前预检与落库校验同源，避免「确认后才失败」。 */
+export function validateCategoryName(name: string): string {
+  const trimmed = name.trim()
+  if (trimmed.length < 2 || trimmed.length > 6) {
+    throw new ToolError(`分类名需 2-6 个字符：「${name}」`, 'bad_category_name', { name })
+  }
+  return trimmed
+}
+
+/** 颜色键白名单校验；空串/空白视为未提供。 */
+export function validateColorKey(colorKey: string | undefined | null): string | undefined {
+  const key = colorKey?.trim() || undefined
+  if (key === undefined) return undefined
+  if (!(CATEGORY_COLOR_KEYS as readonly string[]).includes(key)) {
+    throw new ToolError(`未知颜色键：${key}`, 'bad_color_key', { colorKey: key })
+  }
+  return key
+}
+
+/** 预计完成日期校验（对齐 Web WishForm 口径：yyyy-MM-dd 且不得早于今天）。 */
+export function validateEstimatedDate(value: string | undefined, today: string): void {
+  const v = value?.trim() || undefined
+  if (v === undefined) return
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new ToolError(`预计完成日期格式错误，请使用 yyyy-MM-dd：${value}`, 'bad_date', { date: value })
+  if (v < today) throw new ToolError('预计完成日期不能早于今天', 'due_past')
+}
+
+/** 可选文本字段归一：「」/纯空白 = 清除意图 → undefined；其余原样返回。 */
+function cleanOptionalText(value: string | undefined | null): string | undefined {
+  return value !== undefined && value !== null && value.trim() !== '' ? value : undefined
+}
+
+/** 愿望记录工厂（创建与更新共用；校验同源）。 */
+function buildWishValue(
+  store: XingyuanStore,
+  base: Pick<WishRecord, 'wishId' | 'progress' | 'totalRequiredDays' | 'totalCompletedDays' | 'archived' | 'createdAt'>,
+  input: {
+    title: string
+    categoryName: string
+    colorKey?: string
+    description?: string
+    estimatedCompletionDate?: string
+  },
+  today: string,
+): WishRecord {
+  const title = input.title.trim()
+  if (title === '') throw new ToolError('标题不能为空', 'missing_field', { field: 'title' })
+  if (title.length > 50) throw new ToolError('标题不能超过 50 字符（当前 ' + String(title.length) + ' 字）')
+  const categoryName = validateCategoryName(input.categoryName)
+  const colorKey = validateColorKey(input.colorKey)
+  const description = cleanOptionalText(input.description)
+  const estimatedCompletionDate = cleanOptionalText(input.estimatedCompletionDate)
+  if (estimatedCompletionDate !== undefined) validateEstimatedDate(estimatedCompletionDate, today)
+  return {
+    ...base,
+    title,
+    categoryName,
+    ...(colorKey !== undefined ? { colorKey } : {}),
+    ...(description !== undefined ? { description } : {}),
+    ...(estimatedCompletionDate !== undefined ? { estimatedCompletionDate } : {}),
+  }
+}
+
+/**
+ * 创建愿望（唯一写路径）：字段校验同源（格式/非过去、分类名长度、颜色键白名单），
+ * 进度基线为零。工具面与路由面共用。
+ */
+export async function createWish(
+  store: XingyuanStore,
+  input: Pick<WishRecord, 'title' | 'categoryName'> & Partial<Pick<WishRecord, 'colorKey' | 'description' | 'estimatedCompletionDate'>>,
+  today = todayIso(),
+): Promise<WishRecord> {
+  const wish = buildWishValue(store, {
+    wishId: store.newId(),
+    progress: 0,
+    totalRequiredDays: 0,
+    totalCompletedDays: 0,
+    archived: false,
+    createdAt: `${today}T00:00:00`,
+  }, input, today)
+  await store.domain.table('wishes').put(wish.wishId, wish)
+  return wish
+}
+
+/**
+ * 更新愿望（唯一写路径）：部分更新 + 可清空。
+ * - undefined = 未提及，保留原值（部分更新原则）；
+ * - 空串/纯空白 = 清除该可选字段（与分类颜色覆盖「空串=清除」同一约定）；
+ * - title / categoryName 为必持字段，清空即报错。
+ */
+export async function updateWish(
+  store: XingyuanStore,
+  wishId: string,
+  patch: Partial<Pick<WishRecord, 'title' | 'description' | 'categoryName' | 'colorKey' | 'estimatedCompletionDate'>>,
+  today = todayIso(),
+): Promise<WishRecord> {
+  return store.domain.table('wishes').update(wishId, (existing) => {
+    if (existing === undefined) throw new ToolError(`愿望不存在：${wishId}`, 'not_found')
+    // 剥离三个可清空键，避免旧值经 base 展开混回清除后的记录
+    const { colorKey: _oldColor, description: _oldDesc, estimatedCompletionDate: _oldEta, ...base } = existing
+    const patchTitle = patch.title !== undefined ? patch.title : existing.title
+    const categoryName = patch.categoryName !== undefined ? validateCategoryName(patch.categoryName) : existing.categoryName
+    const colorKey = patch.colorKey !== undefined ? validateColorKey(patch.colorKey) : existing.colorKey
+    const description = patch.description !== undefined ? cleanOptionalText(patch.description) : existing.description
+    let estimatedCompletionDate = existing.estimatedCompletionDate
+    if (patch.estimatedCompletionDate !== undefined) {
+      estimatedCompletionDate = cleanOptionalText(patch.estimatedCompletionDate)
+      if (estimatedCompletionDate !== undefined) validateEstimatedDate(estimatedCompletionDate, today)
+    }
+    return buildWishValue(store, base, {
+      title: patchTitle,
+      categoryName,
+      colorKey,
+      description,
+      estimatedCompletionDate,
+    }, today)
+  })
+}
+
 /** 愿望进度重算：全部任务的应打/已打汇总，progress = 完成率百分比。 */
 export async function syncWishProgress(store: XingyuanStore, wishId: string): Promise<void> {
   let required = 0
@@ -106,9 +237,10 @@ export async function syncWishProgress(store: XingyuanStore, wishId: string): Pr
 /**
  * 只读新鲜化：按今日重算任务状态（不落库——落库仍只发生在写路径）。
  * 跨日陈旧（截止关闭等）由读侧消除，模型与页面看到的状态恒为最新。
+ * counts 传预聚合计数（checkinCountIndex）可避免批量读时逐任务全表扫描。
  */
-export function freshTask(store: XingyuanStore, task: Task, today = todayIso()): Task {
-  return syncTaskValue(store, task, today)
+export function freshTask(store: XingyuanStore, task: Task, today = todayIso(), counts?: Map<string, number>): Task {
+  return syncTaskValue(store, task, today, counts)
 }
 
 /** 愿望进度快照（只读新鲜计算，不落库）：下属任务应打/已打汇总 → 完成率。 */
@@ -230,6 +362,8 @@ export async function createTask(
     createdAt: `${today}T00:00:00`,
   }
   await store.domain.table('tasks').put(task.taskId, task)
+  // 建任务即回写愿望进度（收口在此，调用方无需各自补一步）
+  if (task.wishId !== undefined) await syncWishProgress(store, task.wishId)
   return task
 }
 
@@ -262,35 +396,51 @@ export async function claimTask(store: XingyuanStore, taskId: string, today = to
   return synced
 }
 
-/** 更新任务（部分更新）；延长已过期任务的截止日触发重新开始。 */
+/**
+ * 更新任务（部分更新 + 可清空）：'' （或纯空白）= 清除该字段——
+ * hint/dueDate 可清；清除截止日使任务回到「无机会日约束」口径并按锚点重算应打天数。
+ * 延长已过期任务的截止日触发重新开始。进度与愿望库存联动在此收口。
+ */
 export async function updateTask(
   store: XingyuanStore,
   taskId: string,
   patch: Partial<Pick<Task, 'name' | 'hint' | 'dueDate' | 'checkInCycle'>>,
   today = todayIso(),
 ): Promise<Task> {
-  const dueDate = patch.dueDate === undefined ? undefined : normalizeDue(patch.dueDate)
-  // 与 createTask 同一约束：截止日不得早于今天（否则立即触发过期关闭，违背用户意图）
-  if (patch.dueDate !== undefined && dueDate !== undefined && dueDate < today) {
-    throw new ToolError('截止日期不能早于今天')
+  const dueClear = patch.dueDate !== undefined && String(patch.dueDate).trim() === ''
+  let dueDate: string | undefined
+  if (dueClear) {
+    dueDate = undefined
+  } else if (patch.dueDate !== undefined) {
+    dueDate = normalizeDue(patch.dueDate)
+    if (dueDate !== undefined && dueDate < today) throw new ToolError('截止日期不能早于今天')
   }
-  const updated = await store.domain.table('tasks').update(taskId, (task) => {
-    const merged: Task = {
-      ...task,
+  await store.domain.table('tasks').update(taskId, (task) => {
+    if (task === undefined) throw new ToolError(`任务不存在：${taskId}`, 'not_found')
+    // ''=清除时须真实缺键；undefined=未提及保留原值
+    const nextHint = patch.hint !== undefined ? patch.hint.trim() === '' ? undefined : patch.hint : task.hint
+    const nextDue = patch.dueDate !== undefined ? dueDate : task.dueDate
+    // 先剥离两个可清空键，避免旧值经展开混回「已清除」的合并结果
+    const { hint: _oldHint, dueDate: _oldDue, ...rest } = task
+    const mergedBase: Task = {
+      ...rest,
       name: patch.name ?? task.name,
-      hint: patch.hint ?? task.hint,
-      dueDate: dueDate ?? task.dueDate,
+      ...(nextHint !== undefined ? { hint: nextHint } : {}),
+      ...(nextDue !== undefined ? { dueDate: nextDue } : {}),
       checkInCycle: patch.checkInCycle ?? task.checkInCycle,
     }
     if (patch.dueDate !== undefined || patch.checkInCycle !== undefined) {
-      merged.requiredDays = calculateRequiredDays(anchorOf(merged), merged.dueDate, merged.checkInCycle)
+      mergedBase.requiredDays = calculateRequiredDays(anchorOf(mergedBase), mergedBase.dueDate, mergedBase.checkInCycle)
       if (shouldRestartFromExpired(task.status, task.dueDate, today, task.requiredDays, task.completedDays)) {
-        return { ...merged, status: 'in_progress', closedReason: undefined }
+        return { ...mergedBase, status: 'in_progress', closedReason: undefined }
       }
     }
-    return merged
+    return mergedBase
   })
-  return syncTaskProgress(store, taskId, today).then(() => store.domain.table('tasks').get(taskId)!)
+  await syncTaskProgress(store, taskId, today)
+  const synced = store.domain.table('tasks').get(taskId)!
+  if (synced.wishId !== undefined) await syncWishProgress(store, synced.wishId)
+  return synced
 }
 
 /** 未来 N 天逐日安排（today 页/未来预览共用）。 */
@@ -300,11 +450,18 @@ export function planForRange(store: XingyuanStore, start: string, end: string): 
   return plans
 }
 
-/** 单日安排：机会日落位 + 打卡状态。 */
+/**
+ * 单日安排：机会日落位 + 打卡状态。
+ * 任务先经只读新鲜化（跨日过期关闭在读侧消除），按钮态与写路径校验同口径：
+ * 仅进行中任务可勾——待领取须先领取；已完结（含过期关闭）不可勾，取消打卡不受限。
+ */
 export function planForDay(store: XingyuanStore, date: string): DayPlan {
   const wishes = store.domain.table('wishes')
   const items: DayItem[] = []
-  for (const [taskId, task] of store.domain.table('tasks').entries()) {
+  const counts = checkinCountIndex(store)
+  const today = todayIso()
+  for (const [taskId, raw] of store.domain.table('tasks').entries()) {
+    const task = syncTaskValue(store, raw, today, counts)
     if (task.status === 'closed' && task.closedReason === 'achieved') continue
     const opportunities = calculateOpportunityDates(anchorOf(task), task.dueDate, task.checkInCycle)
     if (!opportunities.includes(date)) continue
@@ -313,7 +470,7 @@ export function planForDay(store: XingyuanStore, date: string): DayPlan {
       task,
       wish: task.wishId ? wishes.get(task.wishId) : undefined,
       checked,
-      canCheckIn: !checked && task.status !== 'pending',
+      canCheckIn: !checked && task.status === 'in_progress',
       canCancel: checked,
     })
   }

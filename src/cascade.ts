@@ -6,6 +6,7 @@
  */
 import type { TaskRecord, XingyuanStore } from './domain.js'
 import { restartMicroAction } from './micro.js'
+import { syncWishProgress } from './store.js'
 
 /** 删除任务的全部打卡记录。 */
 export async function removeAllCheckins(store: XingyuanStore, taskId: string): Promise<void> {
@@ -16,11 +17,8 @@ export async function removeAllCheckins(store: XingyuanStore, taskId: string): P
   for (const key of keys) await store.domain.table('checkins').delete(key)
 }
 
-/**
- * 彻底删除单个任务：打卡记录、微行动状态随任务级联清理。
- * 返回被删任务快照（供事件补发）；任务不存在时返回 undefined。
- */
-export async function removeTaskCompletely(store: XingyuanStore, taskId: string): Promise<TaskRecord | undefined> {
+/** 销毁任务本体及其打卡/微行动痕迹（不联动愿望进度——由调用方按语义决定是否回写）。 */
+async function destroyTask(store: XingyuanStore, taskId: string): Promise<TaskRecord | undefined> {
   const task = store.domain.table('tasks').get(taskId)
   if (task === undefined) return undefined
   await removeAllCheckins(store, taskId)
@@ -30,13 +28,29 @@ export async function removeTaskCompletely(store: XingyuanStore, taskId: string)
   return task
 }
 
-/** 彻底删除愿望及其下属全部任务（含各自打卡与微行动状态）；返回被级联的任务。 */
+/**
+ * 彻底删除单个任务并回写所属愿望的库存进度（应打/已打随之减少）。
+ * 返回被删任务快照（供事件补发）；任务不存在时返回 undefined。
+ */
+export async function removeTaskCompletely(store: XingyuanStore, taskId: string): Promise<TaskRecord | undefined> {
+  const task = await destroyTask(store, taskId)
+  // 愿望可能已被并发删除：仅在存续时回写进度（不吞存储层异常）
+  if (task !== undefined && task.wishId !== undefined && store.domain.table('wishes').get(task.wishId) !== undefined) {
+    await syncWishProgress(store, task.wishId)
+  }
+  return task
+}
+
+/**
+ * 彻底删除愿望及其下属全部任务（含各自打卡与微行动状态）。
+ * 愿望本体同删，无需进度回写；返回被级联的任务快照。
+ */
 export async function removeWishCompletely(store: XingyuanStore, wishId: string): Promise<TaskRecord[]> {
   const removed: TaskRecord[] = []
   for (const [, task] of store.domain.table('tasks').entries()) {
     if (task.wishId !== wishId) continue
-    await removeTaskCompletely(store, task.taskId)
-    removed.push(task)
+    const destroyed = await destroyTask(store, task.taskId)
+    if (destroyed !== undefined) removed.push(destroyed)
   }
   await store.domain.table('wishes').delete(wishId)
   return removed

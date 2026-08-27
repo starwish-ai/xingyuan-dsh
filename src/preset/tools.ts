@@ -29,6 +29,7 @@ import {
   checkedDatesOf,
   claimTask,
   createTask,
+  createWish,
   CYCLE_LABELS,
   freshTask,
   freshWish,
@@ -38,9 +39,10 @@ import {
   renameCategory,
   saveMemory,
   searchMemories,
-  syncWishProgress,
-  ToolError,
   updateTask,
+  updateWish,
+  ToolError,
+  validateEstimatedDate,
 } from '../store.js'
 
 export const inject = ['tools', 'xingyuan', 'userQuestions']
@@ -184,26 +186,7 @@ function wishNameOf(store: XingyuanStore, task: TaskRecord): string | undefined 
   return task.wishId !== undefined ? store.domain.table('wishes').get(task.wishId)?.title : undefined
 }
 
-/** 愿望记录构造（create_wish / create_wish_with_tasks 共用工厂）。 */
-function buildWishRecord(
-  input: Pick<WishRecord, 'title' | 'categoryName'> & Partial<Pick<WishRecord, 'colorKey' | 'description' | 'estimatedCompletionDate'>>,
-  today: string,
-): WishRecord {
-  return {
-    wishId: crypto.randomUUID(),
-    title: input.title,
-    categoryName: input.categoryName,
-    ...(input.colorKey ? { colorKey: input.colorKey } : {}),
-    ...(input.description ? { description: input.description } : {}),
-    ...(input.estimatedCompletionDate ? { estimatedCompletionDate: input.estimatedCompletionDate } : {}),
-    progress: 0,
-    totalRequiredDays: 0,
-    totalCompletedDays: 0,
-    archived: false,
-    createdAt: `${today}T00:00:00`,
-  }
-}
-
+/** 愿望记录构造已收口至 store.createWish/updateWish（校验同源）；此处保留字段预检以便在确认卡前失败。 */
 const DELETE_NOTE = '删除不可恢复：会弹出系统确认卡片，直接调用等待确认结果即可，无需自行询问用户。'
 const CREATE_NOTE = '会弹出系统确认卡片展示完整创建内容，直接调用等待确认结果即可，无需自行询问用户；用户在确认卡取消则向用户说明并询问要调整的地方。'
 const CANCEL_CHECKIN_NOTE = '会弹出系统确认卡片，直接调用等待确认结果即可，无需自行询问用户。'
@@ -217,12 +200,8 @@ function confirmGate(config: Config): boolean {
   return config.confirmWrites !== false
 }
 
-/** 愿望预计完成日期校验（对齐 Web WishForm 口径：yyyy-MM-dd 且不得早于今天）。 */
-function validateEstimatedDate(value: string | undefined, today: string): void {
-  if (value === undefined) return
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new ToolError(`预计完成日期格式错误，请使用 yyyy-MM-dd：${value}`)
-  if (value < today) throw new ToolError('预计完成日期不能早于今天')
-}
+/** 字段清空约定说明（update 类工具的可选字段参数描述复用）。 */
+const CLEARABLE_NOTE = '传空字符串表示清除该字段；不传则保留原值。'
 
 /** 注册全部星愿工具（preset 层 scope；插件 dispose 自动注销）。 */
 export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config: Config): void {
@@ -280,7 +259,9 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      validateEstimatedDate(args.estimatedCompletionDate, todayIso())
+      const today = todayIso()
+      // 落库前预检字段（分类/日期校验与 store 同源），确认卡被拒或字段非法都不产生半成品
+      validateEstimatedDate(args.estimatedCompletionDate, today)
       if ((args.tasks?.length ?? 0) > 3) throw new ToolError('推荐任务最多 3 个')
       if (confirmGate(config)) {
         const plan = (args.tasks ?? []).map((t, i) => `${i + 1}. ${t.name}（${CYCLE_LABELS[t.checkInCycle]}${t.dueDate ? `，截止 ${t.dueDate}` : ''}）`).join('\n')
@@ -289,9 +270,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
           + (plan.length > 0 ? `\n将同时创建 ${args.tasks!.length} 个推荐任务：\n${plan}` : '\n不创建推荐任务。'))
         if (!approved) return '已取消创建。可以告诉我要调整的地方（任务内容、周期、截止日等），我重新规划后再确认。'
       }
-      const today = todayIso()
-      const wish = buildWishRecord(args, today)
-      await store.domain.table('wishes').put(wish.wishId, wish)
+      const wish = await createWish(store, args, today)
       const created: TaskRecord[] = []
       const failed: string[] = []
       for (const item of args.tasks ?? []) {
@@ -307,7 +286,6 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
           failed.push(`${item.name}：${error instanceof Error ? error.message : '未知原因'}`)
         }
       }
-      await syncWishProgress(store, wish.wishId)
       const finalWish = store.domain.table('wishes').get(wish.wishId)!
       emitWish(exec.agent, 'created', finalWish)
       for (const task of created) emitTask(store, exec.agent, 'created', task)
@@ -329,15 +307,14 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
-      validateEstimatedDate(args.estimatedCompletionDate, todayIso())
+      const today = todayIso()
+      validateEstimatedDate(args.estimatedCompletionDate, today)
       if (confirmGate(config)) {
         const approved = await confirmAction(ctx, exec,
           `确认创建愿望「${args.title}」（${args.categoryName}）吗？${args.estimatedCompletionDate !== undefined ? `\n预计完成：${args.estimatedCompletionDate}` : ''}`)
         if (!approved) return '已取消创建。可以告诉我要调整的地方，我修改后再确认。'
       }
-      const today = todayIso()
-      const wish = buildWishRecord(args, today)
-      await store.domain.table('wishes').put(wish.wishId, wish)
+      const wish = await createWish(store, args, today)
       emitWish(exec.agent, 'created', wish)
       return `已创建愿望「${wish.title}」（分类：${wish.categoryName}）。`
     },
@@ -451,24 +428,21 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     parameters: {
       wishId: { type: 'string', required: true, description: '愿望ID，取列表返回的真实值' },
       title: { type: 'string', description: '新标题，可选。不超过50字符' },
-      description: { type: 'string', description: '新描述，可选。不超过500字符' },
+      description: { type: 'string', description: `新描述，可选。不超过500字符。${CLEARABLE_NOTE}` },
       categoryName: { type: 'string', description: '新分类名，可选。2-6个中文字符' },
-      colorKey: { type: 'string', enum: COLOR_KEY_ENUM, description: `分类颜色标识，可选。${COLOR_KEY_NOTE}` },
-      estimatedCompletionDate: { type: 'string', description: '新预计完成日期，可选。yyyy-MM-dd' },
+      colorKey: { type: 'string', description: `分类颜色标识，可选。${COLOR_KEY_NOTE}${CLEARABLE_NOTE}示例：blue` },
+      estimatedCompletionDate: { type: 'string', description: `新预计完成日期，可选。yyyy-MM-dd。${CLEARABLE_NOTE}` },
     },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
       validateEstimatedDate(args.estimatedCompletionDate, todayIso())
-      // 更新前先确认存在：不存在时给出模型可读的领域错误，而非底层存储异常
-      requireWish(store, args.wishId)
-      const updated = await store.domain.table('wishes').update(args.wishId, (wish) => ({
-        ...wish,
-        title: args.title ?? wish.title,
-        description: args.description ?? wish.description,
-        categoryName: args.categoryName ?? wish.categoryName,
-        estimatedCompletionDate: args.estimatedCompletionDate ?? wish.estimatedCompletionDate,
-        ...(args.colorKey !== undefined ? { colorKey: args.colorKey } : {}),
-      }))
+      const updated = await updateWish(store, args.wishId, {
+        title: args.title,
+        description: args.description,
+        categoryName: args.categoryName,
+        colorKey: args.colorKey,
+        estimatedCompletionDate: args.estimatedCompletionDate,
+      })
       emitWish(exec.agent, 'updated', updated)
       return `已更新愿望「${updated.title}」。`
     },
@@ -590,7 +564,6 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         source: 'ai',
         hint: args.hint,
       })
-      if (task.wishId !== undefined) await syncWishProgress(store, task.wishId)
       emitTask(store, exec.agent, 'created', task)
       const preview = taskPreview(store, task)
       return `已创建任务「${task.name}」（${cycleLabel(task.checkInCycle)}${task.dueDate !== undefined ? `，截止 ${task.dueDate}` : ''}），应打卡 ${task.requiredDays > 0 ? `${task.requiredDays} 天` : '不限'}，当前待领取。${preview.length > 0 ? `近期打卡日：${preview.join('、')}。` : ''}`
@@ -635,11 +608,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
           failed.push(`${item.name}：${error instanceof Error ? error.message : '未知原因'}`)
         }
       }
-      // 与单个 create_task 同口径：愿望库存进度即时落库（读侧 fresh 兜底，但
+      // 愿望库存进度由 createTask 内部联动落库（读侧 fresh 兜底，但
       // overview/开场上下文消费的是库存 archived 原值，不回写会短暂失真）
-      for (const wishId of [...new Set(created.map((task) => task.wishId).filter((id): id is string => id !== undefined))]) {
-        await syncWishProgress(store, wishId)
-      }
       for (const task of created) emitTask(store, exec.agent, 'created', task)
       const lines = created.map((task, index) => `${index + 1}. ${taskLine(task)}`).join('\n')
       return `已创建 ${created.length} 个任务：\n${lines}${failed.length > 0 ? `\n失败：${failed.join('；')}` : ''}`
@@ -692,8 +662,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     parameters: {
       taskId: { type: 'string', required: true, description: '任务ID，取列表返回的真实值' },
       name: { type: 'string', description: '新名称，可选。1-100字符' },
-      hint: { type: 'string', description: '新提示，可选。不超过500字符' },
-      dueDate: { type: 'string', description: '新截止日期，可选。yyyy-MM-dd，不得早于今天' },
+      hint: { type: 'string', description: `新提示，可选。不超过500字符。${CLEARABLE_NOTE}` },
+      dueDate: { type: 'string', description: `新截止日期，可选。yyyy-MM-dd，不得早于今天；${CLEARABLE_NOTE}清除后任务不再受机会日约束` },
       checkInCycle: { type: 'string', enum: ['once', 'daily', 'weekly', 'monthly'], description: '新打卡周期，可选' },
     },
     output: TEXT_OUTPUT,
@@ -706,7 +676,6 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         dueDate: args.dueDate,
         checkInCycle: args.checkInCycle,
       })
-      if (after.wishId !== undefined) await syncWishProgress(store, after.wishId)
       emitTask(store, exec.agent, 'updated', after)
       const changes = [
         args.name !== undefined ? `名称 →「${after.name}」` : undefined,
@@ -811,7 +780,6 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       const approved = await confirmAction(ctx, exec, `确定删除任务「${task.name}」吗？其打卡记录将一并删除，不可恢复。`)
       if (!approved) return '已取消删除。'
       await removeTaskCompletely(store, task.taskId)
-      if (task.wishId !== undefined) await syncWishProgress(store, task.wishId)
       emitTask(store, exec.agent, 'deleted', task)
       return `已删除任务「${task.name}」。如需重新添加，随时告诉我！`
     },
@@ -840,7 +808,6 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
           continue
         }
         await removeTaskCompletely(store, id)
-        if (task.wishId !== undefined) await syncWishProgress(store, task.wishId)
         emitTask(store, exec.agent, 'deleted', task)
         success++
       }

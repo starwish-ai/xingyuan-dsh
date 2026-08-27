@@ -3,7 +3,7 @@
  * 数据全部由 storageDomain 现算（打卡明细 + 任务 + 愿望），卡片走 xingyuan/chart 事件。
  */
 import type { XingyuanChartDatum } from '../events.js'
-import { anchorOf, type Task, type Wish } from '../store.js'
+import { anchorOf, checkinCountIndex, freshTask, freshWish, type Task, type Wish } from '../store.js'
 import { computeCheckInStats } from '../growth.js'
 import type { XingyuanStore } from '../domain.js'
 import { calculateOpportunityDates, todayIso } from '../opportunity.js'
@@ -136,6 +136,8 @@ function countByCategory(store: XingyuanStore, facts: CheckinFact[]): Map<string
 export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanStore, config: ChartConfig, today = todayIso()): ChartSpec | undefined {
   const days = clamp(params.days ?? config.trendDays, 1, config.maxDays)
   const limit = clamp(params.limit ?? config.rankLimit, 1, config.rankMax)
+  // 读侧新鲜化共用一份打卡计数索引（与任务页/愿望页 fresh 口径一致）
+  const counts = checkinCountIndex(store)
 
   switch (key) {
     case 'checkinTrend': {
@@ -154,16 +156,18 @@ export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanSt
       return { chartKey: key, title: params.title ?? '打卡趋势', subtitle: `近 ${days} 天`, chartType: 'line', data }
     }
     case 'checkinCalendar': {
-      // 指定月或最近一年：按自然日网格给数（仅非零日，前端渲染网格）
+      // 指定月或最近一年：按自然日网格给数（仅非零日，前端渲染网格）。
+      // 未指定月默认截取最近 365 天——与副标题「最近一年」如实对应
       const month = params.month && /^\d{4}-\d{2}$/.test(params.month) ? params.month : undefined
       const prefix = month ? `${month}-` : ''
-      const counts = new Map<string, number>()
-      for (const fact of checkinFacts(store)) {
+      const sinceDay = month ? undefined : dayNumber(today) - 364
+      const countsMap = new Map<string, number>()
+      for (const fact of checkinFacts(store, sinceDay)) {
         if (prefix && !fact.date.startsWith(prefix)) continue
-        counts.set(fact.date, (counts.get(fact.date) ?? 0) + 1)
+        countsMap.set(fact.date, (countsMap.get(fact.date) ?? 0) + 1)
       }
-      if (!counts.size) return undefined
-      const data = [...counts.entries()]
+      if (!countsMap.size) return undefined
+      const data = [...countsMap.entries()]
         .sort(([a], [b]) => (a < b ? -1 : 1))
         .map(([date, value]) => ({ label: date, value }))
       return {
@@ -244,17 +248,17 @@ export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanSt
     }
     case 'taskStatus': {
       const statusLabels: Record<Task['status'], string> = { pending: '待领取', in_progress: '进行中', closed: '已完结' }
-      const counts = new Map<string, number>()
+      const statusCounts = new Map<string, number>()
       for (const task of tasksOf(store, params.wishId)) {
-        const label = statusLabels[task.status]!
-        counts.set(label, (counts.get(label) ?? 0) + 1)
+        const label = statusLabels[freshTask(store, task, today, counts).status]!
+        statusCounts.set(label, (statusCounts.get(label) ?? 0) + 1)
       }
-      if (!counts.size) return undefined
+      if (!statusCounts.size) return undefined
       return {
         chartKey: key,
         title: params.title ?? '任务状态分布',
         chartType: 'pie',
-        data: [...counts.entries()].map(([label, value]) => ({ label, value })),
+        data: [...statusCounts.entries()].map(([label, value]) => ({ label, value })),
       }
     }
     case 'checkinByCategory': {
@@ -324,7 +328,8 @@ function buildTailChart(
     return { chartKey: key, title: params.title ?? '任务分布', subtitle: '按愿望 TopN', chartType: 'bar', data }
   }
   if (key === 'wishProgress') {
-    const wishes = wishesOf(store).filter((wish) => !wish.archived)
+    // 新鲜进度（读侧口径）：跨日陈旧的库存值不参与排行与筛选
+    const wishes = wishesOf(store).map((wish) => freshWish(store, wish)).filter((wish) => !wish.archived)
     if (!wishes.length) return undefined
     const data = wishes
       .slice()
@@ -334,7 +339,7 @@ function buildTailChart(
     return { chartKey: key, title: params.title ?? '愿望进度', subtitle: '%（应打天数完成率）', chartType: 'bar', data }
   }
   if (key === 'wishAchievement') {
-    const wishes = wishesOf(store)
+    const wishes = wishesOf(store).map((wish) => freshWish(store, wish))
     if (!wishes.length) return undefined
     const achieved = wishes.filter((wish) => wish.progress >= 100).length
     return {
