@@ -4,3 +4,5 @@ lib/
 *.tsbuildinfo
 .scratch/
 .DS_Store
+debug/ui-mock*.html
+.playwright/
