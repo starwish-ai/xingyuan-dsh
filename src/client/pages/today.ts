@@ -1,16 +1,19 @@
 /** 今日页：今日打卡总览 + 一键打卡/领取 + 已完成撤销。 */
-import { createElement, type ReactElement } from 'react'
+import { createElement, useSyncExternalStore, type ReactElement } from 'react'
 import { postAction } from '../api.js'
 import { toast } from '../ui.js'
 import { useXyT } from '../i18n.js'
 import { softConfirm, useActionGuard, usePageData, useStableScrollbar, localYmd } from '../hooks.js'
 import { PageEmpty, PageError, PageSkeleton } from '../ui.js'
 import { cycleLabel, dateSuffix, formatFriendlyDate } from './format.js'
+import { todayHintStore } from '../tab-hint.js'
 import type { DayPayload, OverviewPayload } from './types.js'
 
 export function TodayPage(): ReactElement {
   const t = useXyT()
   const stabilize = useStableScrollbar()
+  // 「始终显示 × 非星愿会话」轻提示：控制器写值，本页订阅渲染（默认 false 零开销）
+  const showNoPresetHint = useSyncExternalStore(todayHintStore.subscribe, todayHintStore.getSnapshot)
   const overview = usePageData<OverviewPayload>('/xingyuan/api/overview')
   const day = usePageData<DayPayload>(() => `/xingyuan/api/day?date=${localYmd(new Date())}`)
   const { busy, guard } = useActionGuard()
@@ -93,6 +96,8 @@ export function TodayPage(): ReactElement {
             createElement('div', { className: 'xy-bar-fill', style: { transform: `scaleX(${ratio / 100})` } }))
         : null,
       allDone ? createElement('div', { className: 'xy-banner-ok' }, t('today.allDone')) : null),
+    // 始终显示模式下非星愿会话：概览卡下一行轻提示（页面可浏览/操作，对话能力受限）
+    showNoPresetHint ? createElement('p', { className: 'xy-hint' }, t('today.noPresetHint')) : null,
     rows.length > 0 ? createElement('section', { className: 'xy-group' },
       createElement('h3', { className: 'xy-group-head' },
         createElement('span', { className: 'xy-group-dot xy-group-dot-warn', 'aria-hidden': 'true' }),

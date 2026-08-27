@@ -10,8 +10,8 @@ import { disposeConfirms, disposeToasts } from './ui.js'
 import { STYLE_TEXT } from './styles.js'
 import { CARD_VIEWS } from './cards.js'
 import type { XyState } from './types.js'
-import { CalendarPage, GrowthPage, MemoryPage, TasksPage, TodayPage, WishesPage } from './pages/index.js'
-import { SettingsSection, type SettingsScopeLike } from './pages/settings.js'
+import { installTabVisibility } from './tab-visibility.js'
+import { SettingsSection, type SettingsScopeLike, type UiScopeLike } from './pages/settings.js'
 
 export const inject = ['slots', 'settingsScope', 'conversationEvents']
 
@@ -107,23 +107,20 @@ export function apply(ctx: ClientContext): void {
     ctx.slots.register({ name: 'conversation.chat.node', key: 'xy-micro' }, CARD_VIEWS.MicroView),
   ])
 
-  // 会话视图环标签页：今日 / 愿望 / 任务 / 日历 / 成长 / 记忆（仅激活时挂载，进入即取最新数据）。
+  // 会话视图环标签页：今日 / 愿望 / 任务 / 日历 / 成长 / 记忆。
+  // 显隐由 tab-visibility 控制器按「界面偏好设置 × 会话预设」动态维护：
+  // 默认跟随会话（星愿预设的会话才显示），设置可切始终显示/始终隐藏并按标签勾选。
   // label 用 thunk 跟随当前语言；locale 声明让壳在语言切换时刷新标签行。
-  ctx.slots.inject('conversation.view', () => [
-    ctx.slots.register({ name: 'conversation.view', id: 'xy-today', order: 21, label: () => t('tab.today'), locale: XY_NS }, TodayPage),
-    ctx.slots.register({ name: 'conversation.view', id: 'xy-wishes', order: 22, label: () => t('tab.wishes'), locale: XY_NS }, WishesPage),
-    ctx.slots.register({ name: 'conversation.view', id: 'xy-tasks', order: 23, label: () => t('tab.tasks'), locale: XY_NS }, TasksPage),
-    ctx.slots.register({ name: 'conversation.view', id: 'xy-calendar', order: 24, label: () => t('tab.calendar'), locale: XY_NS }, CalendarPage),
-    ctx.slots.register({ name: 'conversation.view', id: 'xy-growth', order: 25, label: () => t('tab.growth'), locale: XY_NS }, GrowthPage),
-    ctx.slots.register({ name: 'conversation.view', id: 'xy-memory', order: 26, label: () => t('tab.memory'), locale: XY_NS }, MemoryPage),
-  ])
+  ctx.slots.inject('conversation.view', () => installTabVisibility(ctx))
 
-  // 星愿设置整页（设置 → 星愿）：教练风格/画像（星愿库）+ 二次确认开关与注入上限（设置命名空间）
+  // 星愿设置整页（设置 → 星愿）：教练风格/画像（星愿库）+ 二次确认开关与注入上限
+  // （preset 命名空间）+ 标签页显隐（bundle 常驻命名空间 xingyuan-ui，未选星愿也可调）
   ctx.slots.inject('settings.section', () => {
     const scope = ctx.settingsScope.bind({ namespace: 'xingyuan' }) as unknown as SettingsScopeLike
+    const uiscope = ctx.settingsScope.bind({ namespace: 'xingyuan-ui' }) as unknown as UiScopeLike
     return ctx.slots.register(
       { name: 'settings.section', id: 'xingyuan', order: 60, label: () => t('settings.tabLabel'), locale: XY_NS },
-      () => SettingsSection({ scope }),
+      () => SettingsSection({ scope, uiscope }),
     )
   })
 }

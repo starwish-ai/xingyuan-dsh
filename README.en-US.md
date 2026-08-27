@@ -14,7 +14,7 @@ XingYuan is a wish & habit-building companion, shipped as a DeepSeek Harness plu
 - **Opportunity-day check-ins**: check-in, make-up, cancel, and future pre-checks; progress always recomputed against today
 - **Micro-actions**: break an overwhelming goal into 3–7 tiny steps and walk through them guided
 - **Growth system**: levels Lv.1–Lv.10, streak bonuses, stat cards, 30-day bar chart
-- **Session view tabs**: Today / Wishes / Tasks / Calendar / Growth / Memory — buttons call action endpoints directly
+- **Session view tabs**: Today / Wishes / Tasks / Calendar / Growth / Memory — buttons call action endpoints directly; shown only in XingYuan-preset sessions by default, switchable to always show/hide and per-tab in Settings
 - **Memory**: important memories injected into context (limit configurable), full CRUD
 - **Charts**: 15 chart types rendered as cards
 - **Safe writes**: write operations confirmed by default (configurable); deletion always confirmed
@@ -42,6 +42,7 @@ Business data lives at `~/.dsh/xingyuan/xingyuan.sqlite` and survives uninstall 
 | User profile | Nickname, occupation, interests |
 | Write confirmation | Whether create / check-in writes need confirmation (deletion always does) |
 | Memory injection limit | Max memories injected per turn |
+| Tab visibility | Three modes (follow session / always show / always hide) plus per-tab toggles; defaults to follow session |
 
 ## Development
 

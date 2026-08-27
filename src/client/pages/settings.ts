@@ -1,14 +1,34 @@
-/** 星愿设置整页（设置 → 星愿）：教练风格/画像（星愿库）+ 二次确认开关与注入上限（设置命名空间）。 */
+/** 星愿设置整页（设置 → 星愿）：教练风格/画像（星愿库）+ 二次确认开关与注入上限
+ * （preset 命名空间）+ 标签页显隐（bundle 常驻命名空间 xingyuan-ui，未选星愿也可调）。 */
 import { createElement, useEffect, useRef, useState, useSyncExternalStore, type ReactElement } from 'react'
 import { getJson, postJson } from '../api.js'
 import { toastError } from '../ui.js'
-import { useXyT, activeLocale } from '../i18n.js'
+import { useXyT, activeLocale, type XyKey } from '../i18n.js'
+import { TAB_IDS, type TabId, type TabVisibilityMode } from '../../tab-policy.js'
 
 /** 与 dsh-client-runtime 的 SettingsScope 快照对齐的叶子视图（只读字段）。 */
 interface ScopeSnapshotLike {
   readonly status: 'loading' | 'ready' | 'unavailable'
   readonly value?: { readonly confirmWrites?: boolean; readonly memoryInjectLimit?: number }
   readonly writable: boolean
+}
+
+/** xingyuan-ui 命名空间快照（标签页显隐字段）。 */
+interface UiScopeSnapshotLike {
+  readonly status: 'loading' | 'ready' | 'unavailable'
+  readonly value?: {
+    readonly tabVisibilityMode?: TabVisibilityMode
+    readonly hiddenTabs?: readonly TabId[]
+  }
+  readonly writable: boolean
+}
+
+/** xingyuan-ui 命名空间的 scope 形状（bind 返回结构，见 dsh-client-runtime contract/settings-scope）。 */
+export interface UiScopeLike {
+  getSnapshot(): UiScopeSnapshotLike
+  subscribe(listener: () => void): () => void
+  set(field: string, value: unknown): Promise<void>
+  unset(field: string): Promise<void>
 }
 
 /**
@@ -32,7 +52,24 @@ interface ProfilePayloadLike {
 const COACH_IDS = ['gentle', 'strict', 'humorous'] as const
 const COACH_KEYS = ['settings.coach.gentle', 'settings.coach.strict', 'settings.coach.humorous'] as const
 
-export function SettingsSection(props: { scope: SettingsScopeLike }): ReactElement {
+/** 显隐三态（顺序即分段按钮顺序；与 tab-policy 字面量同源）。 */
+const MODE_OPTIONS: ReadonlyArray<{ readonly mode: TabVisibilityMode; readonly key: XyKey }> = [
+  { mode: 'follow', key: 'settings.tabs.mode.follow' },
+  { mode: 'show', key: 'settings.tabs.mode.show' },
+  { mode: 'hide', key: 'settings.tabs.mode.hide' },
+]
+
+/** 六个标签的显示名键（与 tab-visibility 的 entry labelKey 同源）。 */
+const TAB_LABEL_KEYS: Record<TabId, XyKey> = {
+  today: 'tab.today',
+  wishes: 'tab.wishes',
+  tasks: 'tab.tasks',
+  calendar: 'tab.calendar',
+  growth: 'tab.growth',
+  memory: 'tab.memory',
+}
+
+export function SettingsSection(props: { scope: SettingsScopeLike; uiscope: UiScopeLike }): ReactElement {
   const t = useXyT()
   const scope = props.scope
   // 正确订阅：useSyncExternalStore + getSnapshot（scope 契约见 dsh-client-runtime contract/settings-scope）
@@ -42,6 +79,13 @@ export function SettingsSection(props: { scope: SettingsScopeLike }): ReactEleme
   )
   const writable = snap.status === 'ready' && snap.writable
   const limit = String(snap.value?.memoryInjectLimit ?? 40)
+
+  // 界面偏好命名空间（标签页显隐）独立订阅：两个命名空间各自走自己的快照
+  const uisnap = useSyncExternalStore(
+    (listener) => props.uiscope.subscribe(listener),
+    () => props.uiscope.getSnapshot(),
+  )
+  const uiWritable = uisnap.status === 'ready' && uisnap.writable
 
   // 教练风格与画像存于星愿数据库 global 单例（与对话侧工具同一数据源），经 /xingyuan/api/profile 读写
   const [profile, setProfile] = useState<ProfilePayloadLike | undefined>(undefined)
@@ -56,11 +100,44 @@ export function SettingsSection(props: { scope: SettingsScopeLike }): ReactEleme
   const [savedMsg, setSavedMsg] = useState('')
   // 二次确认开关：本地乐观值（undefined=跟随远端快照）——写入在途时 UI 立即响应，失败回滚
   const [pendingToggle, setPendingToggle] = useState<boolean | undefined>(undefined)
+  // 标签页显隐：模式与勾选各自乐观（写入在途时禁用对应控件，失败回滚 + toast）
+  const [pendingMode, setPendingMode] = useState<TabVisibilityMode | undefined>(undefined)
+  const [pendingHidden, setPendingHidden] = useState<readonly TabId[] | undefined>(undefined)
   const savedTimer = useRef<number | undefined>(undefined)
   // 档案加载代数守卫：慢响应不得覆盖用户已开始的草稿
   const profileSeqRef = useRef(0)
   // 开关显示值：乐观本地值优先（写入在途），否则跟随远端快照
   const confirmWrites = pendingToggle !== undefined ? pendingToggle : snap.value?.confirmWrites !== false
+  // 标签页显隐显示值：乐观优先，否则远端快照，再兜底 schema 默认
+  const tabMode: TabVisibilityMode = pendingMode ?? uisnap.value?.tabVisibilityMode ?? 'follow'
+  const hiddenTabs: readonly TabId[] = pendingHidden ?? uisnap.value?.hiddenTabs ?? []
+
+  /** 切换显隐模式：乐观写，失效即回滚（分段按钮视觉与持久化口径一致）。 */
+  const switchTabMode = (next: TabVisibilityMode): void => {
+    if (!uiWritable || pendingMode !== undefined || next === tabMode) return
+    setPendingMode(next)
+    void props.uiscope.set('tabVisibilityMode', next)
+      .then(() => setPendingMode(undefined))
+      .catch((err: unknown) => {
+        setPendingMode(undefined)
+        toastError(err)
+      })
+  }
+
+  /** 勾选单个标签（勾选 = 显示）：成员关系按 TAB_IDS 稳定序重算，写入整体数组。 */
+  const toggleTab = (id: TabId, willShow: boolean): void => {
+    if (!uiWritable || pendingHidden !== undefined || tabMode === 'hide') return
+    const next = willShow
+      ? TAB_IDS.filter((tid) => tid !== id && hiddenTabs.includes(tid))
+      : TAB_IDS.filter((tid) => tid === id || hiddenTabs.includes(tid))
+    setPendingHidden(next)
+    void props.uiscope.set('hiddenTabs', next)
+      .then(() => setPendingHidden(undefined))
+      .catch((err: unknown) => {
+        setPendingHidden(undefined)
+        toastError(err)
+      })
+  }
 
   const loadProfile = (): void => {
     const seq = ++profileSeqRef.current
@@ -245,5 +322,39 @@ export function SettingsSection(props: { scope: SettingsScopeLike }): ReactEleme
         limitError
           ? createElement('span', { id: 'xy-limit-error', className: 'xy-field-err', role: 'alert' }, t('settings.pref.limitInvalid'))
           : null)),
+    // 标签页显示：模式三态（跟随会话/始终显示/始终隐藏）+ 六个标签勾选 chips。
+    // 与教练风格卡同一 xy-seg 视觉语法；「始终隐藏」时勾选区整组禁用置灰。
+    // 命名空间常驻于 bundle 层（未选星愿预设也可调），见 src/ui-settings.ts 头注。
+    createElement('section', { className: 'xy-panel' },
+      createElement('h3', { className: 'xy-panel-head' }, t('settings.tabs.title')),
+      uisnap.status === 'unavailable'
+        ? createElement('p', { className: 'xy-hint' }, t('settings.tabs.unavailable'))
+        : uisnap.status === 'loading'
+          ? createElement('p', { className: 'xy-hint' }, t('settings.tabs.loading'))
+          : null,
+      createElement('div', { className: 'xy-seg', role: 'group', 'aria-label': t('settings.tabs.title') },
+        ...MODE_OPTIONS.map((opt) => createElement('button', {
+          key: opt.mode,
+          className: `xy-seg-btn${tabMode === opt.mode ? ' xy-on' : ''}`,
+          'aria-pressed': tabMode === opt.mode,
+          disabled: !uiWritable || pendingMode !== undefined,
+          onClick: () => switchTabMode(opt.mode),
+        }, t(opt.key)))),
+      createElement('div', {
+        className: 'xy-seg',
+        role: 'group',
+        'aria-label': t('settings.tabs.chooseTab'),
+      },
+        ...TAB_IDS.map((id) => {
+          const shown = !hiddenTabs.includes(id)
+          return createElement('button', {
+            key: id,
+            className: `xy-seg-btn${shown ? ' xy-on' : ''}`,
+            'aria-pressed': shown,
+            disabled: !uiWritable || pendingHidden !== undefined || tabMode === 'hide',
+            onClick: () => toggleTab(id, !shown),
+          }, t(TAB_LABEL_KEYS[id]))
+        })),
+      createElement('p', { className: 'xy-hint' }, t('settings.tabs.hint'))),
     createElement('p', { className: 'xy-hint' }, t('settings.dataHint')))
 }

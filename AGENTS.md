@@ -20,7 +20,7 @@ agent 选择器出现「星愿」即安装成功。
 | 记忆（增删改查 + 上下文自动注入） | `memories` 表 + `src/preset/prompts.ts` 动态上下文 |
 | 成长体系（Lv.1–Lv.10、经验、连续加成） | `src/growth.ts` |
 | 图表（15 种 chartKey，会话内卡片渲染） | `src/preset/charts.ts` + `xingyuan/chart` 事件 |
-| 会话视图页（今日/愿望/任务/日历/成长/记忆六标签） | `src/client/pages/*`（client 半侧） |
+| 会话视图页（今日/愿望/任务/日历/成长/记忆六标签，显隐可控） | `src/client/pages/*` + `src/client/tab-visibility.ts`（client 半侧） |
 | 安全确认（写操作二次确认、删除始终确认） | `src/preset/hitl.ts`（userQuestions） |
 | 数据持久化 | 自带 sqlite 后端，`~/.dsh/xingyuan/xingyuan.sqlite` |
 
@@ -70,6 +70,8 @@ XingYuan-Dsh/
 │   └── preset.yml          # 展示元信息（name/description）
 ├── src/
 │   ├── index.ts            # bundle 常驻入口：发布 preset → 开领域 → provide('xingyuan') → 注册路由
+│   ├── tab-policy.ts       # 标签页显隐纯策略与常量（host/client 共用，见 §5.11）
+│   ├── ui-settings.ts      # bundle 层界面偏好命名空间 xingyuan-ui（标签页显隐常驻可调）
 │   ├── domain.ts           # defineDomain 四张表 + global schema + XingyuanStore 服务
 │   ├── sqlite.ts           # 自带 sqlite 存储后端（StorageBackend 契约实现）
 │   ├── store.ts            # 业务层（愿望/任务/打卡用例，工具面与路由面共用收口）
@@ -91,6 +93,8 @@ XingYuan-Dsh/
 ├── src/client/             # 浏览器半侧（React 18）
 │   ├── index.ts            # 注册 5 个卡片 Definition + 6 个视图标签页 + 设置整页
 │   ├── cards.ts / types.ts # keyed 渲染器与卡片状态
+│   ├── tab-visibility.ts   # 标签页显隐控制器（设置 × 会话预设动态注册，见 §5.11）
+│   ├── tab-hint.ts         # 今日页非星愿提示行快照 store（控制器写、今日页订阅）
 │   ├── pages/              # today/wishes/tasks/calendar/growth/memory/detail/quick-create/...
 │   ├── ui.ts / styles.ts   # 应用内对话框、toast、主题样式
 │   └── i18n.ts             # 中英双语字典
@@ -450,6 +454,34 @@ accent 点缀孤点，形似渲染事故）。半透明衍生色一律在 styles
 `dsh plugin add/update` 会用 npm 版覆盖该副本；数据无虞，库固定在
 `~/.dsh/xingyuan/`（§4 硬约束 2）。
 
+### 5.11 标签页显隐（设置 × 会话预设动态注册）
+
+六个会话视图标签不再无条件常驻：默认**跟随会话预设**（仅 `agentPreset ===
+'xingyuan'` 的会话显示），设置可切「始终显示 / 始终隐藏」并按标签勾选。
+
+- **判定唯一口径**：`src/tab-policy.ts` 的 `visibleTabIds(mode, hiddenTabs,
+  isXingyuanSession)` 纯函数——注册控制器、设置页回显、单测三方共用，禁止另写判定。
+  三态语义：`follow` 星愿会话才显示 / `show` 任何会话都显示 / `hide` 任何会话不显示；
+  `hiddenTabs` 在上述「显示」前提下剔除单标签（默认 `[]` = 全显示；脏值容错忽略）。
+- **设置宿主**：bundle 层命名空间 `xingyuan-ui`（`src/ui-settings.ts`，
+  `installSettingsSection` 经 `ctx.inject(['settings'])` 等待服务挂载，缺席自动不跑）。
+  字段 `tabVisibilityMode` + `hiddenTabs`，默认值写进 schema 与 `tab-policy` 常量同源。
+  挂在常驻层而非 preset 层：未选星愿也能调，且「全部隐藏」状态下开关仍可达
+  （preset 命名空间随星愿会话卸载而消失，会死锁）。
+- **注册机制**（`src/client/tab-visibility.ts`）：`conversation.view` 标签环按
+  「全部已注册 entries」投影标签、无 per-session 过滤，故按会话显隐只能动态维护
+  注册表——控制器订阅「设置快照 × sessions 列表快照」，任一变化时 dispose 旧组、
+  按策略 register 应显示的组（标签环对槽版本号订阅自动重投影；切换瞬间至多一帧
+  旧标签，壳 `resolveActiveView` 对被注销的活跃视图回落 Chat，不渲染空白）。
+  必须在 `slots.inject('conversation.view')` 回调内安装：保证首次 sync 时槽已声明。
+  六个 entry 的 id/order(21–26)/label 与旧静态注册一致。
+- **今日页轻提示**（`src/client/tab-hint.ts` + `today.ts`）：仅「始终显示 × 非星愿
+  会话」时，今日页概览卡下一行提示（页面可浏览/操作，对话能力受限）；控制器写值、
+  页面订阅，值未变化零通知。
+- **不受门控**：5 类对话卡片（非星愿会话无 xingyuan/* 事件天然惰性）、设置页本体
+  （控制中心永远可达）、直开 URL `/xingyuan/*`（独立页面）。
+- 测试：`test/tab-policy.test.ts` 对拍策略全分支（三态 × 会话 × 勾选 × 脏值）。
+
 ## 6. 工具清单（45 个）
 
 改动工具面时对照此表增删（新增务必同步 prompts.ts 能力段落与 README 功能列表）。
@@ -515,6 +547,7 @@ wishProgress / wishAchievement / continuousCheckin / checkinTimeDistribution / w
 |---|---|
 | bundle 主行 Config | rangeDefaultDays(7)、rangeMaxDays(31)、memoryListLimit(500)、repairSessionLogs(true) |
 | preset side Config（同时映射为 Web 设置页表单项） | memoryInjectLimit(40)、batchWishLimit(50)、batchTaskLimit(100)、chartTrendDays(14)、chartDistributionDays(30)、chartMaxDays(90)、chartRankLimit(10)、chartRankMax(20)、confirmWrites(true) |
+| bundle 界面偏好命名空间 xingyuan-ui（Web 设置页「标签页显示」卡） | tabVisibilityMode(follow)、hiddenTabs([])——schemastery 枚举用 const+union 表达，见 §5.11 |
 
 配置变更触发 HMR 热替换；不做任何跨重载的模块级单例状态。
 
@@ -562,6 +595,9 @@ npm provenance 开启）。
    锚定创建时刻），无 daily/weekly/monthly 日历能力；v1 以今日页 + 开场概览兜底，
    向用户的差异如实说明。（另注：schedule 工具只对装载之后新建的 live 根 agent 可见。）
 8. **写确认默认开**：创建/打卡/取消受开关控制，删除始终确认（§5.5 矩阵）。
+9. **标签页显隐默认跟随会话预设**：六个会话视图标签默认仅在星愿预设的会话显示，
+   设置可切「始终显示/始终隐藏」并按标签勾选；界面偏好命名空间常驻 bundle 层
+   （未选星愿也可调，避免「全部隐藏后开关不可达」死锁，见 §5.11）。
 
 ## 11. 已知限制
 

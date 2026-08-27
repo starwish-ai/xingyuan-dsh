@@ -13,6 +13,7 @@ import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { registerXingyuanRoutes } from './routes/index.js'
 import { ensurePresetRoot } from './preset-root.js'
 import { repairSessionLogs } from './session-log-repair.js'
+import { installUiSettings } from './ui-settings.js'
 
 export { xingyuanDomainSpec, DOMAIN_VERSION, COACH_STYLES } from './domain.js'
 export type { CoachStyle, WishRecord, TaskRecord, CheckinRecord, MemoryRecord, XingyuanStore } from './domain.js'
@@ -56,6 +57,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     disposed = true
     if (domain) await domain.close()
   })
+  // 界面偏好命名空间（标签页显隐）常驻注册：不依赖 settings 服务存在，服务挂载后自动生效
+  installUiSettings(ctx)
   // preset 发布成功后再开领域；两步就绪后才 provide，注入方（preset 子树）由
   // cordis inject 语义等待本行激活完成
   await ensurePresetRoot()

@@ -6,9 +6,9 @@
  *   → 产出 debug/ui-mock.html（深色）与 debug/ui-mock-light.html（浅色），本地起静态服务截图核对。
  * 纪律：markup 为真实 tsx 输出的手写镜像，仅用于视觉核对；对应组件结构变更时须同步本文件。
  *
- * 场景覆盖（与页面一一对应）：日历 / 今日 / 愿望（卡内展开详情）/ 任务（分组卡+已完结行）/
+ * 场景覆盖（与页面一一对应）：日历 / 今日（含非星愿提示行）/ 愿望（卡内展开详情）/ 任务（分组卡+已完结行）/
  * 成长（英雄卡+强调 streak 统计+近30天柱图）/ 记忆（撰写卡+图标行动作）/
- * 设置（三分节面板）/ 快速新建（任务轻表单）/ 空态·错误态·危险按钮（纯文字版式，插画已移除）。
+ * 设置（四分节面板，含标签页显示）/ 快速新建（任务轻表单）/ 空态·错误态·危险按钮（纯文字版式，插画已移除）。
  */
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -119,6 +119,7 @@ const todaySection = `
       <div class="xy-bar-fill" style="transform:scaleX(.4)"></div>
     </div>
   </section>
+  <p class="xy-hint">当前会话未启用星愿预设：页面数据可浏览、操作可用，但对话中的星愿能力不可用。</p>
   <section class="xy-group">
     <h3 class="xy-group-head"><span class="xy-group-dot xy-group-dot-warn" aria-hidden="true"></span><span>待完成</span><span class="xy-group-count">3</span></h3>
     <ul class="xy-grouplist">
@@ -394,6 +395,23 @@ const settingsSection = `
         <input type="number" min="5" max="200" class="xy-input xy-input-num" name="memoryInjectLimit" inputmode="numeric" value="40">
         <span class="xy-hint">每次对话自动注入上下文的记忆条数上限（5-200，默认 40）；失焦后保存。</span>
       </label>
+    </section>
+    <section class="xy-panel">
+      <h3 class="xy-panel-head">标签页显示</h3>
+      <div class="xy-seg" role="group" aria-label="标签页显示">
+        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true">跟随会话</button>
+        <button class="xy-seg-btn" type="button" aria-pressed="false">始终显示</button>
+        <button class="xy-seg-btn" type="button" aria-pressed="false">始终隐藏</button>
+      </div>
+      <div class="xy-seg" role="group" aria-label="显示的标签页">
+        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true">今日</button>
+        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true">愿望</button>
+        <button class="xy-seg-btn" type="button" aria-pressed="false">任务</button>
+        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true">日历</button>
+        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true">成长</button>
+        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true">记忆</button>
+      </div>
+      <p class="xy-hint">跟随会话：仅星愿预设的会话显示标签页；其他会话自动隐藏。可单独勾选/取消各标签。</p>
     </section>
     <p class="xy-hint">业务数据存于本机 ~/.dsh/xingyuan/，备份即拷贝该目录。</p>
   </div>
