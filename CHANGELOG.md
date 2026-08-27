@@ -5,6 +5,40 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-08-27
+
+Patch release. Two hardening changes: sessions that contain `xingyuan/*` card events
+now survive cold loads after a restart, and the client stylesheet no longer depends on
+`color-mix()` support in the hosting browser. No schema changes; existing data stays
+compatible.
+
+### Added
+- Session-log self-repair (`session-log-repair.ts`): at activation the bundle scans
+  `$DSH_HOME/sessions` and adds `"ignorable": true` to `xingyuan/*` event lines, so
+  conversations containing cards are no longer rejected wholesale by the session format
+  reader after a process restart. Files without xingyuan events are never written;
+  non-xingyuan lines keep their exact bytes; originals are backed up before the first
+  rewrite (3 kept per session); torn tails, corrupt frames, version mismatches,
+  unparsable lines, and live sessions are skipped whole-file. A per-session marker
+  records the artifact byte size, so already-repaired sessions skip the decompress scan
+  at the next startup (68 sessions: 3.6s → <10ms). Containers whose first zstd frame is
+  not exactly one header line — a legacy single-frame layout that broke host startup —
+  are rewritten into the valid layout even when no marking is needed.
+- New bundle config `repairSessionLogs` (default `true`) to disable the self-repair pass.
+
+### Changed
+- Client styles no longer use `color-mix()`; derived colors are explicit per-theme rgba
+  tokens (`--xyd-*-border/ring/hatch/hover`). Empty and error states are plain text
+  layouts — the SVG line-art illustrations whose strokes relied on `color-mix()` are
+  removed — and the growth hero gradient is pre-mixed in JS (`darkenHex`).
+
+### Fixed
+- Conversations containing `xingyuan/*` card events could not be reopened after a
+  process restart (`SessionFormatUnsupportedError`); they are now self-healed at
+  activation and replay their cards again.
+- In browsers without `color-mix()` support, decorative strokes (empty-state art, hover
+  rings, hatch fills, danger buttons) silently vanished, leaving isolated accent dots.
+
 ## [0.5.0] - 2026-08-27
 
 Write-path unification and read-side freshness alignment between the chat tools,

@@ -124,7 +124,7 @@ export function WishesPage(): ReactElement {
           createElement(CategoryManager, { onChanged: () => void page.reload() }))
       : null,
     active.length === 0 && achieved.length === 0 && !showCreate && !showCategories
-      ? createElement(PageEmpty, { art: 'star', title: t('wish.empty.title'), hint: t('wish.empty.hint') })
+      ? createElement(PageEmpty, { title: t('wish.empty.title'), hint: t('wish.empty.hint') })
       : null,
     ...active.map(card),
     achieved.length > 0

@@ -77,7 +77,7 @@ export function TasksPage(): ReactElement {
           createElement(TaskQuickForm, { today: data.today, onCreated: () => void page.reload() }))
       : null,
     data.tasks.length === 0 && !showCreate
-      ? createElement(PageEmpty, { art: 'list', title: t('task.empty.title'), hint: t('task.empty.hint') })
+      ? createElement(PageEmpty, { title: t('task.empty.title'), hint: t('task.empty.hint') })
       : sections.map((section) => createElement('section', { key: section.status, className: 'xy-group' },
           createElement('h3', { className: 'xy-group-head' },
             createElement('span', { className: `xy-group-dot ${DOT_BY_STATUS[section.status]}`, 'aria-hidden': 'true' }),

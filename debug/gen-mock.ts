@@ -8,7 +8,7 @@
  *
  * 场景覆盖（与页面一一对应）：日历 / 今日 / 愿望（卡内展开详情）/ 任务（分组卡+已完结行）/
  * 成长（英雄卡+强调 streak 统计+近30天柱图）/ 记忆（撰写卡+图标行动作）/
- * 设置（三分节面板）/ 快速新建（任务轻表单）。
+ * 设置（三分节面板）/ 快速新建（任务轻表单）/ 空态·错误态·危险按钮（纯文字版式，插画已移除）。
  */
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -422,6 +422,34 @@ const quickSection = `
   </form>
 </div>`
 
+/** 空态/错误态（镜像 ui.ts 的 PageEmpty / PageError）：纯文字版式。
+ * 历史坑：旧版带 SVG 线稿插画，描边色 color-mix() 在部分浏览器失效导致
+ * 整稿隐形、只剩 accent 点缀孤点——本场景同时陈列危险按钮（兼容令牌描边）
+ * 供双主题核对。 */
+const emptySection = `
+<div class="xy-page">
+  <div class="xy-page-center">
+    <div class="xy-empty-title">还没有愿望</div>
+    <div class="xy-meta xy-empty-hint">告诉我最想实现什么，我来帮你拆解成可坚持的计划。</div>
+  </div>
+</div>
+<div class="xy-page">
+  <div class="xy-page-center">
+    <div class="xy-empty-title">还没有任务</div>
+    <div class="xy-meta xy-empty-hint">告诉我你想养成的习惯，或从「愿望」页开始规划。</div>
+  </div>
+</div>
+<div class="xy-page">
+  <div class="xy-page-center">
+    <div class="xy-empty-title">加载失败：服务暂不可用</div>
+    <button class="xy-btn" type="button">重试</button>
+  </div>
+  <div style="display:flex;gap:10px;justify-content:center;padding:10px 0 22px">
+    <button class="xy-btn xy-btn-danger" type="button">删除愿望</button>
+    <button class="xy-btn xy-btn-primary" type="button">＋ 新建愿望</button>
+  </div>
+</div>`
+
 const html = (dark: boolean): string => `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -452,6 +480,8 @@ const html = (dark: boolean): string => `<!doctype html>
   ${settingsSection}
   <h1 style="color:var(--dsw-alias-label-primary);font-size:14px;padding:12px 20px 0">快速新建 · 任务轻表单</h1>
   ${quickSection}
+  <h1 style="color:var(--dsw-alias-label-primary);font-size:14px;padding:12px 20px 0">空态 / 错误态 / 危险按钮（纯文字版式 + 兼容令牌描边）</h1>
+  ${emptySection}
 </body>
 </html>`
 

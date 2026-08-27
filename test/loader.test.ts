@@ -58,6 +58,9 @@ describe('loader 级组合启动', () => {
     ctx.baseUrl = `${pathToFileURL(pkgRoot).href}/`
     // webServer 桩：bundle 主行 inject webServer；组合测试不启真实 HTTP 服务
     ctx.provide('webServer', { register() {} })
+    // sessions 桩：bundle 主行 inject sessions（会话日志自愈的活会话枚举，session-log-repair.ts）；
+    // 组合测试不建真实会话，DSH_HOME 已指向临时目录、扫描天然空转
+    ctx.provide('sessions', { list: () => [] })
     await ctx.plugin(Loader)
     loader = ctx.loader
     await mount({ id: 'storage', name: '@deepseek-ai/dsh-storage' })

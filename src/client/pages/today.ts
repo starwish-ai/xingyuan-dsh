@@ -106,6 +106,6 @@ export function TodayPage(): ReactElement {
         createElement('span', { className: 'xy-group-count' }, String(doneRows.length))),
       createElement('ul', { className: 'xy-grouplist' }, doneRows)) : null,
     data.total === 0
-      ? createElement(PageEmpty, { art: 'rocket', title: t('today.empty.title'), hint: t('today.empty.hint') })
+      ? createElement(PageEmpty, { title: t('today.empty.title'), hint: t('today.empty.hint') })
       : null)
 }

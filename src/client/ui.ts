@@ -191,7 +191,6 @@ export function IconEdit(): ReactElement {
 
 export function PageError(props: { message: string; onRetry: () => void; retryLabel?: string }): ReactElement {
   return createElement('div', { className: 'xy-page-center' },
-    createElement(EmptyArt, { kind: 'alert' }),
     createElement('div', { className: 'xy-empty-title' }, props.message),
     createElement('button', { className: 'xy-btn', onClick: props.onRetry }, props.retryLabel ?? t('common.retry')))
 }
@@ -205,104 +204,19 @@ export function PageSkeleton(): ReactElement {
 }
 
 /**
- * 空态：线性插画 + 主文案 + 辅助引导（Web EmptyState 三段式升级版）。
- * 页面自带的动作入口（页头「＋新建」等）就是空态的出口——不再重复渲染
- * 同意图 CTA；icon 参数保留兼容旧调用点（不再使用 emoji 时可删）。
+ * 空态：主文案 + 辅助引导的纯文字版式。
+ * 历史：曾有 76px SVG 线稿插画（EmptyArt），其描边色依赖 color-mix()，
+ * 在不支持的浏览器里线稿整体隐身、只剩 accent 点缀浮现为一个孤立蓝点/对勾，
+ * 观感如同渲染事故——已按产品决策整体移除，页面动作入口（页头「＋新建」）
+ * 继续充当空态出口。勿在未确定目标环境支持面的前提下重新引入装饰性 CSS。
  */
-export function PageEmpty(props: { art?: EmptyArtKind; title: string; hint?: string }): ReactElement {
+export function PageEmpty(props: { title: string; hint?: string }): ReactElement {
   return createElement('div', { className: 'xy-page-center' },
-    createElement(EmptyArt, { kind: props.art ?? 'star' }),
     createElement('div', { className: 'xy-empty-title' }, props.title),
     props.hint !== undefined ? createElement('div', { className: 'xy-meta xy-empty-hint' }, props.hint) : null)
 }
 
-// ===== 空态线性插画（SVG 线稿，双主题令牌供色）=====
-
-export type EmptyArtKind =
-  | 'star'      // 愿望
-  | 'rocket'    // 今日
-  | 'list'      // 任务
-  | 'calendar'  // 日历
-  | 'sprout'    // 成长
-  | 'memory'    // 记忆（书页+星点）
-  | 'search'    // 搜索无结果
-  | 'alert'     // 错误
-
-const ART_SIZE = 76
-
-function artChildren(kind: EmptyArtKind): ReactElement {
-  switch (kind) {
-    case 'star':
-      return createElement('g', null,
-        createElement('path', { d: 'M32 12l4.7 10.9L48 27l-11.3 4.1L32 42l-4.7-10.9L16 27l11.3-4.1z' }),
-        createElement('circle', { cx: 49, cy: 15, r: 2.5, style: { fill: 'var(--xyd-accent)', stroke: 'none' } }),
-        createElement('path', { d: 'M14 44c6 5 30 5 36 0', opacity: 0.55 }))
-    case 'rocket':
-      return createElement('g', null,
-        createElement('path', { d: 'M32 10c7 6 10 14 10 22l-10 8-10-8c0-8 3-16 10-22z' }),
-        createElement('circle', { cx: 32, cy: 26, r: 4.5 }),
-        createElement('path', { d: 'M22 34l-6 8h9M42 34l6 8h-9M28 46l4 8 4-8', opacity: 0.75 }),
-        createElement('path', { d: 'M10 20h6M8 30h5M50 20h6M51 30h5', opacity: 0.45 }))
-    case 'list':
-      return createElement('g', null,
-        createElement('rect', { x: 16, y: 12, width: 32, height: 40, rx: 5 }),
-        createElement('path', { d: 'M26 12v-3h12v3', opacity: 0.75 }),
-        createElement('path', { d: 'M23 25l2.5 2.5L30 23', style: { stroke: 'var(--xyd-accent)' } }),
-        createElement('path', { d: 'M35 26h9' }),
-        createElement('path', { d: 'M23 35l2.5 2.5L30 33', opacity: 0.85 }),
-        createElement('path', { d: 'M35 36h9', opacity: 0.85 }),
-        createElement('path', { d: 'M24 45h16', opacity: 0.5 }))
-    case 'calendar':
-      return createElement('g', null,
-        createElement('rect', { x: 13, y: 16, width: 38, height: 34, rx: 5 }),
-        createElement('path', { d: 'M13 26h38M22 16v-5M42 16v-5' }),
-        createElement('rect', { x: 21, y: 32, width: 6, height: 6, rx: 1.5, style: { fill: 'var(--xyd-accent)', stroke: 'none' } }),
-        createElement('rect', { x: 31, y: 32, width: 6, height: 6, rx: 1.5, opacity: 0.6 }),
-        createElement('rect', { x: 41, y: 32, width: 4, height: 6, rx: 1.5, opacity: 0.35 }),
-        createElement('path', { d: 'M21 43.5h24', opacity: 0.4 }))
-    case 'sprout':
-      return createElement('g', null,
-        createElement('path', { d: 'M32 52V30' }),
-        createElement('path', { d: 'M32 36c0-8-6-12-14-12 0 8 5 12 14 12z' }),
-        createElement('path', { d: 'M32 30c0-8 6-12 14-12 0 8-5 12-14 12z', style: { stroke: 'var(--xyd-accent)' } }),
-        createElement('path', { d: 'M20 52h24', opacity: 0.6 }),
-        createElement('path', { d: 'M14 58h36', opacity: 0.35 }))
-    case 'memory':
-      return createElement('g', null,
-        createElement('path', { d: 'M32 14c-9 0-15 6-15 14 0 5 2 8 5 11v7a3 3 0 003 3h14a3 3 0 003-3v-7c3-3 5-6 5-11 0-8-6-14-15-14z' }),
-        createElement('path', { d: 'M27 49h10M29 54h6', opacity: 0.6 }),
-        createElement('circle', { cx: 14, cy: 24, r: 1.6, opacity: 0.6 }),
-        createElement('circle', { cx: 53, cy: 34, r: 1.4, opacity: 0.45 }))
-    case 'search':
-      return createElement('g', null,
-        createElement('circle', { cx: 30, cy: 28, r: 12 }),
-        createElement('path', { d: 'M39 37l11 11' }),
-        createElement('path', { d: 'M25 28c0-3 2-5 5-5', opacity: 0.55 }))
-    case 'alert':
-      return createElement('g', null,
-        createElement('path', { d: 'M32 12L52 48H12z' }),
-        createElement('path', { d: 'M32 25v11' }),
-        createElement('circle', { cx: 32, cy: 42, r: 1.8, style: { fill: 'var(--xyd-danger)', stroke: 'none' } }))
-  }
-}
-
-/** 空态/错误态插画：线稿统一 stroke 令牌色，个别点缀用强调色 fill。 */
-export function EmptyArt(props: { kind: EmptyArtKind }): ReactElement {
-  return createElement('svg', {
-    viewBox: '0 0 64 64',
-    width: ART_SIZE,
-    height: ART_SIZE,
-    className: 'xy-art',
-    'aria-hidden': 'true',
-    focusable: 'false',
-  },
-    createElement('g', {
-      style: {
-        fill: 'none',
-        stroke: 'var(--xyd-art-line)',
-        strokeWidth: 2,
-        strokeLinecap: 'round',
-        strokeLinejoin: 'round',
-      },
-    }, artChildren(props.kind)))
-}
+// ===== 空态/错误态已去插画化 =====
+// 提示：原 EmptyArt 线稿插画（star/rocket/list/calendar/sprout/memory/search/alert 八种）
+// 因描边色 color-mix() 兼容性缺陷在部分浏览器渲染为孤立色点，已于本版整体移除；
+// 设计约束沉淀见 PageEmpty 注释与 AGENTS.md §5.10。

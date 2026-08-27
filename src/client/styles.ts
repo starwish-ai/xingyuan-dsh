@@ -8,6 +8,10 @@
  * - 形状纪律四档圆角：卡片 12 / 内嵌块 9 / 控件 8 / 胶囊 999；
  * - 动效刻度：交互 150ms ease-out，进度条 350ms cubic-bezier(.22,1,.36,1)，
  *   prefers-reduced-motion 下全部关闭。
+ *
+ * 兼容性铁律：**禁用 color-mix() 等新式取色函数**。用户的 dsh 壳里存在不支持
+ * color-mix() 的浏览器，凡用它的属性在该环境下按无效处理（装饰线稿曾因此整体
+ * 隐形）。半透明衍生色一律在下方令牌区按主题写显式 rgba。
  */
 export const STYLE_TEXT = `
 /* ===== 品牌与语义令牌 ===== */
@@ -23,8 +27,16 @@ export const STYLE_TEXT = `
   /* 彩底小圆标的前景对：按主题配对保证 ≥4.5:1（深色亮底配深字） */
   --xyd-on-ok:#ffffff;
   --xyd-on-danger:#ffffff;
-  /* 空态插画线稿色（结构色的弱化档） */
-  --xyd-art-line:color-mix(in srgb, var(--dsw-alias-label-secondary) 72%, transparent);
+  /* 半透明衍生色（禁 color-mix，按主题显式 rgba）：强调描边 / 强调悬停环 /
+     危险描边 / 危险悬停底 / 中性行悬停底 / 斜纹纹理与弱化底 */
+  --xyd-accent-border:rgba(26,111,224,.38);
+  --xyd-accent-ring:rgba(26,111,224,.72);
+  --xyd-accent-ring-soft:rgba(26,111,224,.55);
+  --xyd-danger-border:rgba(192,57,43,.4);
+  --xyd-danger-soft:rgba(192,57,43,.09);
+  --xyd-hover:rgba(15,23,42,.05);
+  --xyd-hatch:rgba(100,116,139,.36);
+  --xyd-hatch-faint:rgba(100,116,139,.14);
   /* 圆角刻度 */
   --xyd-r-card:12px;--xyd-r-inner:9px;--xyd-r-ctl:8px;
 }
@@ -39,6 +51,14 @@ body[data-ds-dark-theme]{
   --xyd-ok:#34d399;
   --xyd-on-ok:#052e21;
   --xyd-on-danger:#3f1008;
+  --xyd-accent-border:rgba(96,165,250,.38);
+  --xyd-accent-ring:rgba(96,165,250,.72);
+  --xyd-accent-ring-soft:rgba(96,165,250,.55);
+  --xyd-danger-border:rgba(255,155,143,.4);
+  --xyd-danger-soft:rgba(255,155,143,.12);
+  --xyd-hover:rgba(148,163,184,.1);
+  --xyd-hatch:rgba(139,152,171,.4);
+  --xyd-hatch-faint:rgba(139,152,171,.16);
 }
 
 .xy-visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
@@ -124,9 +144,8 @@ body[data-ds-dark-theme] .xy-modal{box-shadow:0 24px 48px -16px rgba(0,0,0,.55),
 .xy-skel-row{height:64px;margin-top:10px}
 @keyframes xy-shimmer{from{background-position:180% 0}to{background-position:-20% 0}}
 
-/* ===== 空态插画 ===== */
+/* ===== 空态（纯文字版式，插画已移除：见 PageEmpty 注释）===== */
 .xy-page-center{display:flex;flex-direction:column;align-items:center;gap:6px;padding:44px 0;text-align:center}
-.xy-art{opacity:.92;margin-bottom:2px}
 .xy-empty-title{font-weight:600;color:var(--dsw-alias-label-primary);margin-top:4px}
 .xy-empty-hint{margin-top:2px;max-width:360px}
 
@@ -154,8 +173,8 @@ body[data-ds-dark-theme] .xy-modal{box-shadow:0 24px 48px -16px rgba(0,0,0,.55),
 .xy-btn-icon{width:26px;height:26px;min-height:26px;padding:0;display:inline-flex;align-items:center;justify-content:center;flex:none}
 .xy-btn-primary{background:var(--xyd-accent);border-color:transparent;color:var(--xyd-on-accent)}
 .xy-btn-primary:hover:not(:disabled){filter:brightness(1.06);color:var(--xyd-on-accent)}
-.xy-btn-danger{color:var(--xyd-danger);border-color:color-mix(in srgb, var(--xyd-danger) 40%, transparent);background:transparent}
-.xy-btn-danger:hover:not(:disabled){background:color-mix(in srgb, var(--xyd-danger) 9%, transparent);color:var(--xyd-danger)}
+.xy-btn-danger{color:var(--xyd-danger);border-color:var(--xyd-danger-border);background:transparent}
+.xy-btn-danger:hover:not(:disabled){background:var(--xyd-danger-soft);color:var(--xyd-danger)}
 .xy-input{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border-radius:var(--xyd-r-ctl);padding:5px 8px;font-size:13px;font-family:inherit;transition:border-color .15s ease}
 .xy-input:hover:not(:disabled){border-color:var(--dsw-alias-border-l3)}
 .xy-input::placeholder{color:var(--dsw-alias-label-secondary)}
@@ -187,7 +206,7 @@ body[data-ds-dark-theme] .xy-modal{box-shadow:0 24px 48px -16px rgba(0,0,0,.55),
 .xy-grouplist{list-style:none;display:flex;flex-direction:column;margin:0;padding:0}
 .xy-grouprow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 14px;border-top:1px solid var(--dsw-alias-border-l1);transition:background-color .15s ease}
 .xy-grouprow:first-child{border-top:none}
-.xy-grouprow:hover{background:color-mix(in srgb, var(--dsw-alias-bg-layer-2) 42%, transparent)}
+.xy-grouprow:hover{background:var(--xyd-hover)}
 /* 分组卡的块级行变体（任务行 + 可选内联详情）；TaskLine 基类本身即两栏网格（见愿望卡段） */
 .xy-taskrow{display:block}
 .xy-taskrow .xy-detail{margin-bottom:2px}
@@ -274,7 +293,7 @@ body[data-ds-dark-theme] .xy-c3 .xy-daynum{background:rgba(52,211,153,.22);color
 .xy-dot{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:4px;vertical-align:-1px}
 .xy-dot.xy-dot-checked{background:var(--xyd-accent)}
 /* 图例缺口点：与柱体同一斜纹语法（单一事实源，两处永不漂移） */
-.xy-dot.xy-dot-gap{border:1px solid var(--dsw-alias-border-l2);background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--dsw-alias-label-secondary) 55%,transparent) 0 2px,transparent 2px 4px)}
+.xy-dot.xy-dot-gap{border:1px solid var(--dsw-alias-border-l2);background:repeating-linear-gradient(135deg,var(--xyd-hatch) 0 2px,transparent 2px 4px)}
 /* 图例与圆章同构：无安排=描边空心、待打卡=中性底、部分/全部完成=语义柔和底 */
 .xy-dot.xy-c0{background:transparent;border:1px solid var(--dsw-alias-border-l2)}
 .xy-dot.xy-c1{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2)}
@@ -300,7 +319,7 @@ body[data-ds-dark-theme] .xy-dot.xy-c3{background:rgba(52,211,153,.30)}
 /* 层级：普通统计数字用主文字色（页面更安静），仅「当前连续」这张卡以品牌色+浅晕底突出
  * （habit 类 App 把 streak 作为英雄指标置于热力图旁的惯例） */
 .xy-statnum{font-size:24px;font-weight:700;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}
-.xy-statcard-hot{border-color:color-mix(in srgb, var(--xyd-accent) 38%, transparent);background:linear-gradient(160deg,var(--xyd-accent-soft),transparent 62%),var(--dsw-alias-bg-layer-1)}
+.xy-statcard-hot{border-color:var(--xyd-accent-border);background:linear-gradient(160deg,var(--xyd-accent-soft),transparent 62%),var(--dsw-alias-bg-layer-1)}
 .xy-statcard-hot .xy-statnum{color:var(--xyd-accent)}
 /* 缺省值（暂无/N/A）：次要色小一号，缺失信息不得比真实数据更响 */
 .xy-statcard-muted .xy-statnum{color:var(--dsw-alias-label-secondary);font-size:18px}
@@ -312,9 +331,9 @@ body[data-ds-dark-theme] .xy-dot.xy-c3{background:rgba(52,211,153,.30)}
 /* 未完成缺口：斜纹冗余编码（跟随主题文字色混合）——layer-2 实色在深色壳与面板底
  * 几乎同亮度而隐形，斜纹在两种主题下都有稳定的纹理可见度，且与实心完成柱形成
  * 「形状 × 颜色」双通道区分，不依赖色觉单通道 */
-.xy-growth-missed{width:100%;border-radius:2px 2px 0 0;background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--dsw-alias-label-secondary) 55%,transparent) 0 2px,transparent 2px 5px),color-mix(in srgb,var(--dsw-alias-label-secondary) 14%,transparent)}
+.xy-growth-missed{width:100%;border-radius:2px 2px 0 0;background:repeating-linear-gradient(135deg,var(--xyd-hatch) 0 2px,transparent 2px 5px),var(--xyd-hatch-faint)}
 button.xy-growth-col{cursor:pointer}
-button.xy-growth-col:hover,button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--xyd-accent) 72%, transparent)}
+button.xy-growth-col:hover,button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 2px var(--xyd-accent-ring)}
 /* 基线贴柱底（与聊天图表卡的 SVG 基线同一语法），刻度层下移让出线的位置 */
 .xy-growth-axis{position:relative;height:20px;margin-top:0;border-top:1px solid var(--dsw-alias-border-l2)}
 .xy-growth-tick{position:absolute;top:4px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -325,7 +344,7 @@ button.xy-growth-col:hover,button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 
 .xy-chartload{height:150px;margin-top:8px}
 
 /* ===== 成长页：等级英雄卡 + 等级说明 ===== */
-/* 渐变两端均为实色（深档→基档，见 growth.ts 的 color-mix 内联），白字对底色 ≥4.5:1
+/* 渐变两端均为实色（深档→基档，growth.ts 内联 darkenHex 预混），白字对底色 ≥4.5:1
  * 在浅色壳下同样成立——半透明渐变混入页面白底后右端会跌破 3:1，已弃用。 */
 .xy-hero{display:flex;gap:14px;align-items:center;border-radius:var(--xyd-r-card);padding:18px;margin-top:12px;border:1px solid rgba(255,255,255,.16);box-shadow:0 2px 10px rgba(30,25,60,.16)}
 .xy-herobadge{width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px;flex:none;text-shadow:0 1px 2px rgba(0,0,0,.18)}
@@ -415,7 +434,7 @@ body[data-ds-dark-theme] .xy-dot.xy-dcell-checked{background:rgba(46,160,105,.45
 .xy-swatchrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;align-items:center}
 /* 色板格：24px 命中目标 + hover 描边 + 主题令牌描边（深色下不再隐身） */
 .xy-swatch{width:24px;height:24px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);cursor:pointer;padding:0;position:relative;transition:box-shadow .15s ease}
-.xy-swatch:hover{box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--xyd-accent) 55%, transparent)}
+.xy-swatch:hover{box-shadow:inset 0 0 0 2px var(--xyd-accent-ring-soft)}
 /* 选中态双环（内白隙 + 外强调圈）：任何色相下都清晰可辨，不依赖对勾本身的对冲 */
 .xy-swatch.xy-picked{box-shadow:inset 0 0 0 2px rgba(255,255,255,.85),0 0 0 2px var(--xyd-accent)}
 .xy-swatch.xy-picked::after{content:'✓';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700;text-shadow:0 0 2px rgba(0,0,0,.85),0 1px 3px rgba(0,0,0,.6)}

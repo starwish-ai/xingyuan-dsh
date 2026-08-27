@@ -80,6 +80,7 @@ XingYuan-Dsh/
 │   ├── category-color.ts   # 分类颜色解析（覆盖 > 显式 > 哈希兜底，22 键）
 │   ├── events.ts           # SessionEventMap 声明合并（纯类型导出，host/client 共用）
 │   ├── preset-root.ts      # 发布 preset 到 $DSH_HOME/.agent-presets/xingyuan（指纹幂等）
+│   ├── session-log-repair.ts # 会话日志自愈：为历史 xingyuan/* 事件补 ignorable 标记（激活期，见 §5.6）
 │   ├── routes/             # /xingyuan/* HTTP 面（index/api/config/errors/pages-html）
 │   └── preset/             # ↓ 只挂在 preset 层 ↓
 │       ├── side.ts         # preset 侧入口：设置节安装 + 工具/提示词注册
@@ -292,7 +293,7 @@ ctx.tools.register(defineTool({
 无需 start/delta 配对与确定性拼接逻辑。
 
 五个事件 kind（生产方 `events.ts` 声明合并，host 侧经 `exec.agent.session.append(kind, data)`
-发出；每张卡在刷新/回放后仍然可见）：
+发出；卡片在同进程内存的会话里实时渲染，跨重启的回放依赖下述自愈机制）：
 
 | kind | 载荷要点 |
 |---|---|
@@ -320,6 +321,25 @@ Definition 按 `KIND_BY_EVENT` 把 `xingyuan/*` 映射到 `xy-*` kind，
 注意：dsh 工具内建的 UI 卡片是固定五词汇（generic/terminal/diff/search/web），
 不支持任意自定义 React 卡——业务卡片一律走 ConversationNode，人机确认走 userQuestions，
 这是官方分工，不要试图扩展前者。
+
+**冷读拒绝与会话日志自愈（session-log-repair.ts，必读）**：dsh（0.1.1-rc.2）
+会话持久化读取端按「本仓库生成的官方事件类型白名单」拒绝未知事件，仓库外插件事件
+按构造不在名单内；写入端 `Session.append` 又没有 ignorable 标记通道——因此包含
+`xingyuan/*` 事件的会话一旦冷加载（进程重启后刷新/重开）会被
+`SessionFormatUnsupportedError` 整体拒绝。bundle 层激活期执行**会话日志自愈**：
+扫描 `$DSH_HOME/sessions` 工件，给历史日志里的 `xingyuan/*` 事件行补
+`"ignorable": true` 后原子写回。读取端对该字段既放行又不过滤——事件数据原封保留，
+卡片回放能力随之恢复。安全边界：不含星愿事件的文件零写入；文件内非星愿行逐字节
+不变；改写前备份至 `~/.dsh/xingyuan/session-backups/`（每会话留 3 份）；
+撕裂尾/坏帧/版本不符/解析失败/活会话一律整文件跳过。**增量跳过**：每个已处理会话
+在目录内写 `.xingyuan-repaired` 标记（记工件字节数 + 事件总数），下次启动 stat +
+读 40 字节标记即可跳过，避免 68 会话全量解压的 3.6s 启动拖慢（实际 <10ms）；
+工件字节数变化（新事件落盘）或标记损坏时自动重扫并刷新。**压缩工件布局硬约束**：
+zstd 容器首帧必须恰好一行 header（dsh 的 `assertZstdHeaderFrame`/`listArtifacts`
+启动期强制）——写回时按「帧 0 = header、其余事件行第二帧」重建并自检，读入的
+容器首帧非单行（历史整文件单帧的错误产物）即使无需补标也重写为合法布局。
+升级 dsh 前先核对该模块头注的前提是否仍成立；若上游开放了 ignorable 写入通道
+或事件注册面，应回归官方机制并撤下补标。
 
 ### 5.7 系统提示词与动态上下文（preset/prompts.ts）
 
@@ -416,6 +436,13 @@ today=圆章蓝环（不覆盖状态底色，「今天该打卡」的提示不�
 服务 + 浏览器截图核对后才算完成。mock 的 markup 是 tsx 输出的手写镜像，仅用于
 视觉核对；对应组件结构变更时必须同步 `debug/gen-mock.ts`。
 
+**CSS 兼容铁律**：客户端样式禁用 `color-mix()` 等新式取色函数——dsh 壳的浏览器
+矩阵里存在不支持的环境，整条声明按无效处理（空态 SVG 线稿曾因此整体隐形、只剩
+accent 点缀孤点，形似渲染事故）。半透明衍生色一律在 styles.ts 令牌区按主题写
+显式 rgba（`--xyd-*-border/ring/hatch/hover` 对）；JS 内联渐变需要变暗档时用
+`darkenHex` 预混（growth.ts）。空态/错误态是纯文字版式（PageEmpty/PageError
+无插画），重新引入装饰性元素前先确认目标环境支持面。
+
 **本地部署验证**：profile 内安装副本是**实体拷贝**（pnpm 装的 npm 包，非软链），
 仓库改动不会自动生效。开发自验回路：`pnpm build` → 把 `lib/`（动了包声明再加
 `package.json`）覆盖到 `~/.dsh/profiles/web/node_modules/@starwish-ai/xingyuan-dsh/`
@@ -486,7 +513,7 @@ wishProgress / wishAchievement / continuousCheckin / checkinTimeDistribution / w
 
 | 来源 | 字段（默认值） |
 |---|---|
-| bundle 主行 Config | rangeDefaultDays(7)、rangeMaxDays(31)、memoryListLimit(500) |
+| bundle 主行 Config | rangeDefaultDays(7)、rangeMaxDays(31)、memoryListLimit(500)、repairSessionLogs(true) |
 | preset side Config（同时映射为 Web 设置页表单项） | memoryInjectLimit(40)、batchWishLimit(50)、batchTaskLimit(100)、chartTrendDays(14)、chartDistributionDays(30)、chartMaxDays(90)、chartRankLimit(10)、chartRankMax(20)、confirmWrites(true) |
 
 配置变更触发 HMR 热替换；不做任何跨重载的模块级单例状态。
@@ -544,6 +571,13 @@ npm provenance 开启）。
 - 存储无迁移机制：领域 schema 只能用 optional 字段做向后兼容增量；破坏性演进必须升
   DOMAIN_VERSION 并提供数据重导出方案。
 - 会话事件要求每 (kind,id) 仅一条 start——新事件类型沿用 whole-value 单事件模式最省心。
+- 外部插件会话事件在 rc.2 的读取白名单之外且无 ignorable 写入通道：依赖激活期
+  会话日志自愈补标兜底（§5.6）。插件未运行期间写入的事件在下次启动前不可冷读；
+  极端竞态（会话打开与扫描同时发生）可能多报一次错、下次启动自愈。上游若开放
+  ignorable 写入通道或事件注册面，回归官方机制并撤下补标。
+- 客户端样式禁用 color-mix() 等新式取色函数：dsh 壳的浏览器矩阵里存在不支持的
+  环境，凡用它的属性按无效处理（空态插画曾因此整体隐形只剩孤立色点，已移除插画
+  并全站改显式 rgba 令牌，见 styles.ts 头注）。
 - 主行 id 与 preset 目录名避让、roots 不能 patch 追加（§4 两个硬约束）。
 - dsh 技术预览期升级锁版本 `0.1.1-rc.2`；跨版本升级前核对 release notes 与排障索引。
 

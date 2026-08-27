@@ -266,9 +266,9 @@ export function MemoryPage(): ReactElement {
       ? createElement('div', { className: 'xy-meta xy-memcap' }, t('memory.capNote', { total: data.total, shown: allItems.length }))
       : null,
     data.total === 0
-      ? createElement(PageEmpty, { art: 'memory', title: t('memory.empty.title'), hint: t('memory.empty.hint') })
+      ? createElement(PageEmpty, { title: t('memory.empty.title'), hint: t('memory.empty.hint') })
       : filtered.length === 0
-        ? createElement(PageEmpty, { art: 'search', title: t('memory.searchEmpty.title') })
+        ? createElement(PageEmpty, { title: t('memory.searchEmpty.title') })
         : // 列表收进单张分组卡：分隔线行替代逐行描边盒子，长列表不再满屏边框噪音
           createElement('section', { className: 'xy-group' },
             createElement('ul', { className: 'xy-grouplist' }, rows)),

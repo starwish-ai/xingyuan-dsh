@@ -2,7 +2,8 @@
  * 星愿 bundle 常驻入口：
  * 1) 激活期把包内 preset 发布到用户根（preset-root.ts）；
  * 2) 打开 xingyuan 领域并发布同名服务；
- * 3) 注册 /xingyuan/* 数据 API 与页面路由。
+ * 3) 注册 /xingyuan/* 数据 API 与页面路由；
+ * 4) 激活期对会话日志做 ignorable 补标自愈（session-log-repair.ts）。
  * （sqlite 后端在独立行 '@starwish-ai/xingyuan-dsh/sqlite'，见 cordis.patch.yml。）
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -11,6 +12,7 @@ import { makeXingyuanStore, xingyuanDomainSpec } from './domain.js'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { registerXingyuanRoutes } from './routes/index.js'
 import { ensurePresetRoot } from './preset-root.js'
+import { repairSessionLogs } from './session-log-repair.js'
 
 export { xingyuanDomainSpec, DOMAIN_VERSION, COACH_STYLES } from './domain.js'
 export type { CoachStyle, WishRecord, TaskRecord, CheckinRecord, MemoryRecord, XingyuanStore } from './domain.js'
@@ -26,6 +28,12 @@ export interface Config {
   rangeMaxDays: number
   /** 记忆列表单页条数（分页端点缺省 limit）。 */
   memoryListLimit: number
+  /**
+   * 激活期会话日志自愈（默认开）：为历史日志里的 xingyuan/* 卡片事件补
+   * `"ignorable": true` 标记，修掉「重启后旧会话冷加载被整体拒绝」。
+   * 不含星愿事件的文件零写入；详见 session-log-repair.ts 头注。
+   */
+  repairSessionLogs: boolean
 }
 
 /** 配置 schema（默认值写进 schema）。 */
@@ -33,16 +41,17 @@ export const Config: z<Config> = z.object({
   rangeDefaultDays: z.number().default(7),
   rangeMaxDays: z.number().default(31),
   memoryListLimit: z.number().default(500),
+  repairSessionLogs: z.boolean().default(true),
 })
 
-/** 依赖：storageDomain（领域设施）、webServer（页面路由）。 */
-export const inject = ['webServer', 'storageDomain']
+/** 依赖：storageDomain（领域设施）、webServer（页面路由）、sessions（活会话枚举）。 */
+export const inject = ['webServer', 'storageDomain', 'sessions']
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
   let disposed = false
   let domain: Domain<typeof xingyuanDomainSpec> | undefined
   // 服务访问须在 apply 活跃期完成——异步间隙访问 ctx.* 会命中 inactive context
-  const { webServer, storageDomain } = ctx
+  const { webServer, storageDomain, sessions } = ctx
   ctx.effect(() => async () => {
     disposed = true
     if (domain) await domain.close()
@@ -58,4 +67,39 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   domain = opened
   ctx.provide('xingyuan', makeXingyuanStore(opened))
   registerXingyuanRoutes(webServer, ctx.xingyuan, config)
+  if (config.repairSessionLogs) {
+    try {
+      const report = await repairSessionLogs({ listLiveSessionIds: () => liveSessionIds(sessions) })
+      if (report.patched > 0) {
+        console.log(`[xingyuan] 会话日志自愈：补标 ${report.eventsMarked} 条卡片事件（${report.patched} 个会话，扫描 ${report.scanned}）`)
+      }
+      for (const warning of report.warnings) console.warn(`[xingyuan] 会话日志自愈跳过：${warning}`)
+    } catch (error) {
+      // 自愈是尽力而为的补救，任何异常不得阻断插件激活
+      console.warn('[xingyuan] 会话日志自愈异常（已忽略）：', error)
+    }
+  }
+}
+
+// ===== 会话日志自愈的宿主接线 =====
+
+/** 宿主 sessions 服务的最小结构面（避免对内部类型定义的耦合）。 */
+interface MinimalSessionsService {
+  list?: () => readonly unknown[]
+}
+
+/** 结构化读取活会话 id；服务缺席或形状不符时返回空集（自愈退化为全量尝试）。 */
+function liveSessionIds(service: unknown): ReadonlySet<string> {
+  try {
+    const list = (service as MinimalSessionsService | undefined)?.list?.() ?? []
+    const ids = new Set<string>()
+    for (const session of list) {
+      const record = session as { header?: { id?: unknown }; id?: unknown } | null
+      const id = record?.header?.id ?? record?.id
+      if (typeof id === 'string' && id !== '') ids.add(id)
+    }
+    return ids
+  } catch {
+    return new Set<string>()
+  }
 }

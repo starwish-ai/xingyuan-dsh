@@ -15,6 +15,14 @@ function levelTint(level: number): string {
   return LEVEL_TINTS[Math.min(LEVEL_TINTS.length, Math.max(1, level)) - 1] ?? LEVEL_TINTS[0]
 }
 
+/** 按比例调暗 #RRGGBB 色值（等价于 color-mix(in srgb, tint ratio%, #000)）。
+ * 用 JS 预混而非 CSS color-mix()：后者在不支持的浏览器里整条声明失效（AGENTS.md §5.10 兼容铁律）。 */
+export function darkenHex(hex: string, ratio: number): string {
+  const value = parseInt(hex.slice(1), 16)
+  const channel = (shift: number): number => Math.round(((value >> shift) & 0xff) * ratio)
+  return `#${((1 << 24) | (channel(16) << 16) | (channel(8) << 8) | channel(0)).toString(16).slice(1)}`
+}
+
 export function GrowthPage(): ReactElement {
   const t = useXyT()
   const stabilize = useStableScrollbar()
@@ -114,8 +122,9 @@ export function GrowthPage(): ReactElement {
     createElement('div', {
       className: 'xy-hero',
       // 实色双档渐变（78% 混黑深档 → 基档）：白色文字对底色对比 ≥4.5:1 在两种壳主题下
-      // 都恒成立；半透明渐变（旧版 tint+d9/tint+73）在浅色壳会混入页面白底，右端跌破 3:1
-      style: { background: `linear-gradient(135deg, color-mix(in srgb, ${tint} 76%, #000), ${tint})` },
+      // 都恒成立；半透明渐变（旧版 tint+d9/tint+73）在浅色壳会混入页面白底，右端跌破 3:1。
+      // 深档用 darkenHex 预混（曾用 color-mix 内联，兼容性见 styles.ts 头注铁律）
+      style: { background: `linear-gradient(135deg, ${darkenHex(tint, 0.76)}, ${tint})` },
     },
       createElement('div', { className: 'xy-herobadge', style: { background: tint } }, `Lv.${levelNumber}`),
       createElement('div', { className: 'xy-heromain' },
