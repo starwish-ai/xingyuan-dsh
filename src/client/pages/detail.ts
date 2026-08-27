@@ -9,7 +9,6 @@ import { getJson, postAction } from '../api.js'
 import { useXyT, t as translate, activeLocale, type XyT } from '../i18n.js'
 import { localYmd, softConfirm, softConfirmDanger, useActionGuard } from '../hooks.js'
 import { toast } from '../ui.js'
-import { cycleLabel, durationText } from './format.js'
 import type { ApiTask } from './types.js'
 
 /** /api/task-detail 响应叶子形状。 */
@@ -151,13 +150,10 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
         }),
         microTail)
 
+  // 操作区单行成组：主操作（打卡/领取）→ 条件动作（取消打卡）→ 辅助（让 AI 总结）→ 危险（删除）。
+  // 删除跟随行流并靠 danger 描边区分（确认弹窗兜底防误触）；不再 margin-left:auto 漂到卡缘——
+  // 愿望卡里会与卡头的愿望级删除同侧对齐造成语义混淆，窄面板里则是一段突兀的空白。
   const ops: ReactElement[] = []
-  ops.push(createElement('button', {
-    key: 'askai',
-    className: 'xy-btn',
-    disabled: busy,
-    onClick: () => void copySummaryPrompt(task.name),
-  }, t('action.askAi')))
   if (task.status === 'pending') {
     ops.push(createElement('button', {
       key: 'claim', className: 'xy-btn', disabled: busy,
@@ -186,7 +182,13 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
     }, t('action.cancelCheckin')))
   }
   ops.push(createElement('button', {
-    key: 'delete', className: 'xy-btn xy-btn-danger xy-detail-danger', disabled: busy,
+    key: 'askai',
+    className: 'xy-btn',
+    disabled: busy,
+    onClick: () => void copySummaryPrompt(task.name),
+  }, t('action.askAi')))
+  ops.push(createElement('button', {
+    key: 'delete', className: 'xy-btn xy-btn-danger', disabled: busy,
     onClick: () => {
       void softConfirmDanger(translate('confirm.deleteTask', { name: task.name })).then((ok) => {
         if (ok) act('delete-task', { taskId: task.taskId }, () => translate('toast.deleted', { name: task.name }))
@@ -214,10 +216,6 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
       microBlock),
     createElement('div', null,
       createElement('span', { className: 'xy-quick-label' }, t('detail.ops.title')),
-      // 操作区两段式：状态元信息一行，动作按钮一行——危险删除右置并与常规动作拉开距离
-      createElement('div', { className: 'xy-meta' },
-        `${cycleLabel(task.cycle)} · ${durationText(task.completedDays, task.requiredDays)}`),
-      createElement('div', { className: 'xy-detail-ops' },
-        ...ops.filter((el) => el.key !== 'delete'),
-        ops.some((el) => el.key === 'delete') ? ops.find((el) => el.key === 'delete') : null)))
+      // 周期/进度元信息不再重复：TaskLine 行本身已展示同口径信息（cycle·duration·status·next·due）
+      createElement('div', { className: 'xy-detail-ops' }, ...ops)))
 }

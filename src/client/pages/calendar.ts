@@ -141,11 +141,12 @@ export function CalendarPage(): ReactElement {
   }
 
   return createElement('div', { className: 'xy-page', ref: stabilize },
-    createElement('div', { className: 'xy-page-head' },
+    // 月份导航居中（日历惯例）：‹ 标题 › 成组居中，「回到本月」绝对定位贴右缘不挤占中轴
+    createElement('div', { className: 'xy-page-head xy-calnav' },
       createElement('button', { className: 'xy-btn', 'aria-label': t('cal.prevMonth'), onClick: () => goMonth(-1) }, '‹'),
       createElement('h2', { className: 'xy-page-title' }, formatMonth(data.month)),
       createElement('button', { className: 'xy-btn', 'aria-label': t('cal.nextMonth'), onClick: () => goMonth(1) }, '›'),
-      offset !== 0 ? createElement('button', { className: 'xy-btn', onClick: () => goMonth(-offset) }, t('cal.backToMonth')) : null),
+      offset !== 0 ? createElement('button', { className: 'xy-btn xy-calnav-back', onClick: () => goMonth(-offset) }, t('cal.backToMonth')) : null),
     // 月历收进面板卡：与任务/今日页的分组卡同一容器语言，日历本体不再裸放页面
     createElement('div', { className: 'xy-panel xy-calcard' },
       createElement('div', { className: 'xy-calhead' },
@@ -160,13 +161,15 @@ export function CalendarPage(): ReactElement {
                   key: `out-${wi}-${ci}`,
                   className: 'xy-cell xy-outside',
                   'aria-hidden': 'true',
-                }, outsideDate === '' ? null : String(Number(outsideDate.slice(8))))
+                }, outsideDate === '' ? null : createElement('span', { className: 'xy-daynum' }, String(Number(outsideDate.slice(8)))))
               })()
             : (() => {
                 // 悬停 title 与读屏 aria-label 同源同文案——键盘聚焦用户的原生提示与读屏口径不再分裂
                 const cellLabel = cell.due === 0
                   ? t('cal.cellAria.none', { date: cell.date })
                   : t('cal.cellAria.some', { date: cell.date, checked: cell.checked, due: cell.due })
+                // 日期号包一层圆章 span：状态底色/今日环/选中实底都挂在圆章上（现代日历惯例），
+                // 格子保持无边框中性底；读屏语义不受影响（aria-label 在 button 上）
                 return createElement('button', {
                   key: cell.date,
                   className: cellClass(cell.date, cell.checked, cell.due),
@@ -174,7 +177,7 @@ export function CalendarPage(): ReactElement {
                   'aria-label': cellLabel,
                   ...(cell.date === data.today ? { 'aria-current': 'date' as const } : {}),
                   onClick: () => pick(cell.date!),
-                }, String(Number(cell.date.slice(8))))
+                }, createElement('span', { className: 'xy-daynum' }, String(Number(cell.date.slice(8)))))
               })())))),
       createElement('div', { className: 'xy-legend' },
         createElement('span', null, createElement('i', { className: 'xy-dot xy-c0', 'aria-hidden': 'true' }), t('cal.legend.c0')),

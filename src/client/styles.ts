@@ -213,6 +213,8 @@ body[data-ds-dark-theme] .xy-wishcard:hover{box-shadow:0 2px 10px rgba(0,0,0,.32
 .xy-wishtasks{margin-top:8px;display:flex;flex-direction:column;border-top:1px dashed var(--dsw-alias-border-l1)}
 .xy-wishtasks>.xy-taskline+.xy-taskline,.xy-wishtasks>.xy-detail+.xy-taskline{border-top:1px solid var(--dsw-alias-border-l1)}
 .xy-wishtasks>.xy-taskline{padding:9px 0}
+/* 展开详情是卡内最后一个元素时收掉底部留白：卡片自身 padding 已承担收尾 */
+.xy-wishtasks>.xy-detail:last-child{margin-bottom:0}
 /* TaskLine 基类 = 两栏网格：名称/元信息居左收缩换行，动作簇（领取/打卡 + 详情开关）右置垂直居中；
  * 愿望卡子任务与任务页共用同一行语法。 */
 .xy-taskline{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:2px;align-items:center}
@@ -225,46 +227,56 @@ body[data-ds-dark-theme] .xy-wishcard:hover{box-shadow:0 2px 10px rgba(0,0,0,.32
 .xy-wishdel:hover:not(:disabled),.xy-wishdel:focus-visible{opacity:1}
 
 /* ===== 日历 ===== */
-/* 连续网格表（卡即表）：去格间隙、共享 1px 分割线、整卡单一圆角；星期头与图例自带内边距。
- * 首尾空白补位是网格的延续（可见但无内容），切月时残行不再像断开的碎片。
- * 密度：固定 40px 行高——正方格在 780 页宽下每格 ~96px 见方，整月占半屏以上。 */
+/* 现代日历语法（Apple/Google Calendar 惯例）：无边框连续网格，日期号坐在圆章上，
+ * 状态语义全部由圆章承载（待打卡=中性计划底、部分完成=琥珀、全部完成=绿），
+ * today/picked 走圆章的环与实底，不再整格刷色/整格描边。
+ * 邻月补位日 = 低透明度数字（纯视觉延续，切月残行不碎片化）。 */
 .xy-calcard{padding:0;overflow:hidden}
-.xy-calhead{display:grid;grid-template-columns:repeat(7,1fr);padding:9px 0 7px}
+/* 月份导航成组居中；「回到本月」绝对定位贴右缘，不挤占中轴（窄屏改随流避免相撞） */
+.xy-calnav{position:relative;justify-content:center}
+.xy-calnav-back{position:absolute;right:0}
+@media (max-width:520px){.xy-calnav-back{position:static;margin-left:4px}}
+.xy-calhead{display:grid;grid-template-columns:repeat(7,1fr);padding:11px 0 8px}
 .xy-calhead-cell{text-align:center;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .xy-cal{display:flex;flex-direction:column;border-top:1px solid var(--dsw-alias-border-l1)}
 .xy-week{display:grid;grid-template-columns:repeat(7,1fr)}
-.xy-cell{height:40px;border:none;border-right:1px solid var(--dsw-alias-border-l1);border-bottom:1px solid var(--dsw-alias-border-l1);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;padding:0;font-family:inherit;background:transparent;color:var(--dsw-alias-label-primary);transition:box-shadow .15s ease}
-/* 每行第 7 格与末行去掉靠外分割线；焦点环内收（offset 负值）避免被卡片裁切或压到邻格 */
-.xy-week .xy-cell:nth-child(7n){border-right:none}
-.xy-week:last-child .xy-cell{border-bottom:none}
+.xy-cell{height:42px;border:none;background:transparent;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;padding:0;font-family:inherit;color:var(--dsw-alias-label-primary)}
+/* 圆章：32px 圆形，状态底色/环/实底都挂这里 */
+.xy-daynum{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;font-variant-numeric:tabular-nums;transition:background-color .15s ease,box-shadow .15s ease,color .15s ease}
 .xy-cell:focus-visible{outline-offset:-3px}
-/* 邻月补位日：置灰、不可选（保持七列连续与星期对齐；纯视觉延续，读屏跳过） */
-.xy-outside{color:var(--dsw-alias-label-secondary);opacity:.55;cursor:default}
-/* 无安排 = 表底色留白 + 次要文字：连续网格下灰块反而显重 */
-.xy-c0{color:var(--dsw-alias-label-secondary);cursor:default}
-/* 待打卡 = 内嵌虚线框：负偏移 outline 不参与布局，与共享分割线互不干扰 */
-.xy-c1{outline:1px dashed var(--dsw-alias-border-l3);outline-offset:-4px}
-.xy-c2{background:rgba(255,169,77,.48);color:#5f3c00}
-.xy-c3{background:rgba(56,217,169,.42);color:#0b3d26}
-body[data-ds-dark-theme] .xy-c2{background:rgba(255,169,77,.26);color:#ffd9a8}
-body[data-ds-dark-theme] .xy-c3{background:rgba(46,160,105,.32);color:#a7f3c9}
-/* 今日/选中环走 inset box-shadow：不与 c1 的虚线 outline 抢同一属性，也不溢出到邻格 */
-.xy-today{box-shadow:inset 0 0 0 2px var(--xyd-accent)}
-.xy-cell:not(.xy-outside):hover{box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--xyd-accent) 45%, transparent)}
-.xy-picked{box-shadow:inset 0 0 0 2px var(--xyd-accent)}
+/* 邻月补位日：极弱数字（不可聚焦不可点） */
+.xy-outside{cursor:default}
+.xy-outside .xy-daynum{color:var(--dsw-alias-label-secondary);opacity:.45}
+/* 无安排 = 留白 + 次要字 */
+.xy-c0{cursor:default}
+.xy-c0 .xy-daynum{color:var(--dsw-alias-label-secondary)}
+/* 待打卡 = 中性计划底（高频状态不作警示色） */
+.xy-c1 .xy-daynum{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
+/* 部分完成 / 全部完成 = 柔和语义底，字色按主题配对保证 ≥4.5:1 */
+.xy-c2 .xy-daynum{background:rgba(255,169,77,.32);color:#7c4a03}
+.xy-c3 .xy-daynum{background:rgba(16,185,129,.22);color:#065f46}
+body[data-ds-dark-theme] .xy-c2 .xy-daynum{background:rgba(255,169,77,.24);color:#ffd9a8}
+body[data-ds-dark-theme] .xy-c3 .xy-daynum{background:rgba(52,211,153,.22);color:#a7f3c9}
+/* hover 晕底先于 today/picked 声明：悬停选中日不吞选中态 */
+.xy-cell:not(.xy-outside):hover .xy-daynum{background:var(--xyd-accent-soft)}
+/* 今日 = accent 环包圆章：不覆盖状态底色（「今天该打卡」的提示不能被吃掉） */
+.xy-today .xy-daynum{box-shadow:0 0 0 2px var(--xyd-accent)}
+/* 选中 = accent 实底圆章（即时反馈短暂态，覆盖状态色可接受，详情面板紧随其下） */
+.xy-picked .xy-daynum{background:var(--xyd-accent);color:var(--xyd-on-accent)}
 .xy-legend{display:flex;gap:14px;margin-top:10px;font-size:12px;color:var(--dsw-alias-label-secondary);align-items:center;flex-wrap:wrap}
 .xy-dot{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:4px;vertical-align:-1px}
 .xy-dot.xy-dot-checked{background:var(--xyd-accent)}
 /* 图例缺口点：与柱体同一斜纹语法（单一事实源，两处永不漂移） */
 .xy-dot.xy-dot-gap{border:1px solid var(--dsw-alias-border-l2);background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--dsw-alias-label-secondary) 55%,transparent) 0 2px,transparent 2px 4px)}
-.xy-dot.xy-c0{background:transparent;border:1px solid var(--dsw-alias-border-l1)}
-.xy-dot.xy-c1{background:transparent;border:1px dashed var(--dsw-alias-border-l3)}
-.xy-dot.xy-c2{background:rgba(255,169,77,.48)}
-.xy-dot.xy-c3{background:rgba(56,217,169,.42)}
-body[data-ds-dark-theme] .xy-dot.xy-c2{background:rgba(255,169,77,.26)}
-body[data-ds-dark-theme] .xy-dot.xy-c3{background:rgba(46,160,105,.32)}
-/* 卡即表后：图例自带侧边距贴卡底，替代旧面板内边距 */
-.xy-calcard .xy-legend{margin-top:0;padding:10px 14px 12px}
+/* 图例与圆章同构：无安排=描边空心、待打卡=中性底、部分/全部完成=语义柔和底 */
+.xy-dot.xy-c0{background:transparent;border:1px solid var(--dsw-alias-border-l2)}
+.xy-dot.xy-c1{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2)}
+.xy-dot.xy-c2{background:rgba(255,169,77,.32)}
+.xy-dot.xy-c3{background:rgba(16,185,129,.30)}
+body[data-ds-dark-theme] .xy-dot.xy-c2{background:rgba(255,169,77,.24)}
+body[data-ds-dark-theme] .xy-dot.xy-c3{background:rgba(52,211,153,.30)}
+/* 卡即表后：图例贴卡底并以 hairline 与网格分界 */
+.xy-calcard .xy-legend{margin-top:0;padding:10px 14px 12px;border-top:1px solid var(--dsw-alias-border-l1)}
 /* 详情面板常驻并升级为附卡：固定最小高度 + 超长内部滚动，点击不同日期不再引起整页高度抖动 */
 .xy-daypanel{margin-top:10px;min-height:112px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-card);background:var(--dsw-alias-bg-layer-1);padding:11px 14px}
 .xy-daypanel .xy-daydetail{max-height:300px;overflow-y:auto;scrollbar-gutter:stable}
@@ -352,8 +364,13 @@ button.xy-growth-col:hover,button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 
 .xy-hint{color:var(--dsw-alias-label-secondary);font-size:12px;margin:0}
 
 /* ===== 详情聚合视图 ===== */
-.xy-detail{margin-top:8px;border-top:1px dashed var(--dsw-alias-border-l1);padding-top:8px;display:flex;flex-direction:column;gap:8px}
-.xy-detail-grid{display:flex;flex-wrap:wrap;gap:4px;padding:4px 0}
+/* 段间 10px 呼吸；每段内部「标签 → 内容」固定 5px 纵向节奏（label 不再与内容文字挤行）。
+ * 底部留 8px：操作按钮与下一条任务的分割线不得贴死（愿望卡里分割线直接压在详情下缘），
+ * 任务页由 xy-taskrow 覆盖为 2px（分组卡行自带 11px 内边距，总量已够）。 */
+.xy-detail{margin-top:8px;margin-bottom:8px;border-top:1px dashed var(--dsw-alias-border-l1);padding-top:10px;display:flex;flex-direction:column;gap:10px}
+.xy-detail>div{display:flex;flex-direction:column;gap:5px;align-items:flex-start;min-width:0}
+.xy-detail>div>.xy-meta{margin-top:0}
+.xy-detail-grid{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0}
 /* 打卡格：22px + 11px 数字（可读性下限）；radius 6 为徽章级微元素例外档 */
 .xy-dcell{width:22px;height:22px;border-radius:6px;font-size:11px;display:inline-flex;align-items:center;justify-content:center;font-family:inherit;padding:0;border:none;cursor:default;font-variant-numeric:tabular-nums}
 .xy-dcell-checked{background:rgba(56,217,169,.42);color:#0b3d26}
@@ -366,9 +383,10 @@ body[data-ds-dark-theme] .xy-dcell-checked{background:rgba(46,160,105,.32);color
 .xy-dot.xy-dcell-checked{background:rgba(56,217,169,.55)}
 body[data-ds-dark-theme] .xy-dot.xy-dcell-checked{background:rgba(46,160,105,.45)}
 .xy-detail-next{font-size:12px;color:var(--dsw-alias-label-secondary)}
-.xy-detail-ops{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-/* 危险删除右置：与常规动作拉开距离，防误触邻接 */
-.xy-detail-danger{margin-left:auto}
+/* 操作行与全站按钮组同拍（gap 8）：删除在同一行流内靠 danger 描边区分，
+ * 确认弹窗兜底防误触——不再 margin-left:auto 漂到卡缘（窄面板里是一段突兀空白，
+ * 愿望卡里还会与卡头的愿望级删除同侧对齐造成语义混淆） */
+.xy-detail-ops{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 
 /* ===== 分类管理 ===== */
 .xy-catpanel{margin-top:10px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-card);background:var(--dsw-alias-bg-layer-1);padding:12px 14px}
@@ -405,6 +423,6 @@ body[data-ds-dark-theme] .xy-dot.xy-dcell-checked{background:rgba(46,160,105,.45
 @media (prefers-reduced-motion: reduce){
   .xy-skel,.xy-toast,.xy-modal-backdrop,.xy-modal{animation:none}
   .xy-toast-out,.xy-modal-backdrop.xy-modal-out,.xy-modal-out .xy-modal{transition:none}
-  .xy-bar-fill,.xy-btn,.xy-toggle,.xy-toggle::after,.xy-wishcard,.xy-cell,.xy-growth-bar,.xy-seg-btn,.xy-input,.xy-swatch,.xy-grouprow{transition:none}
+  .xy-bar-fill,.xy-btn,.xy-toggle,.xy-toggle::after,.xy-wishcard,.xy-cell,.xy-daynum,.xy-growth-bar,.xy-seg-btn,.xy-input,.xy-swatch,.xy-grouprow{transition:none}
 }
 `
