@@ -19,6 +19,18 @@ function catLabel(id: string): string {
   return index >= 0 ? translate(MEMORY_CATEGORY_KEYS[index]!) : id
 }
 
+/** 记忆列表请求 URL：搜索词与分页参数在此统一拼装（首屏与加载更多共用同一构造，防口径漂移）。
+ * 参数统一走 URLSearchParams——此前手工拼接在有搜索词时产出 `?q=词?offset=0`（分隔符误用 ?），
+ * 服务端把「词?offset=0」整体当关键词导致搜索永远为空。 */
+export function memoryListUrl(keyword: string, offset: number, limit: number): string {
+  const params = new URLSearchParams()
+  const q = keyword.trim()
+  if (q !== '') params.set('q', q)
+  params.set('offset', String(offset))
+  params.set('limit', String(limit))
+  return `/xingyuan/api/memories?${params.toString()}`
+}
+
 function impLabel(id: string): string {
   const index = MEMORY_IMPORTANCE_IDS.indexOf(id as (typeof MEMORY_IMPORTANCE_IDS)[number])
   return index >= 0 ? translate(MEMORY_IMPORTANCE_KEYS[index]!) : id
@@ -37,13 +49,7 @@ export function MemoryPage(): ReactElement {
     debounceRef.current = window.setTimeout(() => setDebounced(query), 250)
   }, [query])
 
-  const page = usePageData<MemoriesPayload>(
-    () => {
-      const base = debounced.trim() === '' ? '/xingyuan/api/memories' : `/xingyuan/api/memories?q=${encodeURIComponent(debounced.trim())}`
-      return `${base}?offset=0&limit=${PAGE_SIZE}`
-    },
-    [debounced],
-  )
+  const page = usePageData<MemoriesPayload>(() => memoryListUrl(debounced, 0, PAGE_SIZE), [debounced])
   const { busy, guard } = useActionGuard()
 
   // 加载更多：追加页累积；搜索词变化时重置（usePageData 换首屏，more 必须清空）。
@@ -66,9 +72,7 @@ export function MemoryPage(): ReactElement {
     const seq = ++moreSeqRef.current
     setLoadingMore(true)
     setLoadError(undefined)
-    const q = debounced.trim()
-    const url = `${q === '' ? '/xingyuan/api/memories' : `/xingyuan/api/memories?q=${encodeURIComponent(q)}`}`
-    getJson<MemoriesPayload>(`${url}${url.includes('?') ? '&' : '?'}offset=${shownCount}&limit=${PAGE_SIZE}`)
+    getJson<MemoriesPayload>(memoryListUrl(debounced, shownCount, PAGE_SIZE))
       .then((payload) => { if (seq === moreSeqRef.current) setMore((current) => [...current, ...payload.memories]) })
       .catch((e: unknown) => { if (seq === moreSeqRef.current) setLoadError(e instanceof Error ? e.message : String(e)) })
       .finally(() => { if (seq === moreSeqRef.current) setLoadingMore(false) })
