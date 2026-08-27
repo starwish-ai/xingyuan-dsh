@@ -5,6 +5,43 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-27
+
+First stable release of the 0.4.x line: memory search fix, calendar and task-detail
+visual redesign, packaging hardening. Published to the `latest` dist-tag.
+
+### Added
+- Packaging integrity gate: every `exports` subpath and the `dsh.bundle.patch` target
+  must exist in the built `lib/` output.
+- Client URL construction regression test: the client-built search URL is fed through
+  the real server handler and must return matching results.
+- Visual verification loop for client styling (`debug/gen-mock.ts`): renders the real
+  `STYLE_TEXT` into dark/light static pages (calendar, wish card, task card scenarios)
+  for screenshot review, since client pages cannot run outside the dsh shell;
+  client-side development discipline documented in AGENTS.md.
+
+### Changed
+- Calendar rebuilt around date badges: borderless continuous grid, day status carried
+  by a circular badge (to-check = neutral, partial = amber, complete = green), today
+  as an accent ring that never covers the status color, selection as a solid accent
+  badge, adjacent-month days dimmed, month navigation centered with "back to today"
+  pinned right (flows inline below 520 px).
+- Task detail actions regrouped into one row ordered by importance (primary check-in /
+  claim → conditional undo → AI summary → destructive delete). The destructive action
+  no longer floats to the card edge (it read as the wish-level delete inside wish
+  cards), the redundant cycle/progress meta line is dropped, sections follow a fixed
+  label/content rhythm, and an 8 px floor keeps buttons clear of the next row's
+  divider.
+- Memory list URLs (first page and "load more") are built by one shared
+  `URLSearchParams`-based helper.
+
+### Fixed
+- Memory search returned nothing for any query: the URL was concatenated as
+  `?q=词?offset=0` (a second `?` instead of `&`), so the server matched the paging
+  params as part of the keyword.
+- `./routes` package export pointed at a non-existent `lib/routes.js`; it now resolves
+  to the real `lib/routes/index.js` entry.
+
 ## [0.4.0-alpha.5] - 2026-08-26
 
 UI/UX quality pass: theming, charts, calendar, bilingual copy, accessibility.
