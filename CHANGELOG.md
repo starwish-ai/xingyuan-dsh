@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-08-27
+
+### Added
+- **Controllable conversation-view tabs**: the six tabs (Today / Wishes / Tasks /
+  Calendar / Growth / Memory) are no longer always present. Default mode **follows the
+  session preset** — tabs appear only in sessions composed from the `xingyuan` preset and
+  stay out of every other conversation. Settings → XingYuan gains a **Tab visibility**
+  card with three modes (`Follow session` / `Always show` / `Always hide`) plus
+  per-tab toggles (`hiddenTabs`, all shown by default). The preference namespace
+  (`xingyuan-ui`) is installed by the bundle layer, so it works before any XingYuan
+  session exists and stays reachable even when tabs are fully hidden (a preset-layer
+  namespace would be unavailable exactly when needed). Today's page shows a one-line
+  notice when "Always show" puts the tabs into a non-XingYuan session (pages stay fully
+  browsable and operable; only the chat-side capabilities are absent). Read-only URL
+  pages (`/xingyuan/*`) and chat cards are unaffected.
+- New tab-visibility policy (`visibleTabIds`) with dirty-value tolerance (unknown/duplicate
+  hidden ids are ignored); covered by `test/tab-policy.test.ts`.
+
+### Fixed
+- Client boot crash: the tab-visibility controller subscribed to the injected `sessions`
+  service itself, which has no `subscribe` — the session-list snapshot lives on
+  `sessions.list`. The client half failed to load entirely ("Failed to load plugins"),
+  which also hid the Settings → XingYuan card. Subscriptions now target
+  `sessions.list` (`getSnapshot`/`subscribe`).
+- Tab-visibility toggles had inverted semantics: the check chips rendered "hidden" as
+  "checked", so ticking a tab produced no change. `shown` now reads
+  `!hiddenTabs.includes(id)` (checked = shown).
+
 ## [0.5.1] - 2026-08-27
 
 Patch release. Two hardening changes: sessions that contain `xingyuan/*` card events
