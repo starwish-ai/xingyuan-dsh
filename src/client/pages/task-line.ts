@@ -4,7 +4,7 @@ import { postAction } from '../api.js'
 import { toast } from '../ui.js'
 import { useXyT } from '../i18n.js'
 import { softConfirm, useActionGuard } from '../hooks.js'
-import { cycleLabel, durationText, statusLabel, dateSuffix, formatShortDate } from './format.js'
+import { cycleLabel, durationText, closedStatusLabel, dateSuffix, formatShortDate } from './format.js'
 import type { ApiTask } from './types.js'
 
 export function TaskLine(props: {
@@ -37,9 +37,8 @@ export function TaskLine(props: {
     createElement('span', { className: 'xy-taskname' }, task.name),
     createElement('span', { className: 'xy-meta' },
       `${cycleLabel(task.cycle)} · ${durationText(task.completedDays, task.requiredDays)}`
-      // 状态词仅在无动作可推断时保留（已完结）：进行中/待领取的状态由旁侧
-      // 打卡/领取按钮自解释，任务页还叠加了状态分组头——再报一遍是噪音
-      + `${task.status === 'closed' ? ` · ${statusLabel(task.status)}` : ''}`
+      // 关闭态细分「已达成/已过期」（无旁证时保留状态词；进行中/待领取由按钮自解释）
+      + `${task.status === 'closed' ? ` · ${closedStatusLabel(task)}` : ''}`
       // 近期行动日期走短格式（与「提前打卡」按钮同口径）；ISO 只留给确认文案与读屏
       + `${futureDate !== undefined ? ` · ${t('task.nextDate', { date: formatShortDate(futureDate) })}` : ''}`
       + `${task.dueDate !== undefined ? ` · ${t('task.due', { date: formatShortDate(task.dueDate) })}` : ''}`),

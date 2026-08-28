@@ -3,8 +3,8 @@ import { createElement, useSyncExternalStore, type ReactElement } from 'react'
 import { postAction } from '../api.js'
 import { toast } from '../ui.js'
 import { useXyT } from '../i18n.js'
-import { softConfirm, useActionGuard, usePageData, useStableScrollbar, localYmd } from '../hooks.js'
-import { PageEmpty, PageError, PageSkeleton } from '../ui.js'
+import { softConfirm, useActionGuard, usePageData, useScrollTopOnMount, useStableScrollbar, localYmd } from '../hooks.js'
+import { PageEmpty, PageError, PageSkeleton, StaleBanner, focusPageTitle } from '../ui.js'
 import { cycleLabel, dateSuffix, formatFriendlyDate, formatShortDate } from './format.js'
 import { todayHintStore } from '../tab-hint.js'
 import type { DayPayload, OverviewPayload } from './types.js'
@@ -12,6 +12,7 @@ import type { DayPayload, OverviewPayload } from './types.js'
 export function TodayPage(): ReactElement {
   const t = useXyT()
   const stabilize = useStableScrollbar()
+  useScrollTopOnMount()
   // 「始终显示 × 非星愿会话」轻提示：控制器写值，本页订阅渲染（默认 false 零开销）
   const showNoPresetHint = useSyncExternalStore(todayHintStore.subscribe, todayHintStore.getSnapshot)
   const overview = usePageData<OverviewPayload>('/xingyuan/api/overview')
@@ -19,20 +20,32 @@ export function TodayPage(): ReactElement {
   const { busy, guard } = useActionGuard()
 
   const reload = (): Promise<void> => Promise.all([overview.reload(), day.reload()]).then(() => undefined)
-  const act = (action: string, body: Record<string, unknown>, doneText?: (payload: Record<string, unknown>) => string): void => {
+  const act = (action: string, body: Record<string, unknown>, doneText?: (payload: Record<string, unknown>) => string): Promise<void> => {
     // busy 窗口覆盖「动作 + 双列表刷新」全程：刷新未落定时按钮保持禁用，
-    // 杜绝陈旧数据下的双击竞态与多余的 already_checked 提示
-    guard(() => postAction(action, body).then((payload) => {
-      if (doneText !== undefined) toast(doneText(payload), 'ok')
-      return reload()
-    }))
+    // 杜绝陈旧数据下的双击竞态与多余的 already_checked 提示。
+    // 保持惰性：请求必须在 guard 内发起——先发请求再进 guard 的话，busy 期间
+    // 的重入调用会「被吞掉却已在服务端执行」，防重入就只剩记账作用。
+    // 返回动作 promise（仅在实际发起时非 undefined）供调用方接续焦点移交。
+    let run: Promise<void> | undefined
+    guard(() => {
+      run = postAction(action, body).then((payload) => {
+        if (doneText !== undefined) toast(doneText(payload), 'ok')
+        return reload()
+      })
+      return run
+    })
+    return run ?? Promise.resolve()
   }
 
-  if (overview.error !== undefined) return createElement(PageError, { message: overview.error, onRetry: overview.reload })
-  if (day.error !== undefined) return createElement(PageError, { message: day.error, onRetry: day.reload })
+  // 错误降级口径：数据从未到达（undefined）才整页错误屏；已有数据时降级为
+  // 「旧数据 + 陈旧提示行」——动作成功后刷新失败不应让用户以为动作失败了。
+  // 重试一律重取两个端点（此前先错的端点单独重试，双失败时要点两次）
+  if (overview.error !== undefined && overview.data === undefined) return createElement(PageError, { message: overview.error, onRetry: reload })
+  if (day.error !== undefined && day.data === undefined) return createElement(PageError, { message: day.error, onRetry: reload })
   const data = overview.data
   const dayData = day.data
   if (data === undefined || dayData === undefined) return createElement(PageSkeleton)
+  const stale = overview.error !== undefined || day.error !== undefined
 
   const ratio = data.total > 0 ? Math.round((data.checked / data.total) * 100) : 0
   const doneItems = dayData.tasks.filter((task) => task.checked)
@@ -63,14 +76,20 @@ export function TodayPage(): ReactElement {
         task.name),
       // 与待完成行同口径：周期 + 所属愿望（hint 是当天行动备忘，完成后不再展示）
       createElement('span', { className: 'xy-meta' }, `${cycleLabel(task.cycle)}${task.wishName !== undefined ? ` · ${task.wishName}` : ''}`)),
-    createElement('button', { className: 'xy-btn', disabled: busy, onClick: () => {
+    createElement('button', {
+      className: 'xy-btn', disabled: busy,
+      // 行级语义：完成区多行并存时读屏不再播报一串同名「撤销」
+      'aria-label': `${t('action.undoCheckin')} · ${task.name}`,
+      onClick: () => {
       void softConfirm(t('confirm.undoToday', { name: task.name })).then((ok) => {
         if (!ok) return
         // 完成区行=今天的打卡：日期必须显式携带——服务端「不传日期=撤最近一次」
-        // 会误撤未来预勾（弹框却说撤今天）
+        // 会误撤未来预勾（弹框却说撤今天）。撤销后行在两个分组间迁移、原按钮
+        // 随 DOM 更换销毁，刷新完成后焦点交给页面标题兜底
         act('cancel-checkin', { taskId: task.taskId, date: data.today }, (p) => typeof p.date === 'string'
           ? t('toast.undoneAt', { date: formatShortDate(String(p.date)) })
           : t('toast.undone'))
+          .then(focusPageTitle, () => {})
       })
     } }, t('action.undoCheckin'))))
 
@@ -99,6 +118,8 @@ export function TodayPage(): ReactElement {
             createElement('div', { className: 'xy-bar-fill', style: { transform: `scaleX(${ratio / 100})` } }))
         : null,
       allDone ? createElement('div', { className: 'xy-banner-ok' }, t('today.allDone')) : null),
+    // 刷新失败但旧数据仍在：诚实降级（写已成功，页面数据可能滞后），可就地重试
+    stale ? createElement(StaleBanner, { onRetry: () => void reload() }) : null,
     // 始终显示模式下非星愿会话：概览卡下一行轻提示（页面可浏览/操作，对话能力受限）
     showNoPresetHint ? createElement('p', { className: 'xy-hint' }, t('today.noPresetHint')) : null,
     rows.length > 0 ? createElement('section', { className: 'xy-group' },

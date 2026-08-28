@@ -279,16 +279,16 @@ const GTICK = (left: number, align: string, label: string): string =>
 
 const growthSection = `
 <div class="xy-page">
-  <div class="xy-hero" style="background:linear-gradient(135deg, color-mix(in srgb, #2563eb 76%, #000), #2563eb)">
+  <div class="xy-hero" style="background:linear-gradient(135deg, #1c4bb3, #2563eb)">
     <div class="xy-herobadge" style="background:#2563eb">Lv.4</div>
     <div class="xy-heromain">
       <div class="xy-meta xy-onhero">当前等级</div>
-      <h2 class="xy-herotitle">Lv.4 · 渐入佳境</h2>
-      <div class="xy-bar xy-bar-onhero"><div class="xy-bar-fill xy-bar-fill-solid" style="transform:scaleX(.55)"></div></div>
-      <div class="xy-meta xy-onhero">520 / 1000 EXP</div>
+      <h2 class="xy-herotitle">Lv.4 · 坚持者</h2>
+      <div class="xy-bar xy-bar-onhero"><div class="xy-bar-fill xy-bar-fill-solid" style="transform:scaleX(.66)"></div></div>
+      <div class="xy-meta xy-onhero">660 / 1000 EXP</div>
     </div>
   </div>
-  <div class="xy-meta xy-heroreward">当前等级权益：解锁连续加成统计视图</div>
+  <div class="xy-meta xy-heroreward">当前等级权益：解锁高级教练风格</div>
   <div class="xy-stats">
     <div class="xy-statcard"><div class="xy-statnum">42</div><div class="xy-meta">累计打卡天数</div></div>
     <div class="xy-statcard xy-statcard-hot"><div class="xy-statnum">6</div><div class="xy-meta">连续坚持</div></div>
@@ -316,8 +316,8 @@ const growthSection = `
   </div>
   <h3 class="xy-section-title">等级说明</h3>
   <div class="xy-levels">
-    <div class="xy-levelrow xy-levelhit"><span class="xy-lvnum" style="background:#2563eb;color:#fff">Lv.4</span><span class="xy-lvname">渐入佳境</span><span class="xy-meta">需要 600 经验</span><span class="xy-meta xy-lvreward">✓ 连续加成提示</span></div>
-    <div class="xy-levelrow"><span class="xy-lvnum">Lv.5</span><span class="xy-lvname">小有所成</span><span class="xy-meta">需要 1000 经验</span><span class="xy-meta xy-lvreward">专属庆祝动画</span></div>
+    <div class="xy-levelrow xy-levelhit"><span class="xy-lvnum" style="background:#2563eb;color:#fff">Lv.4</span><span class="xy-lvname">坚持者</span><span class="xy-meta">需要 600 经验</span><span class="xy-meta xy-lvreward">✓ 解锁高级教练风格</span></div>
+    <div class="xy-levelrow"><span class="xy-lvnum">Lv.5</span><span class="xy-lvname">奋斗者</span><span class="xy-meta">需要 1000 经验</span><span class="xy-meta xy-lvreward">获得专属徽章</span></div>
   </div>
 </div>`
 
@@ -353,9 +353,9 @@ const memorySection = `
   </div>
   <section class="xy-group">
     <ul class="xy-grouplist">
-      ${MEMROW(true, '生日', '3 月 5 日，喜欢手工礼物多于贵重物品', '个人', '高', '2026-07-02')}
-      ${MEMROW(false, '咖啡口味', '拿铁少糖，下午两点后不喝咖啡因', '偏好', '中', '2026-07-18')}
-      ${MEMROW(false, '跑鞋尺码', '43 码，宽楦', '事件', '低', '2026-08-11')}
+      ${MEMROW(true, '生日', '3 月 5 日，喜欢手工礼物多于贵重物品', '个人', '高', '2026年7月2日')}
+      ${MEMROW(false, '咖啡口味', '拿铁少糖，下午两点后不喝咖啡因', '偏好', '中', '2026年7月18日')}
+      ${MEMROW(false, '跑鞋尺码', '43 码，宽楦', '事件', '低', '2026年8月11日')}
     </ul>
   </section>
   <div class="xy-memfoot">
@@ -398,6 +398,11 @@ const settingsSection = `
         <span class="xy-field-head">记忆注入上限</span>
         <input type="number" min="5" max="200" class="xy-input xy-input-num" name="memoryInjectLimit" inputmode="numeric" value="40">
         <span class="xy-hint">每次对话自动注入上下文的记忆条数上限（5-200，默认 40）；失焦后保存。</span>
+      </label>
+      <label class="xy-field">
+        <span class="xy-field-head">确认卡语言</span>
+        <select class="xy-input" name="confirmLang" aria-label="确认卡语言"><option selected>中文</option><option>English</option></select>
+        <span class="xy-hint">对话中写操作确认卡与问题的显示语言。确认卡无法自动跟随界面语言，需在此选择；默认中文。</span>
       </label>
     </section>
     <section class="xy-panel">
@@ -445,7 +450,7 @@ const quickSection = `
 </div>`
 
 /** 空态/错误态（镜像 ui.ts 的 PageEmpty / PageError）：纯文字版式。
- * 历史坑：旧版带 SVG 线稿插画，描边色 color-mix() 在部分浏览器失效导致
+ * 历史坑：旧版带 SVG 线稿插画，描边色依赖新式 CSS 取色函数在不支持的浏览器里
  * 整稿隐形、只剩 accent 点缀孤点——本场景同时陈列危险按钮（兼容令牌描边）
  * 供双主题核对。 */
 const emptySection = `

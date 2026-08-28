@@ -63,6 +63,7 @@ export function apply(ctx: Context & { xingyuan: XingyuanStore }, config: Config
     chartRankLimit: config.chartRankLimit,
     chartRankMax: config.chartRankMax,
     get confirmWrites() { return prefs().confirmWrites },
+    get confirmLang() { return prefs().confirmLang },
   }
   registerTools(ctx, toolsConfig)
   registerPrompts(ctx, { get memoryInjectLimit() { return prefs().memoryInjectLimit } })

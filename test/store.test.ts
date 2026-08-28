@@ -293,3 +293,18 @@ describe('愿望收口：createWish/updateWish 校验同源', () => {
     expect(stored.archived).toBe(false)
   })
 })
+
+describe('截止日地平线（远期截止会让机会日序列物化爆炸）', () => {
+  it('createTask：超过 10 年地平线的截止日拒绝（due_too_far）', async () => {
+    const store = memoryStore()
+    await expect(createTask(store, {
+      name: '远期任务', checkInCycle: 'daily', dueDate: '9999-12-31',
+    })).rejects.toMatchObject({ code: 'due_too_far' })
+  })
+
+  it('updateTask：把截止日改到 10 年外地平线之外同样拒绝', async () => {
+    const store = memoryStore()
+    const task = await createTask(store, { name: '正常任务', checkInCycle: 'daily', dueDate: addDays(todayIso(), 30) })
+    await expect(updateTask(store, task.taskId, { dueDate: '9999-12-31' })).rejects.toMatchObject({ code: 'due_too_far' })
+  })
+})

@@ -140,8 +140,6 @@ function countByCategory(store: XingyuanStore, facts: CheckinFact[]): Map<string
 export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanStore, config: ChartConfig, today = todayIso()): ChartSpec | undefined {
   const days = clamp(params.days ?? config.trendDays, 1, config.maxDays)
   const limit = clamp(params.limit ?? config.rankLimit, 1, config.rankMax)
-  // 读侧新鲜化共用一份打卡计数索引（与任务页/愿望页 fresh 口径一致）
-  const counts = checkinCountIndex(store)
 
   switch (key) {
     case 'checkinTrend': {
@@ -261,6 +259,9 @@ export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanSt
     }
     case 'taskStatus': {
       const statusLabels: Record<Task['status'], string> = { pending: '待领取', in_progress: '进行中', closed: '已完结' }
+      // 打卡计数索引仅此分支消费：按需计算（此前 buildChart 入口无条件全表扫描，
+      // 其余 14 种图表白付一次扫描）
+      const counts = checkinCountIndex(store)
       const statusCounts = new Map<string, number>()
       for (const task of tasksOf(store, params.wishId)) {
         const label = statusLabels[freshTask(store, task, today, counts).status]!

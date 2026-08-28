@@ -1,5 +1,5 @@
 /**
- * 共享 UI 原语：Toast 轻提示、页面级 加载/错误/空态，与空态线性插画。
+ * 星愿 client 半侧共享 UI 原语：Toast 轻提示、应用内确认弹窗、页面三态与行内图标。
  * 插画为内联 SVG 线稿（stroke 走主题令牌、点缀走品牌强调色），深浅色自适应，
  * aria-hidden（语义文案由调用方提供）——替代 emoji 主视觉的「廉价感」。
  */
@@ -12,6 +12,7 @@ import { t } from './i18n.js'
 type ToastKind = 'ok' | 'error' | 'info'
 
 let toastRoot: HTMLElement | undefined
+let toastAlertRoot: HTMLElement | undefined
 
 function ensureToastRoot(): HTMLElement {
   if (toastRoot !== undefined && toastRoot.isConnected) return toastRoot
@@ -24,17 +25,32 @@ function ensureToastRoot(): HTMLElement {
   return root
 }
 
+/** 错误 toast 独立容器（role=alert + assertive）：失败信息不得被成功提示的
+ * polite 队列淹没——读屏用户按下一次操作前必须先听到上一次的失败。 */
+function ensureToastAlertRoot(): HTMLElement {
+  if (toastAlertRoot !== undefined && toastAlertRoot.isConnected) return toastAlertRoot
+  const root = document.createElement('div')
+  root.className = 'xy-toasts'
+  root.setAttribute('role', 'alert')
+  root.setAttribute('aria-live', 'assertive')
+  document.body.append(root)
+  toastAlertRoot = root
+  return root
+}
+
 /** 插件卸载时清空 toast 容器（HMR/停用不留残骸）。 */
 export function disposeToasts(): void {
   toastRoot?.remove()
   toastRoot = undefined
+  toastAlertRoot?.remove()
+  toastAlertRoot = undefined
 }
 
 const TOAST_GLYPH: Record<ToastKind, string> = { ok: '✓', error: '!', info: '★' }
 
 /** 轻提示：成功 2.6s / 错误 4.2s 自动消退，点击立即关闭；textContent 注入天然防 XSS。 */
 export function toast(message: string, kind: ToastKind = 'info'): void {
-  const root = ensureToastRoot()
+  const root = kind === 'error' ? ensureToastAlertRoot() : ensureToastRoot()
   while (root.children.length >= 4) root.firstElementChild?.remove()
   const el = document.createElement('div')
   el.className = `xy-toast xy-toast-${kind}`
@@ -58,6 +74,21 @@ export function toastError(e: unknown): void {
   toast(describeError(e), 'error')
 }
 
+// ===== 焦点兜底 =====
+
+/**
+ * 把焦点交给当前页面的标题（h2.xy-page-title，tabindex=-1）：
+ * 删除/撤销类动作会把触发行连 DOM 一起移除，确认框归还的焦点随即落空到 <body>，
+ * 读屏与键盘用户就此「失明」。动作完成 + 列表刷新后调用本函数，焦点落在
+ * 永远存活的稳定锚点上（程序化焦点不显示 focus 环，无视觉噪音）。
+ */
+export function focusPageTitle(): void {
+  const title = document.querySelector<HTMLElement>('.xy-page-title')
+  if (title === null) return
+  if (title.tabIndex < 0) title.tabIndex = -1
+  title.focus({ preventScroll: false })
+}
+
 // ===== 应用内确认弹窗 =====
 
 /**
@@ -79,6 +110,23 @@ interface OpenConfirm {
 }
 
 const openConfirms: OpenConfirm[] = []
+
+/** 弹窗滚动锁：遮罩后的页面不得随手势滚动（焦点锁定在弹窗内，滚动语境同样锁定）。
+ * 引用计数支持叠层弹窗；保存并恢复加锁前的 body 内联值，不覆盖壳侧并发 overlay
+ * 自己设置的滚动锁。 */
+let scrollLockSaved: string | undefined = undefined
+
+function updateScrollLock(): void {
+  if (openConfirms.length > 0) {
+    if (scrollLockSaved === undefined) {
+      scrollLockSaved = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+    }
+  } else if (scrollLockSaved !== undefined) {
+    document.body.style.overflow = scrollLockSaved
+    scrollLockSaved = undefined
+  }
+}
 
 export function confirmDialog(options: ConfirmDialogOptions | string): Promise<boolean> {
   const { message, danger } = typeof options === 'string' ? { message: options, danger: false } : options
@@ -118,6 +166,7 @@ export function confirmDialog(options: ConfirmDialogOptions | string): Promise<b
       settled = true
       const index = openConfirms.indexOf(entry)
       if (index >= 0) openConfirms.splice(index, 1)
+      updateScrollLock()
       backdrop.classList.add('xy-modal-out')
       window.setTimeout(() => backdrop.remove(), 160)
       if (previousFocus !== null && previousFocus.isConnected) previousFocus.focus()
@@ -151,6 +200,7 @@ export function confirmDialog(options: ConfirmDialogOptions | string): Promise<b
     })
 
     openConfirms.push(entry)
+    updateScrollLock()
     document.body.append(backdrop)
     initialFocus.focus()
   })
@@ -159,6 +209,7 @@ export function confirmDialog(options: ConfirmDialogOptions | string): Promise<b
 /** 插件卸载时结算全部未决确认框（一律按取消），调用方 Promise 不悬挂。 */
 export function disposeConfirms(): void {
   for (const entry of [...openConfirms]) entry.resolve(false)
+  updateScrollLock()
 }
 
 // ===== 功能性小图标（编辑/删除，行内幽灵键用）=====
@@ -193,6 +244,17 @@ export function PageError(props: { message: string; onRetry: () => void; retryLa
   return createElement('div', { className: 'xy-page-center' },
     createElement('div', { className: 'xy-empty-title' }, props.message),
     createElement('button', { className: 'xy-btn', onClick: props.onRetry }, props.retryLabel ?? t('common.retry')))
+}
+
+/**
+ * 数据陈旧横幅：动作已成功但随后的列表刷新失败时，页面保留旧数据 + 一行
+ * 可重试的提示，而不是整页翻成错误屏——「写成功了却看到全页报错」会让人以为
+ * 动作失败了（与 growth 页图表区独立错误分支同一诚实降级思路）。
+ */
+export function StaleBanner(props: { onRetry: () => void }): ReactElement {
+  return createElement('div', { className: 'xy-stalerow', role: 'status' },
+    createElement('span', { className: 'xy-meta' }, t('common.staleData')),
+    createElement('button', { className: 'xy-btn xy-btn-inline', onClick: props.onRetry }, t('common.retry')))
 }
 
 /** 骨架屏加载态：微光扫过占位块，避免「文字→内容」的突变感。 */

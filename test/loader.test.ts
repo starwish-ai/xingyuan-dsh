@@ -56,8 +56,18 @@ describe('loader 级组合启动', () => {
     ctx = new Context()
     // 宿主 boot 同款：baseUrl 挂 ctx 供裸包名解析；Loader 以插件行装载
     ctx.baseUrl = `${pathToFileURL(pkgRoot).href}/`
-    // webServer 桩：bundle 主行 inject webServer；组合测试不启真实 HTTP 服务
-    ctx.provide('webServer', { register() {} })
+    // webServer 桩：bundle 主行 inject webServer；组合测试不启真实 HTTP 服务。
+    // 契约对拍真实宿主：register 返回路由 disposer、重复 (kind,path) 抛错——
+    // 重挂载测试据此验证 bundle 行经 ctx.effect 注销路由（否则重挂必炸重复路径）
+    const registeredRoutes = new Set<string>()
+    ctx.provide('webServer', {
+      register(route: { kind: string; path: string }): () => void {
+        const key = `${route.kind}:${route.path}`
+        if (registeredRoutes.has(key)) throw new Error(`duplicate ${key} route`)
+        registeredRoutes.add(key)
+        return () => { registeredRoutes.delete(key) }
+      },
+    })
     // sessions 桩：bundle 主行 inject sessions（会话日志自愈的活会话枚举，session-log-repair.ts）；
     // 组合测试不建真实会话，DSH_HOME 已指向临时目录、扫描天然空转
     ctx.provide('sessions', { list: () => [] })
@@ -116,5 +126,27 @@ describe('loader 级组合启动', () => {
 
     await loader.remove('xingyuan-sqlite')
     expect(() => ctx.storage.backend.get('sqlite')).toThrow()
+  })
+
+  it('重挂载（HMR/升级路径）：拔除后整行可重建，路由 disposer 已注销不再抛重复注册', async () => {
+    // dispose 测试已拔掉三行；重建顺序与 beforeAll 一致。若路由注册未经 ctx.effect
+    // 挂载（disposer 被丢弃），此处的重复 /xingyuan 前缀注册会被桩按宿主契约抛错。
+    // 注意 :memory: 库随行销毁——重挂载后是全新介质，落库断言用新写入验证
+    await mount({ id: 'xingyuan-sqlite', name: './lib/sqlite.js', config: { path: ':memory:' } })
+    await mount({ id: 'xingyuan', name: './lib/index.js' })
+    await mount({ id: 'xingyuan-side', name: './lib/preset/side.js' })
+    const store = await untilDefined(() => ctx.xingyuan, '重挂载后的 xingyuan 服务')
+    await store.domain.table('wishes').put('w-remount', {
+      wishId: 'w-remount',
+      title: '重挂载愿望',
+      categoryName: '学习',
+      progress: 0,
+      totalRequiredDays: 0,
+      totalCompletedDays: 0,
+      archived: false,
+      createdAt: '2026-08-28T00:00:00',
+    })
+    expect(store.domain.table('wishes').get('w-remount')?.title).toBe('重挂载愿望')
+    expect(visibleTools()).toContain('create_wish')
   })
 })

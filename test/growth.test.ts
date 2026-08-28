@@ -223,3 +223,16 @@ describe('growthSummary 聚合', () => {
     expect(summary.level.level).toBe(1)
   })
 })
+
+describe('等级词表对拍（客户端 i18n ↔ 服务端权威源）', () => {
+  it('zh 词典的 growth.lv.N.name/reward 与 LEVEL_CONFIGS 逐字一致（漂移即红）', async () => {
+    const { ZH_DICT } = await import('../src/client/i18n.js')
+    for (const config of LEVEL_CONFIGS) {
+      expect(ZH_DICT[`growth.lv.${config.level}.name` as keyof typeof ZH_DICT]).toBe(config.levelName)
+      expect(ZH_DICT[`growth.lv.${config.level}.reward` as keyof typeof ZH_DICT]).toBe(config.rewardDescription)
+    }
+    // 词表恰好覆盖 1-10：多键（未来扩级未同步）或漏键都算漂移
+    const levelKeys = Object.keys(ZH_DICT).filter((key) => key.startsWith('growth.lv.'))
+    expect(levelKeys).toHaveLength(20)
+  })
+})

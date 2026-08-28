@@ -27,6 +27,15 @@ export function statusLabel(status: string): string {
 }
 
 /**
+ * 关闭态细分文案：expired=已过期（失败态），其余=已达成（成就态，含无 closedReason
+ * 的历史数据——closedReason 字段引入前关闭即达标）。与任务页分桶、详情复活入口同口径。
+ */
+export function closedStatusLabel(task: { readonly status: string; readonly closedReason?: string }): string {
+  if (task.status !== 'closed') return statusLabel(task.status)
+  return t(task.closedReason === 'expired' ? 'task.status.expired' : 'task.status.achieved')
+}
+
+/**
  * 进度时长：「{done}/{required} 天」或无上限时「{done} 次」。
  * 计数在英文下经 Intl.PluralRules 分单复数（1 time / n times）；zh 两键同文无感。
  */

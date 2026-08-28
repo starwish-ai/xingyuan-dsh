@@ -30,7 +30,7 @@
       "default": "./lib/index.js"
     },
     "./types": {
-      "types": "./lib/types/events.d.ts",
+      "types": "./lib/types/types.d.ts",
       "default": "./lib/types.js"
     },
     "./domain": {

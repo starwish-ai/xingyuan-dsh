@@ -5,7 +5,7 @@
  * - GET 数据：overview、day、range、calendar、growth、wishes、tasks、profile、
  *   memories、task-detail、categories
  * - POST 动作与写面：checkin、cancel-checkin、claim、profile、memory-add、
- *   memory-delete、memory-clear、create-wish、create-task、delete-task、
+ *   memory-delete、memory-clear、create-wish、create-task、update-task、delete-task、
  *   delete-wish、category-rename、category-color
  *
  * 错误语义：HttpError 按状态码；ActionError 返回 400 携带 error/code/params
@@ -30,19 +30,22 @@ const GET_PAGES = new Set(['/', '/today', '/calendar', '/growth'])
 
 /**
  * 注册 /xingyuan/* 前缀路由：JSON 数据/动作 API + today/calendar/growth 页面。
+ * 返回值 = webServer.register 的路由 disposer（宿主契约：重复 (kind,path) 注册会抛错，
+ * 故调用方必须经 ctx.effect 挂载，HMR/卸载时注销旧路由再重挂，否则重激活即抛重复路径）。
  * @param webServer - 宿主 web 服务（bundle 入口注入）
  * @param store - 星愿领域服务（bundle 入口打开领域后传入）
  * @param config - 天数窗等可调参数（默认值见 bundle 行 Config）
  */
-export function registerXingyuanRoutes(webServer: Context['webServer'], store: XingyuanStore, config: RoutesConfig): void {
+export function registerXingyuanRoutes(webServer: Context['webServer'], store: XingyuanStore, config: RoutesConfig): () => void {
   const deps: ApiDeps = { store, config }
-  webServer.register({
+  return webServer.register({
     kind: 'prefix',
     path: '/xingyuan',
-    handler: (req, res) => void route(req, res),
+    handler: (req, res) => void route(deps, req, res),
   })
+}
 
-  async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function route(deps: ApiDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const path = url.pathname.replace(/^\/xingyuan/, '') || '/'
     try {
@@ -61,7 +64,9 @@ export function registerXingyuanRoutes(webServer: Context['webServer'], store: X
       const body = await readJsonBody(req)
       return json(res, 200, await postApi(deps, path, body))
     } catch (error) {
-      if (error instanceof HttpError) return json(res, error.status, { error: error.message })
+      if (error instanceof HttpError) {
+        return json(res, error.status, { error: error.message, ...(error.code !== undefined ? { code: error.code } : {}) })
+      }
       if (error instanceof ActionError) {
         return json(res, 400, { error: error.message, code: error.code, ...(error.params !== undefined ? { params: error.params } : {}) })
       }
@@ -78,7 +83,6 @@ export function registerXingyuanRoutes(webServer: Context['webServer'], store: X
       }
       json(res, 400, { error: message })
     }
-  }
 }
 
 /** JSON 响应。 */
@@ -87,13 +91,13 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
-/** 读取并解析 JSON 请求体（超限拒绝）。 */
+/** 读取并解析 JSON 请求体（超限拒绝；错误携带稳定 code 供客户端本地化）。 */
 async function readJsonBody(req: IncomingMessage): Promise<JsonBody> {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of req) {
     size += (chunk as Buffer).length
-    if (size > BODY_MAX_BYTES) throw new HttpError(413, '请求体过大')
+    if (size > BODY_MAX_BYTES) throw new HttpError(413, '请求体过大', 'payload_too_large')
     chunks.push(chunk as Buffer)
   }
   const text = Buffer.concat(chunks).toString('utf8').trim()
@@ -102,8 +106,8 @@ async function readJsonBody(req: IncomingMessage): Promise<JsonBody> {
   try {
     parsed = JSON.parse(text)
   } catch {
-    throw new HttpError(400, '请求体必须是合法 JSON')
+    throw new HttpError(400, '请求体必须是合法 JSON', 'bad_json_body')
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new HttpError(400, '请求体必须是 JSON 对象')
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new HttpError(400, '请求体必须是 JSON 对象', 'bad_json_body')
   return parsed as JsonBody
 }

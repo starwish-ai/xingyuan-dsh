@@ -75,7 +75,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
   domain = opened
   ctx.provide('xingyuan', makeXingyuanStore(opened, readPrefs))
-  registerXingyuanRoutes(webServer, ctx.xingyuan, config)
+  // 路由注册经 ctx.effect 挂载：register 返回的 disposer 在卸载/HMR 时注销 /xingyuan
+  // 前缀——否则重激活会因重复 (kind,path) 抛错，旧 handler 还会服务已关闭的领域
+  ctx.effect(() => registerXingyuanRoutes(webServer, ctx.xingyuan, config))
   // 启动一致性清扫（契约内无事务的级联删除补偿控制）：fire-and-forget 不阻塞激活，
   // 异常只告警——清扫是收敛性补救，失败留给下次启动重试
   void sweepOrphans(ctx.xingyuan)

@@ -17,6 +17,7 @@ import { postAction, ActionError, describeError } from './api.js'
 import { toast, toastError } from './ui.js'
 import { localYmd, softConfirm } from './hooks.js'
 import { useXyT, t, activeLocale } from './i18n.js'
+import { localizeChartLabel, localizeChartSeries, localizeChartSubtitle, localizeChartTitle } from './chart-labels.js'
 import { categoryVars } from '../category-color.js'
 import { cycleLabel, durationText, dateSuffix, formatMediumDate, formatShortDate } from './pages/format.js'
 import type { XyState } from './types.js'
@@ -194,23 +195,26 @@ function ChartView(props: CardProps<'xy-chart'>): ReactElement {
   const event = (props.node.data as XyState).data as XingyuanChartEventData
   // 悬停柱下标（与成长页悬浮明细同一交互语法；null = 未悬停）
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)
+  const title = localizeChartTitle(event)
   return createElement('div', { className: 'xy-card xy-chart' },
     createElement('div', { className: 'xy-card-head' },
       createElement('span', { className: 'xy-badge xy-badge-chart' }, t('badge.chart')),
-      createElement('span', { className: 'xy-title' }, event.title),
-      event.subtitle !== undefined ? createElement('span', { className: 'xy-meta' }, event.subtitle) : null),
+      createElement('span', { className: 'xy-title' }, title),
+      event.subtitle !== undefined ? createElement('span', { className: 'xy-meta' }, localizeChartSubtitle(event.subtitle)) : null),
     // 快照时点标注（事件溯源：卡片=当时的事实）：无 generatedAt 的旧事件诚实降级不显示。
     // 中格式带年份——回放的旧卡可能跨年，「生成于 3月5日」须能定位到哪一年。
     // ISO → 本地日再格式化：直接 slice 会把 UTC 日期当本地日（UTC+8 零点后 8 小时内差一天）
     event.generatedAt !== undefined
       ? createElement('div', { className: 'xy-meta' }, t('chart.generatedAt', { date: formatMediumDate(localYmd(new Date(event.generatedAt))) }))
       : null,
-    chartBody(event, t('chart.noData'), t('chart.noSchedule'), hoverIdx, setHoverIdx))
+    chartBody(event, title, t('chart.noData'), t('chart.noSchedule'), hoverIdx, setHoverIdx))
 }
 
-/** 图表卡主体：四类渲染路径（占比条/占比列表/热力格/柱图）颜色全部走主题变量，深浅色自适应。 */
+/** 图表卡主体：四类渲染路径（占比条/占比列表/热力格/柱图）颜色全部走主题变量，深浅色自适应。
+ * 标签/序列名经 chart-labels 本地化（服务端内建中文词的展示层映射，未知值原样回显）。 */
 function chartBody(
   event: XingyuanChartEventData,
+  title: string,
   noDataText: string,
   noScheduleText: string,
   hoverIdx: number | null,
@@ -220,7 +224,7 @@ function chartBody(
   if (data.length === 0) return createElement('div', { className: 'xy-meta' }, noDataText)
   const max = Math.max(...data.filter((d) => !d.inactive).map((d) => d.value), 1)
   const labelValue = (d: XingyuanChartEventData['data'][number]): string =>
-    `${d.label}${activeLocale() === 'en' ? ': ' : '：'}${d.inactive === true ? noScheduleText : d.value}`
+    `${localizeChartLabel(d.label)}${activeLocale() === 'en' ? ': ' : '：'}${d.inactive === true ? noScheduleText : d.value}`
   if (chartType === 'arcbars') {
     const ratio = Math.min(Math.max(data[0]!.ratio ?? 0, 0), 1)
     return createElement('div', { className: 'xy-arcwrap' },
@@ -234,7 +238,7 @@ function chartBody(
     const sum = data.reduce((s, x) => s + x.value, 0)
     return createElement('ul', { className: 'xy-rows' },
       ...data.map((d, i) => createElement('li', { key: i, className: 'xy-row' },
-        createElement('span', null, d.label),
+        createElement('span', null, localizeChartLabel(d.label)),
         createElement('span', { className: 'xy-rowval' },
           `${d.value}${chartType === 'pie' && sum > 0 ? ` · ${Math.round((d.value / sum) * 100)}%` : ''}`))))
   }
@@ -249,7 +253,7 @@ function chartBody(
         }))),
       // 热力格纯视觉（title 不构成可访问名）：数据以屏内隐藏文本整体提供给读屏
       createElement('span', { className: 'xy-visually-hidden' },
-        data.map((d) => `${d.label} ${d.value}`).join(activeLocale() === 'en' ? '; ' : '；')))
+        data.map((d) => `${localizeChartLabel(d.label)} ${d.value}`).join(activeLocale() === 'en' ? '; ' : '；')))
   }
   const seriesList = [...new Set(data.map((d) => d.series).filter((s): s is string => s !== undefined))]
   const seriesColor = (index: number): string =>
@@ -272,7 +276,8 @@ function chartBody(
     return [createElement('path', {
       key: i,
       d: topRoundedBar(i * step + 2, height - 18 - h, Math.max(step - 4, 2), h),
-      style: { fill: seriesIdx > 0 ? seriesColor(seriesIdx) : 'var(--xyd-accent)', opacity: seriesIdx > 0 ? 0.55 : 0.85 },
+      // 次要序列 opacity 0.8：0.55 曾把次要柱对卡底压到 2.1:1（非文字 3:1 下限之下）
+      style: { fill: seriesIdx > 0 ? seriesColor(seriesIdx) : 'var(--xyd-accent)', opacity: seriesIdx > 0 ? 0.8 : 0.85 },
       onMouseEnter: () => onHover(i),
     },
       // 每根柱子带 <title>：原生悬停提示；精确数值另由上方悬浮明细条实时呈现
@@ -286,11 +291,11 @@ function chartBody(
     .map(({ d, i }) => createElement('text', {
       key: `l${i}`, x: i * step + step / 2, y: height - 4,
       fontSize: 11, textAnchor: 'middle', style: { fill: 'var(--dsw-alias-label-secondary)' },
-    }, d.label))
+    }, localizeChartLabel(d.label)))
   const legend = seriesList.length > 1
     ? createElement('div', { className: 'xy-chart-legend' },
         ...seriesList.map((name, idx) => createElement('span', { key: name },
-          createElement('i', { className: 'xy-dot', style: { background: seriesColor(idx), opacity: idx > 0 ? 0.55 : 1 } }), name)))
+          createElement('i', { className: 'xy-dot', style: { background: seriesColor(idx), opacity: idx > 0 ? 0.8 : 1 } }), localizeChartSeries(name))))
     : null
   const hovered = hoverIdx !== null ? data[hoverIdx] : undefined
   return createElement('div', null,
@@ -302,13 +307,13 @@ function chartBody(
       // 图表整体作为一张图暴露给读屏；逐条数值以屏内隐藏文本补充
       createElement('svg', {
         viewBox: `0 0 ${width} ${height}`, className: 'xy-svg',
-        role: 'img', 'aria-label': event.title,
+        role: 'img', 'aria-label': title,
       },
         createElement('line', { x1: 0, y1: height - 18, x2: width, y2: height - 18, style: { stroke: 'var(--dsw-alias-border-l2)' } }),
         ...bars,
         ...labels)),
     createElement('span', { className: 'xy-visually-hidden' },
-      data.map((d) => `${d.label} ${d.inactive === true ? noScheduleText : d.value}`).join(activeLocale() === 'en' ? '; ' : '；')))
+      data.map((d) => `${localizeChartLabel(d.label)} ${d.inactive === true ? noScheduleText : d.value}`).join(activeLocale() === 'en' ? '; ' : '；')))
 }
 
 export const CARD_VIEWS = {

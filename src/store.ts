@@ -3,6 +3,7 @@
  * 口径唯一来源：机会日/达标/复活判定全部走 opportunity.ts。
  */
 import type { CheckinRecord, MemoryRecord, TaskRecord, WishRecord, XingyuanGlobal, XingyuanStore } from './domain.js'
+import { COACH_STYLES } from './domain.js'
 import { CATEGORY_COLOR_KEYS } from './category-color.js'
 import {
   addDays,
@@ -22,6 +23,14 @@ export const CYCLE_LABELS: Record<Task['checkInCycle'], string> = {
   daily: '每日',
   weekly: '每周',
   monthly: '每月',
+}
+
+/** 周期英文标签（确认卡 en 文案专用——确认卡是插件原生文案面，不依赖模型转述）。 */
+export const CYCLE_LABELS_EN: Record<Task['checkInCycle'], string> = {
+  once: 'once',
+  daily: 'daily',
+  weekly: 'weekly',
+  monthly: 'monthly',
 }
 
 export interface DayPlan {
@@ -143,7 +152,7 @@ function buildWishValue(
 ): WishRecord {
   const title = input.title.trim()
   if (title === '') throw new ToolError('标题不能为空', 'missing_field', { field: 'title' })
-  if (title.length > 50) throw new ToolError('标题不能超过 50 字符（当前 ' + String(title.length) + ' 字）')
+  if (title.length > 50) throw new ToolError('标题不能超过 50 字符（当前 ' + String(title.length) + ' 字）', 'title_too_long', { length: title.length })
   const categoryName = validateCategoryName(input.categoryName)
   const colorKey = validateColorKey(input.colorKey)
   const description = cleanOptionalText(input.description)
@@ -286,11 +295,11 @@ export async function performCheckIn(
 ): Promise<{ date: string; task: Task }> {
   const tasks = store.domain.table('tasks')
   const raw = tasks.get(taskId)
-  if (!raw) throw new ToolError(`任务不存在：${taskId}`, 'not_found')
+  if (!raw) throw new ToolError(`任务不存在：${taskId}`, 'not_found', { taskId })
   // 写前新鲜化（与页面同一 syncTaskValue 实现）：跨日过期关闭是状态契约，
   // 不得以库内陈旧 status 绕过——补卡须先延长截止日复活（shouldRestartFromExpired）
   const task = syncTaskValue(store, raw, today)
-  if (task.status === 'pending') throw new ToolError('任务尚未领取，请先领取任务')
+  if (task.status === 'pending') throw new ToolError('任务尚未领取，请先领取任务', 'not_claimed')
   if (task.status === 'closed' && task.closedReason === 'expired') {
     throw new ToolError('任务已过期完结：如需补卡，请先延长截止日使任务重新开始', 'task_closed')
   }
@@ -298,7 +307,7 @@ export async function performCheckIn(
 
   const checked = checkedDatesOf(store, taskId)
   const target = date ?? findFirstUncheckedOpportunityDate(anchorOf(task), task.dueDate, task.checkInCycle, checked, today)
-  if (!target) throw new ToolError('没有可勾选的打卡日：机会日已全部完成或截止')
+  if (!target) throw new ToolError('没有可勾选的打卡日：机会日已全部完成或截止', 'no_opportunity_left')
   if (checked.has(target)) throw new ToolError(`${target} 已打卡`, 'already_checked', { date: target })
   validateTargetDate(task, target, today)
 
@@ -315,10 +324,10 @@ export async function performCheckIn(
 }
 
 function validateTargetDate(task: Task, target: string, today: string): void {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(target)) throw new ToolError(`日期格式错误：${target}`)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(target)) throw new ToolError(`日期格式错误：${target}`, 'bad_date', { date: target })
   if (!task.dueDate && task.checkInCycle === 'once') {
     // once 无截止日：点击打卡即完成，打卡日=操作当天
-    if (target !== today) throw new ToolError(`该任务为仅一次任务且未设截止日，只能打卡今天（${today}）`)
+    if (target !== today) throw new ToolError(`该任务为仅一次任务且未设截止日，只能打卡今天（${today}）`, 'once_today_only', { today })
     return
   }
   if (!task.dueDate) {
@@ -346,7 +355,7 @@ export async function cancelCheckIn(
       if (record.taskId !== taskId) continue
       if (!latest || record.date > latest.date) latest = record
     }
-    if (!latest) throw new ToolError('该任务暂无打卡记录')
+    if (!latest) throw new ToolError('该任务暂无打卡记录', 'no_checkins', { taskId })
     target = latest.date
   }
   const removed = await checkins.delete(store.checkinKey(taskId, target))
@@ -364,6 +373,7 @@ export async function createTask(
 ): Promise<Task> {
   const dueDate = normalizeDue(input.dueDate)
   if (input.dueDate && input.dueDate < today) throw new ToolError('截止日期不能早于今天', 'due_past')
+  if (dueDate !== undefined) assertDueWithinHorizon(dueDate, today)
   if (input.wishId !== undefined && store.domain.table('wishes').get(input.wishId) === undefined) {
     throw new ToolError(`愿望不存在：${input.wishId}`)
   }
@@ -390,8 +400,23 @@ export async function createTask(
 
 function normalizeDue(due: string | undefined): string | undefined {
   if (!due) return undefined
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) throw new ToolError(`日期格式错误，请使用 yyyy-MM-dd：${due}`)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) throw new ToolError(`日期格式错误，请使用 yyyy-MM-dd：${due}`, 'bad_date', { date: due })
   return due
+}
+
+/**
+ * 截止日地平线（天）：机会日序列按截止日逐期展开（§5.2 口径），远期截止会让
+ * 序列物化爆炸——daily + 9999 年 ≈ 290 万格字符串，随今日页/日历/图表每次读
+ * 全量重建。10 年地平线足够任何真实习惯，超出直接拒绝（stable code due_too_far）。
+ */
+export const DUE_DATE_HORIZON_DAYS = 3650
+
+/** 截止日地平线校验（createTask/updateTask 唯一写路径共用）。 */
+function assertDueWithinHorizon(dueDate: string, today: string): void {
+  const diff = Math.floor((Date.parse(`${dueDate}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000)
+  if (diff > DUE_DATE_HORIZON_DAYS) {
+    throw new ToolError(`截止日期不能超过今天起 10 年：${dueDate}`, 'due_too_far', { date: dueDate })
+  }
 }
 
 /**
@@ -434,7 +459,8 @@ export async function updateTask(
     dueDate = undefined
   } else if (patch.dueDate !== undefined) {
     dueDate = normalizeDue(patch.dueDate)
-    if (dueDate !== undefined && dueDate < today) throw new ToolError('截止日期不能早于今天')
+    if (dueDate !== undefined && dueDate < today) throw new ToolError('截止日期不能早于今天', 'due_past')
+    if (dueDate !== undefined) assertDueWithinHorizon(dueDate, today)
   }
   await store.domain.table('tasks').update(taskId, (task) => {
     if (task === undefined) throw new ToolError(`任务不存在：${taskId}`, 'not_found')
@@ -575,6 +601,18 @@ export async function saveMemory(store: XingyuanStore, key: string, value: strin
   await store.domain.table('memories').put(key, { key, value, category, importance, createdAt: Date.now() })
 }
 
+/** 删除单条记忆（工具面与路由面唯一写路径；未来若加派生事实只需改此处）。 */
+export async function deleteMemory(store: XingyuanStore, key: string): Promise<boolean> {
+  return store.domain.table('memories').delete(key)
+}
+
+/** 清空全部记忆（同上收口）。 */
+export async function clearMemories(store: XingyuanStore): Promise<number> {
+  const keys = [...store.domain.table('memories').entries()].map(([key]) => key)
+  for (const key of keys) await store.domain.table('memories').delete(key)
+  return keys.length
+}
+
 export function searchMemories(store: XingyuanStore, keyword: string): MemoryRecord[] {
   const needle = keyword.toLowerCase()
   const hits: MemoryRecord[] = []
@@ -631,4 +669,60 @@ export async function mutateGlobal(store: XingyuanStore, mutator: (global: Xingy
   // 链不断裂：失败被吞进本笔的 rejected 分支，后续 mutator 仍基于最新已结算状态执行
   globalWriteQueues.set(store, run.catch(() => {}))
   return run
+}
+
+// ===== 用户画像（工具面与路由面共用的唯一写路径）=====
+
+/** 画像字段上限（与 Web WishForm/ProfileForm 同源；路由与工具两面共用，防无界注入上下文）。 */
+export const PROFILE_LIMITS = { nickname: 50, occupation: 100, interestItem: 50, interestCount: 20 } as const
+
+/**
+ * 更新用户画像：merge 语义（undefined = 未提及保留）+ 夹取清理（空串/纯空白 = 清除）。
+ * 教练风格校验同源；兴趣接受数组或逗号/顿号分隔字符串（路由表单便捷通道）。
+ * 写入经 mutateGlobal 串行队列，工具面与页面动作并发互不覆盖。
+ */
+export async function updateProfileGlobal(
+  store: XingyuanStore,
+  patch: {
+    coachStyle?: string
+    nickname?: string | null
+    occupation?: string | null
+    interests?: string[] | string | null
+  },
+): Promise<void> {
+  await mutateGlobal(store, (current) => {
+    const next = { ...current, profile: { ...current.profile } }
+    if (patch.coachStyle !== undefined) {
+      const style = patch.coachStyle
+      if (!(COACH_STYLES as readonly string[]).includes(style)) {
+        throw new ToolError('教练风格必须是 gentle（温柔型）/ strict（严格型）/ humorous（幽默型）', 'bad_coach_style', { style })
+      }
+      next.coachStyle = style as (typeof COACH_STYLES)[number]
+    }
+    if (patch.nickname !== undefined) {
+      const nickname = patch.nickname?.trim().slice(0, PROFILE_LIMITS.nickname) ?? ''
+      if (nickname === '') delete next.profile.nickname
+      else next.profile.nickname = nickname
+    }
+    if (patch.occupation !== undefined) {
+      const occupation = patch.occupation?.trim().slice(0, PROFILE_LIMITS.occupation) ?? ''
+      if (occupation === '') delete next.profile.occupation
+      else next.profile.occupation = occupation
+    }
+    if (patch.interests !== undefined) {
+      const raw = Array.isArray(patch.interests)
+        ? patch.interests
+        : typeof patch.interests === 'string' ? patch.interests.split(/[,，、\s]+/) : null
+      if (raw === null) throw new ToolError('兴趣格式错误：应为字符串数组或逗号分隔字符串', 'bad_interests')
+      const cleaned: string[] = []
+      for (const item of raw) {
+        const v = (item ?? '').toString().trim().slice(0, PROFILE_LIMITS.interestItem)
+        if (v !== '') cleaned.push(v)
+        if (cleaned.length >= PROFILE_LIMITS.interestCount) break
+      }
+      if (cleaned.length === 0) delete next.profile.interests
+      else next.profile.interests = cleaned
+    }
+    return next
+  })
 }

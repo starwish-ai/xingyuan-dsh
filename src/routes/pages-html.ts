@@ -84,7 +84,7 @@ async function load(){
   if(!o.total){ el.innerHTML = '<p class="muted">今天没有安排打卡任务。</p>'; return }
   var CZ={once:'仅一次',daily:'每日',weekly:'每周',monthly:'每月'};
   el.innerHTML = '<p class="summary">今日打卡进度：<b>' + o.checked + '</b> / ' + o.total +
-    (o.uncheckedCount===0 ? ' 🎉 全部完成' : '') + '</p>' +
+    (o.uncheckedCount===0 ? ' · 全部完成' : '') + '</p>' +
     (o.uncheckedCount===0 ? '' :
     '<ul class="list">' + o.unchecked.map(t =>
       '<li><div class="t">' + esc(t.name) + '</div><div class="m muted">' + esc(CZ[t.cycle]||t.cycle||'') + (t.wishName? ' · '+esc(t.wishName):'') +
@@ -124,7 +124,7 @@ async function load(){
     w.map(cell=>{
       if(!cell.date)return'<span class="cell empty"></span>';
       const cls=!cell.due?'c0':(cell.checked>=cell.due?'c3':(cell.checked>0?'c2':'c1'));
-      return '<button type="button" class="cell '+cls+(cell.date===c.today?' today':'')+'" title="'+cell.date+'" aria-label="'+cell.date+'，'+(cell.due===0?'无安排':'已完成 '+cell.checked+'/'+cell.due)+'" onclick="pick(this)" data-date="'+cell.date+'">'+Number(cell.date.slice(8))+'</button>';
+      return '<button type="button" class="cell '+cls+(cell.date===c.today?' today':'')+'" title="'+cell.date+'" aria-label="'+cell.date+'，'+(cell.due===0?'无安排':'打卡 '+cell.checked+'/'+cell.due)+'" onclick="pick(this)" data-date="'+cell.date+'">'+Number(cell.date.slice(8))+'</button>';
     }).join('')+'</div>').join('');
   document.getElementById('detail').textContent='';
 }
@@ -200,7 +200,7 @@ const STYLE = `<style>
     --xy-bg:#1c1b22; --xy-card:#26252e; --xy-text:#e9e7ee; --xy-muted:#a29db0;
     --xy-border:#3a3944; --xy-shadow:rgba(0,0,0,.35); --xy-accent:#60a5fa; --xy-accent-strong:#93c5fd;
     --xy-c0:#33323c; --xy-c0-t:#a29db0; --xy-c1:#0000; --xy-c1-t:#b6b1c4;
-    --xy-c2:#8a5423; --xy-c2-t:#ffd9a8; --xy-c3:#2b7a3f; --xy-c3-t:#a5f0b5;
+    --xy-c2:#8a5423; --xy-c2-t:#ffd9a8; --xy-c3:#256b36; --xy-c3-t:#a5f0b5;
   }
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -243,7 +243,8 @@ nav a{margin-left:14px;color:var(--xy-accent);text-decoration:none;font-size:14p
 .cell{height:38px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer;border:none;padding:0;font-family:inherit;background:transparent;color:inherit}
 .cell.empty{visibility:hidden}
 .c0{background:var(--xy-c0);color:var(--xy-c0-t)}
-.c1{background:var(--xy-c1);color:var(--xy-c1-t);border:1px dashed var(--xy-border)}
+/* c1 与壳内日历同语法（中性计划底 + 细描边），不再用虚线空心（两套观感漂移） */
+.c1{background:var(--xy-c0);color:var(--xy-c1-t);border:1px solid var(--xy-border)}
 .c2{background:var(--xy-c2);color:var(--xy-c2-t)}.c3{background:var(--xy-c3);color:var(--xy-c3-t)}
 .cell.today{outline:2px solid var(--xy-accent);outline-offset:1px}
 .legend{margin-top:12px;display:flex;gap:10px;align-items:center;font-size:12px;color:var(--xy-muted)}

@@ -2,8 +2,9 @@
 import { createElement, useState, type ReactElement } from 'react'
 import { postAction } from '../api.js'
 import { useXyT } from '../i18n.js'
-import { softConfirmDanger, useActionGuard, usePageData, useStableScrollbar } from '../hooks.js'
-import { PageEmpty, PageError, PageSkeleton, toast, IconTrash } from '../ui.js'
+import { softConfirmDanger, useActionGuard, usePageData, useScrollTopOnMount, useStableScrollbar } from '../hooks.js'
+import { getViewState, setViewState } from '../view-state.js'
+import { PageEmpty, PageError, PageSkeleton, StaleBanner, toast, IconTrash, focusPageTitle } from '../ui.js'
 import { categoryVars } from '../../category-color.js'
 import { TaskLine } from './task-line.js'
 import { formatMediumDate } from './format.js'
@@ -15,35 +16,37 @@ import type { ApiWish, WishesPayload } from './types.js'
 export function WishesPage(): ReactElement {
   const t = useXyT()
   const stabilize = useStableScrollbar()
+  useScrollTopOnMount()
   const page = usePageData<WishesPayload>('/xingyuan/api/wishes')
-  // 面板显隐 + 行内详情展开集合（组件持有：跨列表刷新保持展开态）
+  // 面板显隐 + 行内详情展开集合（组件持有：跨列表刷新保持展开态；
+  // 展开集合另经 view-state 快照跨标签切换保留）
   const [showCategories, setShowCategories] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  const [expanded, setExpandedRaw] = useState<ReadonlySet<string>>(() => getViewState<ReadonlySet<string>>('wishes.expanded', new Set()))
+  const setExpanded = (next: ReadonlySet<string>): void => { setViewState('wishes.expanded', next); setExpandedRaw(next) }
   const { busy: deleting, guard: deleteGuard } = useActionGuard()
   const toggleDetail = (taskId: string): void => {
-    setExpanded((current) => {
-      const next = new Set(current)
-      if (next.has(taskId)) next.delete(taskId)
-      else next.add(taskId)
-      return next
-    })
+    const next = new Set(expanded)
+    if (next.has(taskId)) next.delete(taskId)
+    else next.add(taskId)
+    setExpanded(next)
   }
 
-  if (page.error !== undefined) return createElement(PageError, { message: page.error, onRetry: () => void page.reload() })
+  if (page.error !== undefined && page.data === undefined) return createElement(PageError, { message: page.error, onRetry: () => void page.reload() })
   const data = page.data
   if (data === undefined) return createElement(PageSkeleton)
 
   const active = data.wishes.filter((w) => !w.archived)
   const achieved = data.wishes.filter((w) => w.archived)
 
-  /** 删除愿望（级联下属任务与打卡记录，服务端同一写路径）：确认后直连动作并整页刷新。 */
+  /** 删除愿望（级联下属任务与打卡记录，服务端同一写路径）：确认后直连动作并整页刷新。
+   * 行移除后触发按钮销毁、焦点落空——刷新完成后把焦点交给页面标题兜底。 */
   const removeWish = (wish: ApiWish): void => {
     void softConfirmDanger(t('confirm.deleteWish', { name: wish.title })).then((ok) => {
       if (!ok) return
       deleteGuard(() => postAction('delete-wish', { wishId: wish.wishId }).then(() => {
         toast(t('toast.deleted', { name: wish.title }), 'ok')
-        return page.reload().then(() => undefined)
+        return page.reload().then(() => { focusPageTitle() })
       }))
     })
   }
@@ -87,13 +90,22 @@ export function WishesPage(): ReactElement {
       wish.estimatedCompletionDate !== undefined
         ? createElement('div', { className: 'xy-meta' }, t('wish.eta', { date: formatMediumDate(wish.estimatedCompletionDate) }))
         : null,
-      createElement('div', { className: 'xy-bar' },
+      // 与今日页 hero 进度条同一语义语法：读屏可感知进度（role+valuenow），不只是一根哑条
+      createElement('div', {
+        className: 'xy-bar',
+        role: 'progressbar',
+        'aria-valuemin': 0,
+        'aria-valuemax': 100,
+        'aria-valuenow': wish.progress,
+        'aria-label': t('wish.progress', { percent: wish.progress }),
+      },
         createElement('div', { className: 'xy-bar-fill', style: { transform: `scaleX(${Math.min(wish.progress, 100) / 100})` } })),
       wish.tasks.length > 0
         ? createElement('div', { className: 'xy-wishtasks' }, ...wishTasks(wish))
         : createElement('div', { className: 'xy-meta' }, t('wish.noTasks')))
 
   return createElement('div', { className: 'xy-page', ref: stabilize },
+    page.error !== undefined ? createElement(StaleBanner, { onRetry: () => void page.reload() }) : null,
     createElement('div', { className: 'xy-page-head' },
       createElement('h2', { className: 'xy-page-title' }, t('wish.pageTitle')),
       createElement('span', { className: 'xy-meta' }, t('wish.summary', {
@@ -116,7 +128,8 @@ export function WishesPage(): ReactElement {
         }, t('action.manageCategories')))),
     showCreate
       ? createElement('div', { id: 'xy-wishes-create' },
-          createElement(WishQuickForm, { onCreated: () => void page.reload() }))
+          // 传入既有愿望标题做同名软确认兜底（对话侧创建前有 check_similar_wishes 查重）
+          createElement(WishQuickForm, { onCreated: () => void page.reload(), existingTitles: data.wishes.map((w) => w.title) }))
       : null,
     // onChanged：改名/配色会同步既有愿望（分类名、默认色），列表必须跟着刷新——闭环
     showCategories

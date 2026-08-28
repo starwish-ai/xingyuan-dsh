@@ -16,7 +16,11 @@ import {
 /** xingyuan-pref 命名空间快照（对话偏好字段）。 */
 interface PrefScopeSnapshotLike {
   readonly status: 'loading' | 'ready' | 'unavailable'
-  readonly value?: { readonly confirmWrites?: boolean; readonly memoryInjectLimit?: number }
+  readonly value?: {
+    readonly confirmWrites?: boolean
+    readonly memoryInjectLimit?: number
+    readonly confirmLang?: 'zh' | 'en'
+  }
   readonly writable: boolean
   /** `host` 与宿主文档同步；`memory` 为远程/临时模式，此时任何写入都不会落盘。 */
   readonly mode: 'host' | 'memory'
@@ -30,6 +34,8 @@ interface UiScopeSnapshotLike {
     readonly hiddenTabs?: readonly TabId[]
   }
   readonly writable: boolean
+  /** 与 PrefScopeSnapshotLike.mode 同语义（memory = 写入必不落盘）。 */
+  readonly mode?: 'host' | 'memory'
 }
 
 /** xingyuan-ui 命名空间的 scope 形状（bind 返回结构，见 dsh-client-runtime contract/settings-scope）。 */
@@ -110,6 +116,8 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
   // 记忆注入上限：写入在途的乐观值（与开关的 pendingToggle 同款，用于禁用控件并顶住回显，
   // 否则提交后到快照回折前会闪回旧值）
   const [pendingLimit, setPendingLimit] = useState<number | undefined>(undefined)
+  // 确认卡语言：乐观值（写入在途顶住回显），失败回滚 + toast
+  const [pendingLang, setPendingLang] = useState<'zh' | 'en' | undefined>(undefined)
   const [saving, setSaving] = useState(false)
   const [savedMsg, setSavedMsg] = useState('')
   // 二次确认开关：本地乐观值（undefined=跟随远端快照）——写入在途时 UI 立即响应，失败回滚
@@ -124,6 +132,8 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
   // 做栅栏——一次写被更新的写取代时只记 pendingRevision、不回折快照，而其 .then 又
   // 先于后继写执行，此时比对快照必然读到旧值。故只有最后结算的那次有权判定成败。
   const writeSeqRef = useRef(0)
+  // 标签页显隐是独立命名空间（xingyuan-ui）= 独立写队列，序号单独计
+  const uiWriteSeqRef = useRef(0)
   // 开关显示值：乐观本地值优先（写入在途），否则远端快照，值缺席回落 schema 默认。
   // 不可写成 `!== false`——那样「值未知」会被渲染成「已开启」，安全策略类开关尤其不能撒谎。
   const confirmWrites = pendingToggle ?? snap.value?.confirmWrites ?? PREF_DEFAULTS.confirmWrites
@@ -138,13 +148,29 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
   // 标签页显隐显示值：乐观优先，否则远端快照，再兜底 schema 默认
   const tabMode: TabVisibilityMode = pendingMode ?? uisnap.value?.tabVisibilityMode ?? 'follow'
   const hiddenTabs: readonly TabId[] = pendingHidden ?? uisnap.value?.hiddenTabs ?? []
+  // 确认卡语言显示值：乐观优先 → 快照 → 默认 zh（normalize 容脏值）
+  const confirmLang: 'zh' | 'en' = pendingLang ?? (snap.value?.confirmLang === 'en' ? 'en' : 'zh')
 
-  /** 切换显隐模式：乐观写，失效即回滚（分段按钮视觉与持久化口径一致）。 */
+  // 标签页分节提示（判定顺序与对话偏好同款，不可换）：loading → memory → unavailable → 只读。
+  // memory 模式下 status 是 ready 而非 unavailable——漏判 mode 会把「写入必不落盘」
+  // 误报成命名空间未就绪，控件静默置灰且用户不知道为什么（评审 P1：呈现失真）。
+  const uiNoticeKey: XyKey | undefined =
+    uisnap.status === 'loading' ? 'settings.tabs.loading'
+      : uisnap.mode === 'memory' ? 'settings.tabs.unavailable'
+      : uisnap.status === 'unavailable' ? 'settings.tabs.unavailable'
+      : !uisnap.writable ? 'settings.tabs.readOnly'
+      : undefined
+
+  /** 切换显隐模式：乐观写 + 写后校验（静默失败回折时 toast，不再无反馈弹回）。 */
   const switchTabMode = (next: TabVisibilityMode): void => {
     if (!uiWritable || pendingMode !== undefined || next === tabMode) return
     setPendingMode(next)
+    const seq = ++uiWriteSeqRef.current
     void props.uiscope.set('tabVisibilityMode', next)
-      .then(() => setPendingMode(undefined))
+      .then(() => {
+        setPendingMode(undefined)
+        verifyUiWritten(seq, 'tabVisibilityMode', next)
+      })
       .catch((err: unknown) => {
         setPendingMode(undefined)
         toastError(err)
@@ -158,8 +184,12 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
       ? TAB_IDS.filter((tid) => tid !== id && hiddenTabs.includes(tid))
       : TAB_IDS.filter((tid) => tid === id || hiddenTabs.includes(tid))
     setPendingHidden(next)
+    const seq = ++uiWriteSeqRef.current
     void props.uiscope.set('hiddenTabs', next)
-      .then(() => setPendingHidden(undefined))
+      .then(() => {
+        setPendingHidden(undefined)
+        verifyUiWritten(seq, 'hiddenTabs', next)
+      })
       .catch((err: unknown) => {
         setPendingHidden(undefined)
         toastError(err)
@@ -208,11 +238,41 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
    */
   const verifyWritten = (
     seq: number,
-    field: 'confirmWrites' | 'memoryInjectLimit',
-    value: boolean | number,
+    field: 'confirmWrites' | 'memoryInjectLimit' | 'confirmLang',
+    value: boolean | number | string,
   ): void => {
     if (seq !== writeSeqRef.current) return
     if (scope.getSnapshot().value?.[field] !== value) toastError(new Error(t('settings.pref.writeFailed')))
+  }
+
+  /** 标签页显隐命名空间的写后校验（与 verifyWritten 同款，命名空间独立故写队列与序号独立）。 */
+  const verifyUiWritten = (
+    seq: number,
+    field: 'tabVisibilityMode' | 'hiddenTabs',
+    value: TabVisibilityMode | readonly TabId[],
+  ): void => {
+    if (seq !== uiWriteSeqRef.current) return
+    const current = props.uiscope.getSnapshot().value?.[field]
+    const same = field === 'tabVisibilityMode'
+      ? current === value
+      : JSON.stringify(current) === JSON.stringify(value)
+    if (!same) toastError(new Error(t('settings.pref.writeFailed')))
+  }
+
+  /** 切换确认卡语言（乐观写 + 写后校验，与开关同款语义）。 */
+  const switchConfirmLang = (next: 'zh' | 'en'): void => {
+    if (!writable || pendingLang !== undefined || next === confirmLang) return
+    setPendingLang(next)
+    const seq = ++writeSeqRef.current
+    void scope.set('confirmLang', next)
+      .then(() => {
+        setPendingLang(undefined)
+        verifyWritten(seq, 'confirmLang', next)
+      })
+      .catch((err: unknown) => {
+        setPendingLang(undefined)
+        toastError(err)
+      })
   }
 
   const commitLimit = (): void => {
@@ -384,17 +444,30 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
         createElement('span', { className: 'xy-hint' }, t('settings.pref.memoryLimitHint')),
         limitError
           ? createElement('span', { id: 'xy-limit-error', className: 'xy-field-err', role: 'alert' }, t('settings.pref.limitInvalid'))
-          : null)),
+          : null),
+      // 确认卡语言：平台不向 host 侧暴露界面语言（rc.2 实测），对话侧确认卡文案无法
+      // 自动跟随界面语言——由此处显式选择，即时热生效（hitl/tools 每次执行读 thunk）
+      createElement('label', { className: 'xy-field' },
+        createElement('span', { className: 'xy-field-head' }, t('settings.pref.confirmLang')),
+        createElement('select', {
+          className: 'xy-input', value: confirmLang, name: 'confirmLang',
+          'aria-label': t('settings.pref.confirmLang'),
+          disabled: !writable || pendingLang !== undefined,
+          onChange: (e: { target: { value: string } }) => {
+            if (e.target.value === 'zh' || e.target.value === 'en') switchConfirmLang(e.target.value)
+          },
+        },
+          createElement('option', { value: 'zh' }, t('settings.pref.confirmLang.zh')),
+          createElement('option', { value: 'en' }, t('settings.pref.confirmLang.en'))),
+        createElement('span', { className: 'xy-hint' }, t('settings.pref.confirmLangHint')))),
     // 标签页显示：模式三态（跟随会话/始终显示/始终隐藏）+ 六个标签勾选 chips。
     // 与教练风格卡同一 xy-seg 视觉语法；「始终隐藏」时勾选区整组禁用置灰。
     // 命名空间常驻于 bundle 层（未选星愿预设也可调），见 src/ui-settings.ts 头注。
     createElement('section', { className: 'xy-panel' },
       createElement('h3', { className: 'xy-panel-head' }, t('settings.tabs.title')),
-      uisnap.status === 'unavailable'
-        ? createElement('p', { className: 'xy-hint' }, t('settings.tabs.unavailable'))
-        : uisnap.status === 'loading'
-          ? createElement('p', { className: 'xy-hint' }, t('settings.tabs.loading'))
-          : null,
+      uiNoticeKey !== undefined
+        ? createElement('p', { className: 'xy-hint' }, t(uiNoticeKey))
+        : null,
       createElement('div', { className: 'xy-seg', role: 'group', 'aria-label': t('settings.tabs.title') },
         ...MODE_OPTIONS.map((opt) => createElement('button', {
           key: opt.mode,

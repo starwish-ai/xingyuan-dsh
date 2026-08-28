@@ -330,7 +330,13 @@ export async function repairSessionLogs(options: RepairOptions = {}): Promise<Re
   if (!existsSync(sessionsRoot)) return report
   for (const projectDir of await subdirectories(sessionsRoot)) {
     for (const sessionDir of await subdirectories(join(sessionsRoot, projectDir))) {
-      const artifact = await locateArtifact(join(sessionsRoot, projectDir, sessionDir))
+      const dir = join(sessionsRoot, projectDir, sessionDir)
+      // 原子写残骸清扫：进程在 writeFile 与 rename 之间崩溃会留下 `*.xy-repair-*`
+      // 临时文件——它们不在任何标记/工件清单里，此前永不清理、永久滞留会话目录。
+      // 本轮启动统一扫除。双实例同 DSH_HOME 时可能删掉另一进程在途的临时文件，
+      // 对方 rename 失败按 busy 跳过、下次启动重试（无数据损失），故不做进程甄别。
+      await sweepRepairTemps(dir)
+      const artifact = await locateArtifact(dir)
       if (artifact === undefined) continue
       report.scanned += 1
       const sessionId = decodeSegment(sessionDir)
@@ -512,6 +518,19 @@ function dirnameOf(path: string): string {
   const index = path.lastIndexOf('/')
   const indexAlt = path.lastIndexOf('\\')
   return path.slice(0, Math.max(index, indexAlt))
+}
+
+/** 原子写临时文件标记（repairOneFile 以 `<工件名>.xy-repair-<pid>-<ts>` 命名）：
+ * 清扫只认自己的私有后缀（dsh 会话目录不存在该命名），零误伤面。 */
+const REPAIR_TEMP_MARKER = '.xy-repair-'
+
+/** 清除会话目录内滞留的 `*.xy-repair-*` 原子写残骸（尽力而为，失败静默）。 */
+async function sweepRepairTemps(sessionDir: string): Promise<void> {
+  try {
+    for (const entry of await readdir(sessionDir)) {
+      if (entry.includes(REPAIR_TEMP_MARKER)) await unlink(join(sessionDir, entry)).catch(() => {})
+    }
+  } catch {}
 }
 
 // ===== 备份（首次改写前留存原件，每会话只留最近 N 份）=====

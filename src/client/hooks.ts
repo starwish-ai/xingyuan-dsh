@@ -146,6 +146,23 @@ export function useStableScrollbar(): (node: HTMLElement | null) => void {
 }
 
 /**
+ * 视图页挂载时把祖先滚动容器滚回顶部：标签页切换时壳的滚动容器不重挂，
+ * 长列表页留下的滚动位置会原样套在下一个（可能更短的）页面上，出现「半屏空白」。
+ */
+export function useScrollTopOnMount(): void {
+  useLayoutEffect(() => {
+    let el: HTMLElement | null = document.querySelector('.xy-page')
+    for (let depth = 0; el !== null && depth < 16; depth += 1, el = el.parentElement) {
+      const overflowY = getComputedStyle(el).overflowY
+      if (overflowY === 'auto' || overflowY === 'scroll') {
+        if (el.scrollTop > 0) el.scrollTop = 0
+        break
+      }
+    }
+  }, [])
+}
+
+/**
  * 写操作确认（应用内弹窗，替代原生 window.confirm）：Promise 结算；
  * 调用方以 `softConfirm(msg).then((ok) => { if (ok) … })` 表达「确认后才继续」。
  * 删除类不可逆动作请再传 danger 语义（见 confirmDialog）。

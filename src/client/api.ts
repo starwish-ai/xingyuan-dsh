@@ -14,10 +14,21 @@ export type ActionErrorCode =
   | 'already_claimed'
   | 'task_closed'
   | 'due_past'
+  | 'due_too_far'
   | 'bad_category_name'
   | 'bad_color_key'
   | 'bad_date'
   | 'overwrite_required'
+  | 'not_claimed'
+  | 'no_opportunity_left'
+  | 'no_checkins'
+  | 'title_too_long'
+  | 'name_too_long'
+  | 'once_today_only'
+  | 'payload_too_large'
+  | 'bad_json_body'
+  | 'bad_coach_style'
+  | 'bad_interests'
 
 /** 携带稳定 code 的业务错误：message 为中文兜底文案，code 供客户端本地化。 */
 export class ActionError extends Error {
@@ -41,10 +52,21 @@ const ERROR_KEY: Record<ActionErrorCode, XyKey> = {
   already_claimed: 'err.already_claimed',
   task_closed: 'err.task_closed',
   due_past: 'err.due_past',
+  due_too_far: 'err.due_too_far',
   bad_category_name: 'err.bad_category_name',
   bad_color_key: 'err.bad_color_key',
   bad_date: 'err.bad_date',
   overwrite_required: 'err.overwrite_required',
+  not_claimed: 'err.not_claimed',
+  no_opportunity_left: 'err.no_opportunity_left',
+  no_checkins: 'err.no_checkins',
+  title_too_long: 'err.title_too_long',
+  name_too_long: 'err.name_too_long',
+  once_today_only: 'err.once_today_only',
+  payload_too_large: 'err.payload_too_large',
+  bad_json_body: 'err.bad_json_body',
+  bad_coach_style: 'err.bad_coach_style',
+  bad_interests: 'err.bad_interests',
 }
 
 /** 把任意抛错转成用户可读文案：ActionError 按键本地化；其余直出消息。 */
@@ -92,17 +114,19 @@ export async function getJson<T>(path: string): Promise<T> {
 }
 
 async function parsePayload<T>(response: Response, fallback: () => string): Promise<T> {
+  // HTTP 层错误的状态码后缀走本地化键（zh 全角 / en 半角括号），不硬编码全角括号
+  const withStatus = (message: string): string => `${message}${t('common.httpStatus', { status: response.status })}`
   let payload: T & { error?: string; code?: string; params?: Record<string, unknown> }
   try {
     payload = await response.json() as typeof payload
   } catch {
-    throw new Error(`${fallback()}（${response.status}）`)
+    throw new Error(withStatus(fallback()))
   }
   if (!response.ok) {
     if (typeof payload.code === 'string' && payload.code !== '') {
       throw new ActionError(payload.code as ActionErrorCode, payload.error ?? fallback(), payload.params)
     }
-    throw new Error(payload.error ?? `${fallback()}（${response.status}）`)
+    throw new Error(payload.error !== undefined ? withStatus(payload.error) : withStatus(fallback()))
   }
   return payload
 }

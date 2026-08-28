@@ -7,6 +7,8 @@ export interface ApiTask {
   readonly dueDate?: string
   readonly cycle: string
   readonly status: 'pending' | 'in_progress' | 'closed'
+  /** 关闭原因（仅 status==='closed' 时存在）：客户端区分「已达成/已过期」。 */
+  readonly closedReason?: 'achieved' | 'expired'
   readonly requiredDays: number
   readonly completedDays: number
   readonly nextOpportunityDate?: string
@@ -83,7 +85,6 @@ export interface GrowthPayload {
   /** 兼容旧字段；新口径优先读 totalCheckinDays（去重日期数）。 */
   readonly totalCheckins?: number
   readonly totalCheckinDays?: number
-  readonly completionRate: number | null
   readonly wishAchieved: number
   readonly wishTotal: number
   readonly taskAchieved?: number

@@ -2,8 +2,9 @@
 import { createElement, useEffect, useRef, useState, type ReactElement } from 'react'
 import { getJson, postAction } from '../api.js'
 import { t } from '../i18n.js'
-import { softConfirm, useActionGuard, usePageData, useStableScrollbar, localYmd } from '../hooks.js'
-import { PageError, PageSkeleton, toast } from '../ui.js'
+import { softConfirm, useActionGuard, usePageData, useScrollTopOnMount, useStableScrollbar, localYmd } from '../hooks.js'
+import { PageError, PageSkeleton, StaleBanner, toast } from '../ui.js'
+import { getViewState, setViewState } from '../view-state.js'
 import { cycleLabel, dateSuffix, formatFriendlyDate, formatMonth, formatShortDate } from './format.js'
 import type { CalendarPayload, DayPayload } from './types.js'
 
@@ -17,7 +18,10 @@ function monthOf(offset: number): string {
 const WEEKDAY_KEYS = ['cal.weekday.1', 'cal.weekday.2', 'cal.weekday.3', 'cal.weekday.4', 'cal.weekday.5', 'cal.weekday.6', 'cal.weekday.7'] as const
 
 export function CalendarPage(): ReactElement {
-  const [offset, setOffset] = useState(0)
+  // 月份偏移跨标签切换保留（view-state 快照）：翻到上月、切去别的标签再回来不丢位
+  const [offset, setOffsetRaw] = useState(() => getViewState('calendar.offset', 0))
+  const setOffset = (next: number): void => { setViewState('calendar.offset', next); setOffsetRaw(next) }
+  useScrollTopOnMount()
   // 详情请求序号守卫：快速连点不同日期时，慢的旧响应不得覆盖新选中日的详情
   const pickSeqRef = useRef(0)
   const stabilize = useStableScrollbar()
@@ -55,6 +59,10 @@ export function CalendarPage(): ReactElement {
         setPickState('idle')
       })
       .catch(() => { if (seq === pickSeqRef.current) setPickState('error') })
+    // 窄视口下详情面板可能落在折叠线下方：拾取后滚到面板近处，选中反馈不止是格子高亮
+    window.requestAnimationFrame(() => {
+      document.getElementById('xy-daypanel')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    })
   }
 
   const data = page.data
@@ -90,8 +98,10 @@ export function CalendarPage(): ReactElement {
     void softConfirm(confirmMessage).then((ok) => { if (ok) run() })
   }
 
-  if (page.error !== undefined) return createElement(PageError, { message: page.error, onRetry: page.reload })
+  if (page.error !== undefined && page.data === undefined) return createElement(PageError, { message: page.error, onRetry: page.reload })
   if (data === undefined) return createElement(PageSkeleton)
+  // 月历刷新失败但数据仍在：降级为旧数据 + 陈旧提示（写动作已成功的场景不整页翻错）
+  const stale = page.error !== undefined
 
   const cellClass = (date: string, checked: number, due: number): string => {
     const tone = due === 0 ? 'c0' : checked >= due ? 'c3' : checked > 0 ? 'c2' : 'c1'
@@ -167,17 +177,21 @@ export function CalendarPage(): ReactElement {
                 }, outsideDate === '' ? null : createElement('span', { className: 'xy-daynum' }, String(Number(outsideDate.slice(8)))))
               })()
             : (() => {
-                // 悬停 title 与读屏 aria-label 同源同文案——键盘聚焦用户的原生提示与读屏口径不再分裂
-                const cellLabel = cell.due === 0
+                // aria 与悬停 title 双轨（§5.10）：aria 保留 ISO（精度优先，确认文案同规），
+                // title 是鼠标悬停可见文案走本地化短日期——界面不再裸奔 ISO
+                const ariaLabel = cell.due === 0
                   ? t('cal.cellAria.none', { date: cell.date })
                   : t('cal.cellAria.some', { date: cell.date, checked: cell.checked, due: cell.due })
+                const titleText = cell.due === 0
+                  ? t('cal.cellTitle.none', { date: formatShortDate(cell.date) })
+                  : t('cal.cellTitle.some', { date: formatShortDate(cell.date), checked: cell.checked, due: cell.due })
                 // 日期号包一层圆章 span：状态底色/今日环/选中实底都挂在圆章上（现代日历惯例），
                 // 格子保持无边框中性底；读屏语义不受影响（aria-label 在 button 上）
                 return createElement('button', {
                   key: cell.date,
                   className: cellClass(cell.date, cell.checked, cell.due),
-                  title: cellLabel,
-                  'aria-label': cellLabel,
+                  title: titleText,
+                  'aria-label': ariaLabel,
                   ...(cell.date === data.today ? { 'aria-current': 'date' as const } : {}),
                   onClick: () => pick(cell.date!),
                 }, createElement('span', { className: 'xy-daynum' }, String(Number(cell.date.slice(8)))))
@@ -190,7 +204,8 @@ export function CalendarPage(): ReactElement {
     // 详情区常驻固定最小高度：提示/加载/错误/详情在同一容器内切换、超长列表内部滚动，
     // 消除点击不同日期时下方内容忽高忽低（连带滚动条出现/消失）的跳动；aria-live 让
     // 读屏跟随面板内容变化（选中新日期即播报）
-    createElement('div', { className: 'xy-daypanel', 'aria-live': 'polite' },
+    stale ? createElement(StaleBanner, { onRetry: () => void page.reload() }) : null,
+    createElement('div', { className: 'xy-daypanel', id: 'xy-daypanel', 'aria-live': 'polite' },
       pickState === 'loading'
         ? createElement('div', { className: 'xy-skel xy-pickline', role: 'status' },
             createElement('span', { className: 'xy-visually-hidden' }, t('common.loading')))

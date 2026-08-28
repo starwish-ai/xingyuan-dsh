@@ -25,7 +25,8 @@ agent 选择器出现「星愿」即安装成功。
 | 数据持久化 | 自带 sqlite 后端，`~/.dsh/xingyuan/xingyuan.sqlite` |
 
 技术栈：TypeScript（Node ≥22.5）+ Cordis 插件框架 + React 18（client 半侧）
-+ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/*` 全部锁定 `^0.1.1-rc.2`。
++ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/*` 锁定 `^0.1.1-rc.2`（唯一例外
+  `@deepseek-ai/schemastery` 为 `*`，跟随宿主）。
 
 ### 运行形态
 
@@ -85,16 +86,20 @@ XingYuan-Dsh/
 │   ├── events.ts           # SessionEventMap 声明合并（纯类型导出，host/client 共用）
 │   ├── preset-root.ts      # 发布 preset 到 $DSH_HOME/.agent-presets/xingyuan（指纹幂等）
 │   ├── session-log-repair.ts # 会话日志自愈：为历史 xingyuan/* 事件补 ignorable 标记（激活期，见 §5.6）
+│   ├── consistency-sweep.ts # 启动一致性清扫：孤儿打卡/任务/悬挂微行动的级联补救（integrity.test.ts 锁定）
+│   ├── types.ts            # 包根类型再导出（domain 记录 + events 事件类型；./types 子路径单一产物）
 │   ├── routes/             # /xingyuan/* HTTP 面（index/api/config/errors/pages-html）
 │   └── preset/             # ↓ 只挂在 preset 层 ↓
 │       ├── side.ts         # preset 侧入口：设置节安装 + 工具/提示词注册
 │       ├── tools.ts        # 45 个模型工具
 │       ├── prompts.ts      # 11 段系统提示词 + 动态上下文
-│       ├── hitl.ts         # userQuestions 确认封装
+│       ├── hitl.ts         # userQuestions 确认封装（文案语言随 confirmLang 偏好）
 │       └── charts.ts       # 15 种 chartKey 数据计算
 ├── src/client/             # 浏览器半侧（React 18）
 │   ├── index.ts            # 注册 5 个卡片 Definition + 6 个视图标签页 + 设置整页
 │   ├── cards.ts / types.ts # keyed 渲染器与卡片状态
+│   ├── chart-labels.ts     # 图表内建中文词的客户端本地化映射（test/chart-labels.test.ts 锁定）
+│   ├── view-state.ts       # 视图页跨标签切换的状态快照（搜索词/月份偏移/展开集合）
 │   ├── tab-visibility.ts   # 标签页显隐控制器（设置 × 会话预设动态注册，见 §5.11）
 │   ├── tab-hint.ts         # 今日页非星愿提示行快照 store（控制器写、今日页订阅）
 │   ├── pages/              # today/wishes/tasks/calendar/growth/memory/detail/quick-create/...
@@ -218,6 +223,9 @@ export const xingyuanDomainSpec = defineDomain({
 - 全部日期为本地时区 `yyyy-MM-dd` 字符串，ISO 字典序即时间序；内部换算用 UTC 天数序号，
   规避夏令时漂移。
 - 无截止日的任务没有机会日约束（不限次数）。
+- **截止日 10 年地平线**（`DUE_DATE_HORIZON_DAYS = 3650`，store.ts）：序列按截止日
+  逐期物化，远期截止（9999 年）会让今日页/日历/图表每次读取都重建数百万格的数组；
+  createTask/updateTask 超界一律拒绝（`due_too_far`），页面日期输入同步封顶。
 
 打卡规则（`check_in_task` 工具描述与页面文案同源）：
 
@@ -267,7 +275,8 @@ ctx.tools.register(defineTool({
 
 规范要点：
 
-- 并发安全缺省 = 互斥；仅纯读工具显式标 `isConcurrencySafe: true`。
+- 并发安全缺省 = 互斥；仅纯读工具显式标 `isConcurrencySafe: true`（generate_chart
+  这类「只追加相互独立的会话事件」的内部 recorder 同样适用——事件互不覆盖、可交换）。
 - `execute` 必须观察 `exec.signal` 并转发给可中断的底层调用。
 - ID 引用纪律写进每个工具描述：ID 必须取列表返回的真实值，模糊指代先查列表定位。
 - 部分更新原则：update 类工具只接受用户明确提及的字段，未提及不传、禁止编造；
@@ -297,6 +306,12 @@ ctx.tools.register(defineTool({
   provider（NO_PROVIDER）时同样放行——确认卡是 Web GUI 交互面，无界面场景下
   任务文本本身即用户指令。
 - `confirmWrites` 开关读取走 getter（设置热改后下一次 execute 立即生效，HMR 安全）。
+- **确认卡语言（confirmLang，默认 zh）**：平台事实（rc.2 实测）——宿主不向 host 侧
+  插件暴露用户界面语言（locale 服务是 client 半侧浏览器专属 seam，工具执行期读不到；
+  ask() 载荷也无 i18n 字段）。因此确认卡卡头/按钮/问题文案的语言由对话偏好
+  `xingyuan-pref.confirmLang` 显式选择（设置页提供 zh/en 两档，默认中文），不能自动
+  跟随界面语言。label 是 ask() 答案协议的匹配键：确认判定必须与渲染用同一份 label
+  （hitl.ts CONFIRM_LABELS 成对维护）。上游若开放 locale seam 应回归自动跟随。
 
 ### 5.6 会话事件与 UI 卡片（events.ts / client/）
 
@@ -379,7 +394,7 @@ wish-guide/task-guide/memory-guide/config-guide/chart-guide/reminder-guide(110�
 | 分节 | 数据源 | 命名空间 |
 |---|---|---|
 | 教练风格 / 用户画像 | 星愿数据库 global 单例，经 `/xingyuan/api/profile` | — |
-| 二次确认 / 记忆注入上限 | **bundle 层常驻**命名空间 `xingyuan-pref` | `src/pref-settings.ts` |
+| 二次确认 / 记忆注入上限 / 确认卡语言 | **bundle 层常驻**命名空间 `xingyuan-pref` | `src/pref-settings.ts` |
 | 标签页显示 | **bundle 层常驻**命名空间 `xingyuan-ui` | `src/ui-settings.ts` |
 
 - **偏好必须常驻**（踩过的坑，勿改回去）：settings 子系统明载「注册绑定调用方 fiber，
@@ -488,7 +503,16 @@ today=圆章蓝环（不覆盖状态底色，「今天该打卡」的提示不�
 「改完即完事」——用 `npx vite-node debug/gen-mock.ts` 生成深/浅两主题静态 mock
 （真实 `STYLE_TEXT` + 手写镜像 DOM，含日历/愿望卡/任务卡三个场景），本地静态
 服务 + 浏览器截图核对后才算完成。mock 的 markup 是 tsx 输出的手写镜像，仅用于
-视觉核对；对应组件结构变更时必须同步 `debug/gen-mock.ts`。
+视觉核对；对应组件结构变更时必须同步 `debug/gen-mock.ts`。兼容铁律由
+`style-contract.test.ts` 机械锁定（见 §9），mock 源码同受检查。
+
+**交互闭环沉淀（2026-08 评审批）**：装饰性 hover 一律门控在
+`(hover:hover) and (pointer:fine)`（触屏粘滞）；过渡只用 transform/opacity
+（width/height/left 会逐帧布局）；视图页挂载统一 `useScrollTopOnMount()` 回顶，
+跨标签切换要保留的交互态（记忆搜索词/日历月份偏移/展开集合）写
+`view-state.ts` 快照；弹窗打开锁 body 滚动、错误 toast 走独立 assertive 容器；
+删除/撤销成功后行 DOM 随列表刷新销毁——焦点交给 `focusPageTitle()` 兜底；
+「动作成功但刷新失败」降级为 `StaleBanner`（旧数据 + 就地重试），不整页翻错屏。
 
 **CSS 兼容铁律**：客户端样式禁用 `color-mix()` 等新式取色函数——dsh 壳的浏览器
 矩阵里存在不支持的环境，整条声明按无效处理（空态 SVG 线稿曾因此整体隐形、只剩
@@ -611,7 +635,7 @@ wishProgress / wishAchievement / continuousCheckin / checkinTimeDistribution / w
 |---|---|
 | bundle 主行 Config | rangeDefaultDays(7)、rangeMaxDays(31)、memoryListLimit(500)、repairSessionLogs(true) |
 | preset side Config（无 Web 设置界面，仅组合层可调） | batchWishLimit(50)、batchTaskLimit(100)、chartTrendDays(14)、chartDistributionDays(30)、chartMaxDays(90)、chartRankLimit(10)、chartRankMax(20) |
-| bundle 对话偏好命名空间 xingyuan-pref（Web 设置页「对话偏好」卡） | confirmWrites(true)、memoryInjectLimit(40，5-200 整数，`step(1)` 让服务端也拒绝小数)——见 §5.8 |
+| bundle 对话偏好命名空间 xingyuan-pref（Web 设置页「对话偏好」卡） | confirmWrites(true)、memoryInjectLimit(40，5-200 整数，`step(1)` 让服务端也拒绝小数)、confirmLang('zh'，可选 zh/en)——见 §5.5/§5.8 |
 | bundle 界面偏好命名空间 xingyuan-ui（Web 设置页「标签页显示」卡） | tabVisibilityMode(follow)、hiddenTabs([])——schemastery 枚举用 const+union 表达，见 §5.11 |
 
 配置变更触发 HMR 热替换；不做任何跨重载的模块级单例状态。
@@ -635,6 +659,16 @@ pnpm test      # vitest run
   lib/routes.js，外部子路径导入会失败而宿主运行时不走该子路径，故静默）。
 - 客户端页面纯函数回归：跨取数路径共用的构造函数（如记忆列表 URL）以
   「构造 → 服务端往返命中」闭环锁定（`client-pages.test.ts`）。
+- **样式兼容契约门禁**（`style-contract.test.ts`）：STYLE_TEXT 与 gen-mock 源码禁
+  `color-mix(`；半透明衍生色只许出现在令牌区（正文区一律引用令牌）；关键语义令牌
+  必须浅/深成对——视觉铁律由测试机械锁定，改样式先看它。
+- **图表词表覆盖对拍**（`chart-labels.test.ts`）：charts.ts 内建标题/枚举标签/固定
+  副标题逐一对照客户端映射表（标题双向逐字同源、标签∈映射∪用户数据∪日期轴、
+  副标题∈映射∪数字模板）——服务端加词不同步映射即红。
+- **sqlite 后端门禁**（`sqlite-backend.test.ts`）：介质版本不符拒绝打开、global 槽
+  损坏拒绝（malformed-medium）、写后冷读持久化——无迁移策略的安全底座。
+- **重挂载回归**（loader.test.ts 末例）：webServer 桩按宿主契约「重复 (kind,path) 抛错
+  + 返回 disposer」，拔除 bundle 行再重建——路由注册必须经 ctx.effect（HMR/升级路径）。
 - 业务层/工具层/路由层用例：创建→领取→打卡链路、删除级联不留孤儿、写确认门闩、
   延迟领取锚点重算、分类改名迁移颜色覆盖键、微行动状态机、成长聚合。
 
@@ -674,6 +708,13 @@ npm provenance 开启）。
 - dsh schedule 仅 session-local：提醒只在承载它的会话存活期内触达，到期以
   `[SCHEDULE REMINDER]` 用户角色 follow-up 呈现，无专属 UI。
 - 设置卡是 schemastery 表单，无自定义按钮/复杂控件。
+- 领取不可逆：claim 无「退回待领取」路径（锚点日/应打天数随领取重算，回退语义复杂）；
+  误领取的恢复路径是删除重建。有意取舍，勿当缺陷报。
+- 页面不承载通用编辑：愿望/任务的改名、改周期、改画像走对话（chat-first）；页面侧
+  唯一的编辑动作是过期任务详情内的「延长截止日」复活闭环（/api/action/update-task）。
+  扩页面编辑面前先推翻这条记录。
+- 确认卡语言不能自动跟随界面语言：宿主不向 host 侧暴露 locale（§5.5），由
+  confirmLang 偏好显式选择；独立备用页 /xingyuan/* 维持中文单语（pages-html 头注）。
 - 存储无迁移机制：领域 schema 只能用 optional 字段做向后兼容增量；破坏性演进必须升
   DOMAIN_VERSION 并提供数据重导出方案。
 - 会话事件要求每 (kind,id) 仅一条 start——新事件类型沿用 whole-value 单事件模式最省心。

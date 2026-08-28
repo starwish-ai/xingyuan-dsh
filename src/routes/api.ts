@@ -6,16 +6,18 @@
  * 校验失败抛 ActionError（400 + 稳定 code）；未知路径抛 HttpError(404)。
  */
 import type { XingyuanStore, TaskRecord, MemoryRecord } from '../domain.js'
-import { COACH_STYLES } from '../domain.js'
 import type { DayPlan } from '../store.js'
 import {
   allMemories,
   anchorOf,
   checkedDatesOf,
+  checkinCountIndex,
+  clearMemories,
   createTask,
   createWish,
   cancelCheckIn,
   claimTask,
+  deleteMemory,
   freshTask,
   freshWish,
   freshWishes,
@@ -26,6 +28,8 @@ import {
   renameCategory,
   saveMemory,
   searchMemories,
+  updateProfileGlobal,
+  updateTask,
   validateCategoryName,
   validateColorKey,
 } from '../store.js'
@@ -78,7 +82,13 @@ function strOrUndef(value: unknown): string | undefined {
 }
 
 function isoDateOrThrow(value: string, code: 'bad_date' | 'due_past' = 'bad_date'): string {
+  // 语义校验（非仅正则）：拒绝 2026-13-01 / 2026-02-30 这类「形似合法」的日期——
+  // 此前正则放行后 addDays/Date.parse 抛无 code 的 RangeError，客户端只能看到原始英文异常
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new ActionError(code, `日期格式错误，请使用 yyyy-MM-dd：${value}`)
+  const parsed = Date.parse(`${value}T00:00:00Z`)
+  if (Number.isNaN(parsed) || new Date(parsed).toISOString().slice(0, 10) !== value) {
+    throw new ActionError(code, `日期不存在或格式错误（yyyy-MM-dd）：${value}`)
+  }
   return value
 }
 
@@ -158,6 +168,8 @@ export async function postApi(deps: ApiDeps, path: string, body: JsonBody): Prom
       return actionDeleteTask(deps, body)
     case '/api/action/delete-wish':
       return actionDeleteWish(deps, body)
+    case '/api/action/update-task':
+      return actionUpdateTask(deps, body)
     case '/api/action/category-rename':
       return actionCategoryRename(deps, body)
     case '/api/action/category-color':
@@ -169,8 +181,8 @@ export async function postApi(deps: ApiDeps, path: string, body: JsonBody): Prom
 
 // ===== 任务/愿望视图 =====
 
-export function taskView(store: XingyuanStore, task: TaskRecord): Record<string, unknown> {
-  const fresh = freshTask(store, task)
+export function taskView(store: XingyuanStore, task: TaskRecord, counts?: Map<string, number>): Record<string, unknown> {
+  const fresh = freshTask(store, task, todayIso(), counts)
   const checked = checkedDatesOf(store, task.taskId)
   const next = findFirstUncheckedOpportunityDate(anchorOf(fresh), fresh.dueDate, fresh.checkInCycle, checked, todayIso())
   return {
@@ -183,6 +195,8 @@ export function taskView(store: XingyuanStore, task: TaskRecord): Record<string,
     // 原始枚举（once/daily/…）：文案本地化归客户端 format.ts；中文标签仅限工具回包
     cycle: fresh.checkInCycle,
     status: fresh.status,
+    // 关闭原因（achieved/expired）：客户端据此区分「已达成/已过期」并给出复活入口
+    ...(fresh.closedReason !== undefined ? { closedReason: fresh.closedReason } : {}),
     requiredDays: fresh.requiredDays,
     completedDays: fresh.completedDays,
     nextOpportunityDate: next ?? undefined,
@@ -211,7 +225,6 @@ function overview(deps: ApiDeps): Record<string, unknown> {
   const today = todayIso()
   const plan = planForDay(store, today)
   const due = plan.items.filter((item) => !item.checked)
-  const openWishes = [...store.domain.table('wishes').entries()].map(([, w]) => w).filter((w) => !w.archived)
   return {
     today,
     total: plan.items.length,
@@ -225,7 +238,6 @@ function overview(deps: ApiDeps): Record<string, unknown> {
       hint: item.task.hint,
       status: item.task.status,
     })),
-    openWishCount: openWishes.length,
     links: { calendar: '/xingyuan/calendar', growth: '/xingyuan/growth' },
   }
 }
@@ -248,6 +260,10 @@ function rangePlans(deps: ApiDeps, start: string, end: string): Array<Record<str
 
 function calendarMonth(deps: ApiDeps, month?: string): Record<string, unknown> {
   const today = todayIso()
+  // month 形参语义校验：2026-13 这类字符串此前正则放行、Date 计算静默漂移到次年
+  if (month !== undefined && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    throw new ActionError('bad_date', `月份格式错误，请使用 yyyy-MM：${month}`, { month })
+  }
   const [start, end] = monthRange(month, today)
   // 月视图含首尾补齐的相邻月日子，由前端网格排布；这里给整月机会日事实
   const plans = planForRange(deps.store, start, end)
@@ -274,12 +290,6 @@ function growth(deps: ApiDeps): Record<string, unknown> {
   const { store } = deps
   const summary = growthSummary(store)
   const { stats, level } = summary
-  let totalRequired = 0
-  let totalCompleted = 0
-  for (const [, task] of store.domain.table('tasks').entries()) {
-    totalRequired += task.requiredDays
-    totalCompleted += task.completedDays
-  }
   return {
     today: summary.today,
     level: level.level,
@@ -293,7 +303,8 @@ function growth(deps: ApiDeps): Record<string, unknown> {
     maxStreak: stats.maxContinuousCheckInDays,
     totalCheckinDays: stats.totalCheckInDays,
     lastCheckInDate: stats.lastCheckInDate,
-    completionRate: totalRequired > 0 ? Math.round((totalCompleted / totalRequired) * 100) : null,
+    // completionRate 字段已移除：无消费方，且 round 口径与愿望进度的 floor 口径相悖，
+    // 留着只会诱惑未来误用（完成率口径唯一来源是愿望进度 floor 公式）
     wishTotal: summary.totalWishes,
     wishAchieved: summary.completedWishes,
     taskTotal: summary.totalTasks,
@@ -305,34 +316,39 @@ function growth(deps: ApiDeps): Record<string, unknown> {
 
 function wishes(deps: ApiDeps): Record<string, unknown> {
   const { store } = deps
+  // 批量读契约（store.ts）：freshWishes 单遍任务索引 + checkinCountIndex 一次全表计数，
+  // 替代逐任务 freshTask 的 O(T×checkins) 嵌套扫描
+  const fresh = freshWishes(store)
+  const counts = checkinCountIndex(store)
+  const tasksByWish = new Map<string, Array<Record<string, unknown>>>()
+  for (const [, t] of store.domain.table('tasks').entries()) {
+    if (t.wishId === undefined) continue
+    let bucket = tasksByWish.get(t.wishId)
+    if (bucket === undefined) tasksByWish.set(t.wishId, bucket = [])
+    bucket.push(taskView(store, t, counts))
+  }
   return {
     today: todayIso(),
-    // freshWishes：单遍任务索引批量新鲜化（与工具侧「进度恒新鲜」同口径）
-    wishes: freshWishes(store).map((w) => {
-      const tasks: Array<Record<string, unknown>> = []
-      for (const [, t] of store.domain.table('tasks').entries()) {
-        if (t.wishId === w.wishId) tasks.push(taskView(store, t))
-      }
-      return {
-        wishId: w.wishId,
-        title: w.title,
-        categoryName: w.categoryName,
-        colorKey: w.colorKey,
-        description: w.description,
-        progress: w.progress,
-        archived: w.archived,
-        estimatedCompletionDate: w.estimatedCompletionDate,
-        totalRequiredDays: w.totalRequiredDays,
-        totalCompletedDays: w.totalCompletedDays,
-        tasks: tasks.sort(byDisplayOrder),
-      }
-    }),
+    wishes: fresh.map((w) => ({
+      wishId: w.wishId,
+      title: w.title,
+      categoryName: w.categoryName,
+      colorKey: w.colorKey,
+      description: w.description,
+      progress: w.progress,
+      archived: w.archived,
+      estimatedCompletionDate: w.estimatedCompletionDate,
+      totalRequiredDays: w.totalRequiredDays,
+      totalCompletedDays: w.totalCompletedDays,
+      tasks: (tasksByWish.get(w.wishId) ?? []).sort(byDisplayOrder),
+    })),
   }
 }
 
 function tasks(deps: ApiDeps): Record<string, unknown> {
+  const counts = checkinCountIndex(deps.store)
   const list: Array<Record<string, unknown>> = []
-  for (const [, t] of deps.store.domain.table('tasks').entries()) list.push(taskView(deps.store, t))
+  for (const [, t] of deps.store.domain.table('tasks').entries()) list.push(taskView(deps.store, t, counts))
   return { today: todayIso(), tasks: list.sort(byDisplayOrder) }
 }
 
@@ -419,41 +435,17 @@ function profilePayload(deps: ApiDeps): Record<string, unknown> {
 
 async function actionUpdateProfile(deps: ApiDeps, body: JsonBody): Promise<unknown> {
   const { store } = deps
-  // 读-改-写整体进串行队列：merge 基于最新已结算快照，并发请求互不覆盖
-  await mutateGlobal(store, (current) => {
-    const next = { ...current, profile: { ...current.profile } }
-    if (body.coachStyle !== undefined) {
-      const style = String(body.coachStyle)
-      if (!(COACH_STYLES as readonly string[]).includes(style)) {
-        throw new Error('教练风格必须是 gentle（温柔型）/ strict（严格型）/ humorous（幽默型）')
-      }
-      next.coachStyle = style as (typeof COACH_STYLES)[number]
-    }
-    if (body.nickname !== undefined) {
-      const nickname = clampStr(body.nickname, 50)
-      if (nickname === '') delete next.profile.nickname
-      else next.profile.nickname = nickname
-    }
-    if (body.occupation !== undefined) {
-      const occupation = clampStr(body.occupation, 100)
-      if (occupation === '') delete next.profile.occupation
-      else next.profile.occupation = occupation
-    }
-    if (body.interests !== undefined) {
-      const raw = Array.isArray(body.interests)
-        ? body.interests
-        : typeof body.interests === 'string' ? body.interests.split(/[,，、\s]+/) : null
-      if (raw === null) throw new Error('兴趣格式错误：应为字符串数组或逗号分隔字符串')
-      const cleaned: string[] = []
-      for (const item of raw) {
-        const v = clampStr(item, 50)
-        if (v !== '') cleaned.push(v)
-        if (cleaned.length >= 20) break
-      }
-      if (cleaned.length === 0) delete next.profile.interests
-      else next.profile.interests = cleaned
-    }
-    return next
+  // 写路径收口至 store.updateProfileGlobal（工具面同一实现：夹取/清理/串行队列同源）。
+  // 文本字段非字符串一律折叠为 null（= store 层的「清除」语义），不做 String() 强转——
+  // 否则 JSON null 会落成昵称字面量 "null" 并注入每轮系统提示；coachStyle 仍强转后
+  // 校验（垃圾值报错而非静默忽略，校验在 store 层）
+  const clearOrValue = (value: unknown): string | null | undefined =>
+    value === undefined ? undefined : typeof value === 'string' ? value : null
+  await updateProfileGlobal(store, {
+    coachStyle: body.coachStyle !== undefined ? String(body.coachStyle) : undefined,
+    nickname: clearOrValue(body.nickname),
+    occupation: clearOrValue(body.occupation),
+    interests: body.interests as string[] | string | undefined,
   })
   return profilePayload(deps)
 }
@@ -494,15 +486,14 @@ async function actionMemoryAdd(deps: ApiDeps, body: JsonBody): Promise<unknown> 
 async function actionMemoryDelete(deps: ApiDeps, body: JsonBody): Promise<unknown> {
   requireFields(body, ['key'])
   const key = clampStr(body.key, 50)
-  const removed = await deps.store.domain.table('memories').delete(key)
+  const removed = await deleteMemory(deps.store, key)
   if (!removed) throw new ActionError('not_found', `未找到「${key}」`, { key })
   return { ok: true, key }
 }
 
 async function actionMemoryClear(deps: ApiDeps): Promise<unknown> {
-  const keys = [...deps.store.domain.table('memories').entries()].map(([key]) => key)
-  for (const key of keys) await deps.store.domain.table('memories').delete(key)
-  return { ok: true, count: keys.length }
+  const count = await clearMemories(deps.store)
+  return { ok: true, count }
 }
 
 // ===== 快速新建 / 删除 =====
@@ -528,7 +519,7 @@ async function actionCreateTask(deps: ApiDeps, body: JsonBody): Promise<unknown>
   // 超长显式报错而非静默截断——与愿望标题（store 报错）同一口径，用户知情才可修正
   const rawName = String(body.name).trim()
   if (rawName === '') throw new ActionError('missing_field', '任务名不能为空', { field: 'name' })
-  if (rawName.length > 100) throw new Error('任务名不能超过 100 字符（当前 ' + String(rawName.length) + ' 字）')
+  if (rawName.length > 100) throw new ActionError('name_too_long', '任务名不能超过 100 字符（当前 ' + String(rawName.length) + ' 字）', { length: rawName.length })
   const name = rawName
   const cycle = String(body.cycle)
   if (!(CYCLES as readonly string[]).includes(cycle)) {
@@ -568,6 +559,25 @@ async function actionDeleteWish(deps: ApiDeps, body: JsonBody): Promise<unknown>
   // 子树级联清理（任务/打卡/微行动状态）；愿望本体已删，进度无需回写
   await removeWishCompletely(store, wishId)
   return { ok: true, wishId, title: wish.title }
+}
+
+/**
+ * 更新任务（页面侧最小编辑面）：目前仅服务「延长截止日」复活闭环——
+ * 过期任务在详情页延长截止日即重新开始（与对话侧 update_task 同一 store 写路径）。
+ * 部分更新语义与工具面一致：未提及字段保留原值。
+ */
+async function actionUpdateTask(deps: ApiDeps, body: JsonBody): Promise<unknown> {
+  requireFields(body, ['taskId'])
+  const { store } = deps
+  const taskId = String(body.taskId)
+  if (store.domain.table('tasks').get(taskId) === undefined) throw new ActionError('not_found', `任务不存在：${taskId}`)
+  // dueDate 必须是显式字符串：非字符串/空白按 bad_date 拒绝而非静默 no-op
+  if (typeof body.dueDate !== 'string' || body.dueDate.trim() === '') {
+    throw new ActionError('bad_date', `截止日期必须是合法的 yyyy-MM-dd 字符串：${String(body.dueDate)}`)
+  }
+  const dueRaw = isoDateOrThrow(body.dueDate.trim())
+  const task = await updateTask(store, taskId, { dueDate: dueRaw })
+  return { ok: true, task: taskView(store, task) }
 }
 
 // ===== 分类管理 =====

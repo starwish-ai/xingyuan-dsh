@@ -18,6 +18,7 @@ import { CATEGORY_COLOR_KEYS } from '../category-color.js'
 import { addDays, calculateOpportunityDates, findFirstUncheckedOpportunityDate, todayIso } from '../opportunity.js'
 import type { XingyuanCheckinEventData, XingyuanMicroEventData, XingyuanTaskEventData, XingyuanWishEventData } from '../events.js'
 import { confirmAction } from './hitl.js'
+import type { ConfirmLang } from '../pref-policy.js'
 import { buildChart, CHART_KEYS, type ChartKey, type ChartParams } from './charts.js'
 import { growthSummary } from '../growth.js'
 import { MICRO_STEPS_MAX, MICRO_STEPS_MIN, completeMicroStep, restartMicroAction, startMicroAction } from '../micro.js'
@@ -26,13 +27,17 @@ import {
   allMemories,
   anchorOf,
   cancelCheckIn,
+  checkinCountIndex,
   checkedDatesOf,
   claimTask,
   createTask,
   createWish,
   CYCLE_LABELS,
+  CYCLE_LABELS_EN,
+  deleteMemory,
   freshTask,
   freshWish,
+  freshWishes,
   mutateGlobal,
   performCheckIn,
   planForDay,
@@ -40,6 +45,7 @@ import {
   renameCategory,
   saveMemory,
   searchMemories,
+  updateProfileGlobal,
   updateTask,
   updateWish,
   ToolError,
@@ -66,6 +72,8 @@ export interface Config {
   chartRankMax: number
   /** 创建/取消打卡类写操作是否需要二次确认（默认 true；删除类始终确认）。 */
   confirmWrites: boolean
+  /** 确认卡（卡头/按钮/问题文案）的显示语言（对话偏好 xingyuan-pref，getter 热改即时生效）。 */
+  confirmLang: ConfirmLang
 }
 
 const STATUS_LABELS: Record<TaskRecord['status'], string> = {
@@ -218,6 +226,13 @@ const CLEARABLE_NOTE = '传空字符串表示清除该字段；不传则保留�
 export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config: Config): void {
   const store = ctx.xingyuan
 
+  /**
+   * 确认卡问题文案的双语选择器（zh/en 成对传入）：确认卡直接呈现给用户，是插件
+   * 少数绕过模型转述的「原生文案」面——模型回包可以跟随对话语言自行转述，卡上的
+   * 文案不能。语言取对话偏好 confirmLang（每次调用即时读，设置热改即生效）。
+   */
+  const bi = (zh: string, en: string): string => (config.confirmLang === 'en' ? en : zh)
+
   // ===== 愿望 =====
 
   ctx.tools.register(defineTool({
@@ -269,16 +284,23 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       },
     },
     output: TEXT_OUTPUT,
+    // HITL 等待类工具：声明协作超时（未应答的确认卡不得无限阻塞 agent 回合）
+    timeoutMs: 600_000,
     async execute(args, exec) {
       const today = todayIso()
-      // 落库前预检字段（分类/日期校验与 store 同源），确认卡被拒或字段非法都不产生半成品
+      // 落库前预检愿望字段（分类/日期校验与 store 同源）：确认卡被拒不产生半成品；
+      // 推荐任务的字段失败发生在批准之后，如实回报（愿望本体与已成功任务保留）
       validateEstimatedDate(args.estimatedCompletionDate, today)
       if ((args.tasks?.length ?? 0) > 3) throw new ToolError('推荐任务最多 3 个')
       if (confirmGate(config)) {
         const plan = (args.tasks ?? []).map((t, i) => `${i + 1}. ${t.name}（${CYCLE_LABELS[t.checkInCycle]}${t.dueDate ? `，截止 ${t.dueDate}` : ''}）`).join('\n')
-        const approved = await confirmAction(ctx, exec,
+        const planEn = (args.tasks ?? []).map((t, i) => `${i + 1}. ${t.name} (${CYCLE_LABELS_EN[t.checkInCycle]}${t.dueDate ? `, due ${t.dueDate}` : ''})`).join('\n')
+        const approved = await confirmAction(ctx, exec, bi(
           `确认创建愿望「${args.title}」（${args.categoryName}）吗？`
-          + (plan.length > 0 ? `\n将同时创建 ${args.tasks!.length} 个推荐任务：\n${plan}` : '\n不创建推荐任务。'))
+            + (plan.length > 0 ? `\n将同时创建 ${args.tasks!.length} 个推荐任务：\n${plan}` : '\n不创建推荐任务。'),
+          `Create wish “${args.title}” (${args.categoryName})?`
+            + (planEn.length > 0 ? `\n${args.tasks!.length} recommended tasks will be created:\n${planEn}` : '\nNo recommended tasks.'),
+        ))
         if (!approved) return '已取消创建。可以告诉我要调整的地方（任务内容、周期、截止日等），我重新规划后再确认。'
       }
       const wish = await createWish(store, args, today)
@@ -317,12 +339,15 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       estimatedCompletionDate: { type: 'string', description: '预计完成日期，可选。yyyy-MM-dd' },
     },
     output: TEXT_OUTPUT,
+    timeoutMs: 600_000,
     async execute(args, exec) {
       const today = todayIso()
       validateEstimatedDate(args.estimatedCompletionDate, today)
       if (confirmGate(config)) {
-        const approved = await confirmAction(ctx, exec,
-          `确认创建愿望「${args.title}」（${args.categoryName}）吗？${args.estimatedCompletionDate !== undefined ? `\n预计完成：${args.estimatedCompletionDate}` : ''}`)
+        const approved = await confirmAction(ctx, exec, bi(
+          `确认创建愿望「${args.title}」（${args.categoryName}）吗？${args.estimatedCompletionDate !== undefined ? `\n预计完成：${args.estimatedCompletionDate}` : ''}`,
+          `Create wish “${args.title}” (${args.categoryName})?${args.estimatedCompletionDate !== undefined ? `\nTarget date: ${args.estimatedCompletionDate}` : ''}`,
+        ))
         if (!approved) return '已取消创建。可以告诉我要调整的地方，我修改后再确认。'
       }
       const wish = await createWish(store, args, today)
@@ -338,7 +363,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
     async execute() {
-      const wishes = [...store.domain.table('wishes').entries()].map(([, w]) => freshWish(store, w))
+      // 批量读契约：freshWishes 单遍任务索引，禁逐条 freshWish 的 O(W×T) 扫描
+      const wishes = freshWishes(store)
       if (wishes.length === 0) return '暂无愿望。可以告诉我你的第一个愿望，我来帮你拆解执行计划。'
       return `共 ${wishes.length} 个愿望：\n${wishes.map((w) => `- [${w.wishId}] 「${w.title}」(${w.categoryName})，进度 ${w.progress}%${w.archived ? '，已达成 🎉' : ''}`).join('\n')}`
     },
@@ -361,10 +387,11 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         if (keyword !== undefined && !wish.title.toLowerCase().includes(keyword) && !(wish.description ?? '').toLowerCase().includes(keyword)) continue
         if (args.categoryName !== undefined && wish.categoryName !== args.categoryName) continue
         if (args.title !== undefined && wish.title !== args.title) continue
-        hits.push(freshWish(store, wish))
+        hits.push(wish)
       }
-      if (hits.length === 0) return '没有符合条件的愿望。'
-      return `找到 ${hits.length} 个愿望：\n${hits.map((w) => `- [${w.wishId}] 「${w.title}」(${w.categoryName})，进度 ${w.progress}%`).join('\n')}\n引用愿望时必须使用方括号内的真实 ID。`
+      const fresh = freshWishes(store, hits)
+      if (fresh.length === 0) return '没有符合条件的愿望。'
+      return `找到 ${fresh.length} 个愿望：\n${fresh.map((w) => `- [${w.wishId}] 「${w.title}」(${w.categoryName})，进度 ${w.progress}%`).join('\n')}\n引用愿望时必须使用方括号内的真实 ID。`
     },
   }))
 
@@ -405,7 +432,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         if (latest === undefined || wish.createdAt > latest.createdAt) latest = wish
       }
       if (latest === undefined) return '当前暂无愿望。'
-      const fresh = freshWish(store, latest)
+      const fresh = freshWishes(store, [latest])[0]!
       return `[${fresh.wishId}] 「${fresh.title}」(${fresh.categoryName})，进度 ${fresh.progress}%${fresh.archived ? '，已达成 🎉' : ''}`
     },
   }))
@@ -418,10 +445,11 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     isConcurrencySafe: () => true,
     async execute(args) {
       const wish = requireWish(store, args.wishId)
-      const detail = freshWish(store, wish)
+      const detail = freshWishes(store, [wish])[0]!
+      const counts = checkinCountIndex(store)
       const tasks: TaskRecord[] = []
       for (const [, task] of store.domain.table('tasks').entries()) {
-        if (task.wishId === args.wishId) tasks.push(freshTask(store, task))
+        if (task.wishId === args.wishId) tasks.push(freshTask(store, task, todayIso(), counts))
       }
       const desc = detail.description !== undefined ? `\n描述：${detail.description}` : ''
       const due = detail.estimatedCompletionDate !== undefined ? `，预计完成 ${detail.estimatedCompletionDate}` : ''
@@ -483,7 +511,10 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     timeoutMs: 600_000,
     async execute(args, exec) {
       const wish = requireWish(store, args.wishId)
-      const approved = await confirmAction(ctx, exec, `确定删除愿望「${wish.title}」吗？其下所有任务与打卡记录将一并删除，不可恢复。`)
+      const approved = await confirmAction(ctx, exec, bi(
+        `确定删除愿望「${wish.title}」吗？其下所有任务、打卡记录与微行动拆解将一并删除，不可恢复。`,
+        `Delete wish “${wish.title}”? Its tasks, check-ins and micro-step plans will be removed too. This cannot be undone.`,
+      ))
       if (!approved) return '已取消删除。'
       const removedTasks = await removeWishCompletely(store, args.wishId)
       // 级联删除同样补发任务事件：会话内任务卡同步转「已删除」，回放状态与库一致
@@ -505,7 +536,10 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       if (args.wishIds.length < 1 || args.wishIds.length > 10) throw new ToolError('愿望ID列表需 1-10 个')
       const titles: string[] = []
       for (const id of args.wishIds) titles.push(store.domain.table('wishes').get(id)?.title ?? id)
-      const approved = await confirmAction(ctx, exec, `确定批量删除 ${titles.length} 个愿望吗？「${titles.join('」「')}」及其关联任务将被删除，不可恢复。`)
+      const approved = await confirmAction(ctx, exec, bi(
+        `确定批量删除 ${titles.length} 个愿望吗？「${titles.join('」「')}」及其关联任务将被删除，不可恢复。`,
+        `Batch-delete ${titles.length} ${titles.length === 1 ? 'wish' : 'wishes'}? “${titles.join('”, “')}” and their tasks will be removed. This cannot be undone.`,
+      ))
       if (!approved) return '已取消删除。'
       let success = 0
       const failed: string[] = []
@@ -561,10 +595,13 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       hint: { type: 'string', description: '任务提示，可选。不超过500字符。示例：使用APP背单词，记录新学单词' },
     },
     output: TEXT_OUTPUT,
+    timeoutMs: 600_000,
     async execute(args, exec) {
       if (confirmGate(config)) {
-        const approved = await confirmAction(ctx, exec,
-          `确认创建任务「${args.name}」吗？\n打卡周期：${CYCLE_LABELS[args.checkInCycle]}${args.dueDate !== undefined ? `，截止 ${args.dueDate}` : ''}${args.wishId !== undefined ? `，关联愿望 ${store.domain.table('wishes').get(args.wishId)?.title ?? args.wishId}` : ''}`)
+        const approved = await confirmAction(ctx, exec, bi(
+          `确认创建任务「${args.name}」吗？\n打卡周期：${CYCLE_LABELS[args.checkInCycle]}${args.dueDate !== undefined ? `，截止 ${args.dueDate}` : ''}${args.wishId !== undefined ? `，关联愿望 ${store.domain.table('wishes').get(args.wishId)?.title ?? args.wishId}` : ''}`,
+          `Create task “${args.name}”?\nCycle: ${CYCLE_LABELS_EN[args.checkInCycle]}${args.dueDate !== undefined ? `, due ${args.dueDate}` : ''}${args.wishId !== undefined ? `, under wish ${store.domain.table('wishes').get(args.wishId)?.title ?? args.wishId}` : ''}`,
+        ))
         if (!approved) return '已取消创建。可以告诉我要调整的地方，我修改后再确认。'
       }
       const task = await createTask(store, {
@@ -603,11 +640,16 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       },
     },
     output: TEXT_OUTPUT,
+    timeoutMs: 600_000,
     async execute(args, exec) {
       if (args.tasks.length < 1 || args.tasks.length > 10) throw new ToolError('单次最多创建10个任务')
       if (confirmGate(config)) {
         const plan = args.tasks.map((t, i) => `${i + 1}. ${t.name}（${CYCLE_LABELS[t.checkInCycle]}${t.dueDate ? `，截止 ${t.dueDate}` : ''}）`).join('\n')
-        const approved = await confirmAction(ctx, exec, `确认批量创建以下 ${args.tasks.length} 个任务吗？\n${plan}`)
+        const planEn = args.tasks.map((t, i) => `${i + 1}. ${t.name} (${CYCLE_LABELS_EN[t.checkInCycle]}${t.dueDate ? `, due ${t.dueDate}` : ''})`).join('\n')
+        const approved = await confirmAction(ctx, exec, bi(
+          `确认批量创建以下 ${args.tasks.length} 个任务吗？\n${plan}`,
+          `Create the following ${args.tasks.length} ${args.tasks.length === 1 ? 'task' : 'tasks'}?\n${planEn}`,
+        ))
         if (!approved) return '已取消创建。可以告诉我要调整的地方，我修改后再确认。'
       }
       const created: TaskRecord[] = []
@@ -722,8 +764,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       // 关闭后直接执行——提前勾的承诺语义由回复文案如实告知兜底
       if (confirmGate(config)) {
         const question = target > today
-          ? `今天不是「${task.name}」的打卡日，确认提前打卡 ${target} 吗？提前打卡表示承诺当天完成。`
-          : `确认完成「${task.name}」在 ${target} 的打卡吗？`
+          ? bi(`今天不是「${task.name}」的打卡日，确认提前打卡 ${target} 吗？提前打卡表示承诺当天完成。`, `“${task.name}” is not due today. Check in early for ${target}? This commits you to finish it that day.`)
+          : bi(`确认完成「${task.name}」在 ${target} 的打卡吗？`, `Check in “${task.name}” for ${target}?`)
         const approved = await confirmAction(ctx, exec, question)
         if (!approved) return '已取消打卡。需要时随时告诉我。'
       }
@@ -749,7 +791,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     name: 'cancel_check_in_task',
     description: '取消打卡。何时使用：撤销误打卡记录时使用。可指定日期取消；不传日期则自动取消该任务最近一次打卡记录。' + CANCEL_CHECKIN_NOTE,
     parameters: {
-      taskId: { type: 'string', required: true, description: '任务ID' },
+      taskId: { type: 'string', required: true, description: '任务ID，取列表返回的真实值' },
       checkInDate: { type: 'string', description: '取消打卡日期，可选。yyyy-MM-dd。用户提到具体日期（含「今天」「昨天」等指代）时必须换算并传入；仅在用户完全未指明日期时才省略（此时取消最近一次打卡，可能不是用户想撤的那条）' },
     },
     output: TEXT_OUTPUT,
@@ -758,10 +800,9 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       const task = requireTask(store, args.taskId)
 
       if (confirmGate(config)) {
-        const approved = await confirmAction(ctx, exec,
-          args.checkInDate !== undefined
-            ? `确定取消「${task.name}」在 ${args.checkInDate} 的打卡吗？该日进度将回退。`
-            : `确定取消「${task.name}」最近一次打卡吗？对应日期的进度将回退。`)
+        const approved = await confirmAction(ctx, exec, args.checkInDate !== undefined
+          ? bi(`确定取消「${task.name}」在 ${args.checkInDate} 的打卡吗？该日进度将回退。`, `Undo the check-in of “${task.name}” on ${args.checkInDate}? Progress will roll back.`)
+          : bi(`确定取消「${task.name}」最近一次打卡吗？对应日期的进度将回退。`, `Undo the most recent check-in of “${task.name}”? Progress for that day will roll back.`))
         if (!approved) return '已取消操作，打卡记录保持不变。'
       }
       const result = await cancelCheckIn(store, args.taskId, args.checkInDate)
@@ -783,13 +824,16 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
   ctx.tools.register(defineTool({
     name: 'delete_task',
     description: `删除任务。何时使用：删除进行中或完结状态的任务时使用。${DELETE_NOTE}`,
-    parameters: { taskId: { type: 'string', required: true, description: '任务ID' } },
+    parameters: { taskId: { type: 'string', required: true, description: '任务ID，取列表返回的真实值' } },
     output: TEXT_OUTPUT,
     timeoutMs: 600_000,
     async execute(args, exec) {
       const task = requireTask(store, args.taskId)
 
-      const approved = await confirmAction(ctx, exec, `确定删除任务「${task.name}」吗？其打卡记录将一并删除，不可恢复。`)
+      const approved = await confirmAction(ctx, exec, bi(
+        `确定删除任务「${task.name}」吗？其打卡记录与微行动拆解将一并删除，不可恢复。`,
+        `Delete task “${task.name}”? Its check-ins and micro-step plan will be removed too. This cannot be undone.`,
+      ))
       if (!approved) return '已取消删除。'
       await removeTaskCompletely(store, task.taskId)
       emitTask(store, exec.agent, 'deleted', task)
@@ -801,7 +845,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     name: 'batch_delete_tasks',
     description: `批量删除任务。何时使用：一次性删除多个任务时使用，最多10个。${DELETE_NOTE}`,
     parameters: {
-      taskIds: { type: 'array', items: { type: 'string' }, required: true, description: '任务ID列表，最多10个' },
+      taskIds: { type: 'array', items: { type: 'string' }, required: true, description: '任务ID列表，1-10个，取列表返回的真实值' },
     },
     output: TEXT_OUTPUT,
     timeoutMs: 600_000,
@@ -809,7 +853,10 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       if (args.taskIds.length < 1 || args.taskIds.length > 10) throw new ToolError('任务ID列表需 1-10 个')
       const names: string[] = []
       for (const id of args.taskIds) names.push(store.domain.table('tasks').get(id)?.name ?? id)
-      const approved = await confirmAction(ctx, exec, `确定批量删除 ${names.length} 个任务吗？「${names.join('」「')}」及其打卡记录将被删除，不可恢复。`)
+      const approved = await confirmAction(ctx, exec, bi(
+        `确定批量删除 ${names.length} 个任务吗？「${names.join('」「')}」及其打卡记录将被删除，不可恢复。`,
+        `Batch-delete ${names.length} ${names.length === 1 ? 'task' : 'tasks'}? “${names.join('”, “')}” and their check-ins will be removed. This cannot be undone.`,
+      ))
       if (!approved) return '已取消删除。'
       let success = 0
       const failed: string[] = []
@@ -1016,9 +1063,12 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     async execute(args, exec) {
       const memory = store.domain.table('memories').get(args.key)
       if (memory === undefined) throw new ToolError(`未找到「${args.key}」，无法删除`)
-      const approved = await confirmAction(ctx, exec, `确定删除信息「${args.key}：${memory.value}」吗？删除后不可恢复。`)
+      const approved = await confirmAction(ctx, exec, bi(
+        `确定删除信息「${args.key}：${memory.value}」吗？删除后不可恢复。`,
+        `Delete memory “${args.key}: ${memory.value}”? This cannot be undone.`,
+      ))
       if (!approved) return '已取消删除。'
-      await store.domain.table('memories').delete(args.key)
+      await deleteMemory(store, args.key)
       return `已删除：「${args.key}」`
     },
   }))
@@ -1077,13 +1127,12 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     },
     output: TEXT_OUTPUT,
     async execute(args) {
-      // merge 基于串行队列内的最新快照：工具面与页面动作并发互不覆盖
-      await mutateGlobal(store, (current) => {
-        const profile = { ...current.profile }
-        if (args.nickname !== undefined) profile.nickname = args.nickname
-        if (args.occupation !== undefined) profile.occupation = args.occupation
-        if (args.interests !== undefined) profile.interests = [...args.interests]
-        return { ...current, profile }
+      // 与页面 profile 动作同一收口（store 层夹取：昵称≤50/职业≤100/兴趣≤20×50），
+      // 工具面不再无界写入——画像逐轮注入系统提示，无界字段即上下文膨胀通道
+      await updateProfileGlobal(store, {
+        nickname: args.nickname,
+        occupation: args.occupation,
+        interests: args.interests,
       })
       return '已更新用户画像。'
     },
@@ -1142,8 +1191,10 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
     async execute() {
-      const wishes = [...store.domain.table('wishes').entries()].map(([, w]) => freshWish(store, w))
-      const tasks = [...store.domain.table('tasks').entries()].map(([, t]) => freshTask(store, t))
+      // 批量读走 freshWishes 单遍任务索引（store 契约：批量场景禁逐条 freshWish 全表扫描）
+      const wishes = freshWishes(store)
+      const counts = checkinCountIndex(store)
+      const tasks = [...store.domain.table('tasks').entries()].map(([, t]) => freshTask(store, t, todayIso(), counts))
       const wishesTruncated = wishes.length > config.batchWishLimit
       const tasksTruncated = tasks.length > config.batchTaskLimit
       return JSON.stringify({
@@ -1220,15 +1271,19 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     output: TEXT_OUTPUT,
     timeoutMs: 600_000,
     async execute(args, exec) {
-      const task = requireTask(store, args.taskId)
+      // 写前新鲜化：跨日过期关闭在读侧消除，不得以库内陈旧 status 绕过（与打卡同口径）
+      const task = freshTask(store, requireTask(store, args.taskId))
 
-      if (task.status !== 'in_progress') throw new ToolError('只有进行中的任务可以拆解微行动，请先领取任务')
+      if (task.status !== 'in_progress') throw new ToolError('只有进行中的任务可以拆解微行动，请先领取任务', 'not_claimed')
       if (args.steps === undefined || args.steps.length < MICRO_STEPS_MIN || args.steps.length > MICRO_STEPS_MAX) {
         throw new ToolError(`微行动需要 ${MICRO_STEPS_MIN}-${MICRO_STEPS_MAX} 个步骤`)
       }
       if (confirmGate(config)) {
         const plan = args.steps.map((s, i) => `${i + 1}. ${s.instruction}`).join('\n')
-        const approved = await confirmAction(ctx, exec, `为「${task.name}」开始微行动拆解吗？\n${plan}`)
+        const approved = await confirmAction(ctx, exec, bi(
+          `为「${task.name}」开始微行动拆解吗？\n${plan}`,
+          `Start a micro-step plan for “${task.name}”?\n${plan}`,
+        ))
         if (!approved) return '已取消。可以告诉我要调整的地方，我重新拆解后再确认。'
       }
       const { state, resumed } = await startMicroAction(store, task.taskId, args.steps)
@@ -1244,7 +1299,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     name: 'complete_micro_step',
     description: '微行动步进：标记当前步完成或跳过。何时使用：用户说某步做完了（action=complete）或想做下一不做这步（action=skip）时调用。只允许处理当前步；用户口头说明进度即为授权，不再弹确认卡。全部步骤处理完会提示引导打卡。',
     parameters: {
-      taskId: { type: 'string', required: true, description: '任务ID' },
+      taskId: { type: 'string', required: true, description: '任务ID，取列表返回的真实值' },
       stepNumber: { type: 'integer', required: true, description: '要处理的步骤序号（必须是当前步）' },
       action: { type: 'string', required: true, enum: ['complete', 'skip'], description: 'complete=完成该步；skip=跳过该步' },
     },
@@ -1274,13 +1329,16 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
   ctx.tools.register(defineTool({
     name: 'restart_micro_action',
     description: `重开微行动：清除现有拆解以便重新规划。何时使用：用户明确说"重新拆/换个方式拆"时调用。${DELETE_NOTE}`,
-    parameters: { taskId: { type: 'string', required: true, description: '任务ID' } },
+    parameters: { taskId: { type: 'string', required: true, description: '任务ID，取列表返回的真实值' } },
     output: TEXT_OUTPUT,
     timeoutMs: 600_000,
     async execute(args, exec) {
       const task = requireTask(store, args.taskId)
 
-      const approved = await confirmAction(ctx, exec, `确定清除「${task.name}」现有的微行动拆解吗？清除后需重新拆解。`)
+      const approved = await confirmAction(ctx, exec, bi(
+        `确定清除「${task.name}」现有的微行动拆解吗？清除后需重新拆解。`,
+        `Clear the existing micro-step plan of “${task.name}”? You will need to break it down again.`,
+      ))
       if (!approved) return '已取消，现有拆解保持不变。'
       const existed = await restartMicroAction(store, task.taskId)
       if (!existed) return `「${task.name}」本来就没有微行动拆解，直接用 start_micro_action 开始即可。`

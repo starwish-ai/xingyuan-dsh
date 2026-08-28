@@ -21,7 +21,13 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
-import { MEMORY_LIMIT_MAX, MEMORY_LIMIT_MIN, PREF_DEFAULTS, type PrefSettings } from './pref-policy.js'
+import {
+  CONFIRM_LANGS,
+  MEMORY_LIMIT_MAX,
+  MEMORY_LIMIT_MIN,
+  PREF_DEFAULTS,
+  type PrefSettings,
+} from './pref-policy.js'
 
 /** 对话偏好命名空间（client 半侧 settingsScope 同名配对，勿改）。 */
 export const PREF_NS = settingsNamespace('xingyuan-pref')
@@ -31,6 +37,8 @@ export const PrefSettingsSchema: z<PrefSettings> = z.object({
   confirmWrites: z.boolean().default(PREF_DEFAULTS.confirmWrites),
   memoryInjectLimit: z.number().step(1).min(MEMORY_LIMIT_MIN).max(MEMORY_LIMIT_MAX)
     .default(PREF_DEFAULTS.memoryInjectLimit),
+  // schemastery 无 z.enum，两值枚举用 const+union 表达（与 ui-settings 的显隐三态同款）
+  confirmLang: z.union(CONFIRM_LANGS.map((lang) => z.const(lang))).default(PREF_DEFAULTS.confirmLang),
 })
 
 /**

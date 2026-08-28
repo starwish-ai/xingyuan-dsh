@@ -1,8 +1,9 @@
 /** 成长页：等级英雄卡 + 七项统计 + 近 30 天柱状图（悬浮明细/全勤高亮/图例）+ 等级说明。 */
 import { createElement, useState, type ReactElement } from 'react'
-import { useXyT } from '../i18n.js'
-import { recentRangeDays, usePageData, useStableScrollbar } from '../hooks.js'
-import { PageError, PageSkeleton } from '../ui.js'
+import { useXyT, activeLocale, type XyKey } from '../i18n.js'
+import { t as translate } from '../i18n.js'
+import { recentRangeDays, usePageData, useScrollTopOnMount, useStableScrollbar } from '../hooks.js'
+import { PageError, PageSkeleton, StaleBanner } from '../ui.js'
 import { formatShortDate } from './format.js'
 import type { GrowthPayload, RangePayload } from './types.js'
 /**
@@ -23,9 +24,30 @@ export function darkenHex(hex: string, ratio: number): string {
   return `#${((1 << 24) | (channel(16) << 16) | (channel(8) << 8) | channel(0)).toString(16).slice(1)}`
 }
 
+/**
+ * 等级词本地化：服务端 LEVEL_CONFIGS 是中文权威源（zh 值与 growth.lv.N.* 逐字一致，
+ * test 锁定）；客户端按等级序号取词，未知序号（未来扩级）回落服务端原文。
+ */
+function levelNameKey(level: number): XyKey {
+  return `growth.lv.${level}.name` as XyKey
+}
+function levelRewardKey(level: number): XyKey {
+  return `growth.lv.${level}.reward` as XyKey
+}
+function localLevelName(level: number, fallback: string | undefined): string {
+  const dict = translate(levelNameKey(level))
+  // 键缺词时 t() 回落键名本身——zh 词表覆盖 1-10，命中即用；否则用服务端原文
+  return dict !== levelNameKey(level) ? dict : fallback ?? ''
+}
+function localLevelReward(level: number, fallback: string | undefined): string {
+  const dict = translate(levelRewardKey(level))
+  return dict !== levelRewardKey(level) ? dict : fallback ?? ''
+}
+
 export function GrowthPage(): ReactElement {
   const t = useXyT()
   const stabilize = useStableScrollbar()
+  useScrollTopOnMount()
   const growth = usePageData<GrowthPayload>('/xingyuan/api/growth')
   const range = usePageData<RangePayload>(() => {
     const { start, end } = recentRangeDays(30)
@@ -38,7 +60,7 @@ export function GrowthPage(): ReactElement {
   // 图表区自带「错误 + 重试」分支（下方），两路状态各自闭环
   const error = growth.error
   const reload = (): void => { growth.reload(); range.reload() }
-  if (error !== undefined) return createElement(PageError, { message: error, onRetry: reload })
+  if (error !== undefined && growth.data === undefined) return createElement(PageError, { message: error, onRetry: reload })
   if (growth.data === undefined) return createElement(PageSkeleton)
   const g = growth.data
   const r = range.data
@@ -76,15 +98,21 @@ export function GrowthPage(): ReactElement {
           createElement('div', { className: 'xy-growth-bar', style: { height: `${h}%` } })))
     })
     // 横坐标 = 独立刻度层：按时间轴比例绝对定位；首端左对齐、末端右对齐防出界。
+    // 刻度文案走 Intl：en 用短月份（Aug 27），zh 保持紧凑数字（8/27）——两种语言都不超宽
+    const tickFormat = new Intl.DateTimeFormat(activeLocale() === 'en' ? 'en-US' : 'zh-CN', {
+      month: activeLocale() === 'en' ? 'short' : 'numeric',
+      day: 'numeric',
+    })
     const ticks = r.days.map((day, i) => {
       if (!(i % 5 === 0 || i === count - 1)) return null
       const align = i === 0 ? '0%' : i === count - 1 ? '-100%' : '-50%'
       const left = count > 1 ? (i / (count - 1)) * 100 : 0
+      const parsed = new Date(Number(day.date.slice(0, 4)), Number(day.date.slice(5, 7)) - 1, Number(day.date.slice(8)), 12)
       return createElement('span', {
         key: day.date,
         className: 'xy-growth-tick',
         style: { left: `${left}%`, transform: `translateX(${align})` },
-      }, `${Number(day.date.slice(5, 7))}/${Number(day.date.slice(8))}`)
+      }, Number.isNaN(parsed.getTime()) ? day.date : tickFormat.format(parsed))
     })
     return { cols, ticks, days: r.days }
   })()
@@ -110,13 +138,14 @@ export function GrowthPage(): ReactElement {
         className: 'xy-lvnum',
         style: hit ? { background: levelTint(config.level), color: '#fff' } : undefined,
       }, `Lv.${config.level}`),
-      createElement('span', { className: 'xy-lvname' }, config.levelName),
+      createElement('span', { className: 'xy-lvname' }, localLevelName(config.level, config.levelName)),
       createElement('span', { className: 'xy-meta' }, t('growth.levelRequire', { exp: config.requiredExperience })),
       createElement('span', { className: 'xy-meta xy-lvreward' },
-        hit ? '✓ ' : '', config.rewardDescription))
+        hit ? '✓ ' : '', localLevelReward(config.level, config.rewardDescription)))
   })
 
   const hoverDay = chart !== null && hoverIdx !== null ? chart.days[hoverIdx] : undefined
+  const stale = growth.error !== undefined
 
   return createElement('div', { className: 'xy-page', ref: stabilize },
     createElement('div', {
@@ -129,13 +158,14 @@ export function GrowthPage(): ReactElement {
       createElement('div', { className: 'xy-herobadge', style: { background: tint } }, `Lv.${levelNumber}`),
       createElement('div', { className: 'xy-heromain' },
         createElement('div', { className: 'xy-meta xy-onhero' }, t('growth.levelLabel')),
-        createElement('h2', { className: 'xy-herotitle' }, `Lv.${levelNumber} · ${g.levelName ?? t('growth.levelFallback')}`),
+        createElement('h2', { className: 'xy-herotitle' }, `Lv.${levelNumber} · ${localLevelName(levelNumber, g.levelName)}`),
         createElement('div', { className: 'xy-bar xy-bar-onhero' },
           createElement('div', { className: 'xy-bar-fill xy-bar-fill-solid', style: { transform: `scaleX(${Math.min(Math.max(g.levelProgress ?? 0, 0), 100) / 100})` } })),
         createElement('div', { className: 'xy-meta xy-onhero' }, expText))),
     g.rewardDescription !== undefined
-      ? createElement('div', { className: 'xy-meta xy-heroreward' }, t('growth.rewardPrefix', { reward: g.rewardDescription }))
+      ? createElement('div', { className: 'xy-meta xy-heroreward' }, t('growth.rewardPrefix', { reward: localLevelReward(levelNumber, g.rewardDescription) }))
       : null,
+    stale ? createElement(StaleBanner, { onRetry: reload }) : null,
     createElement('div', { className: 'xy-stats' },
       stat(g.totalCheckinDays ?? g.totalCheckins ?? 0, t('growth.stat.checkinDays')),
       stat(g.currentStreak, t('growth.stat.streak'), 'hot'),

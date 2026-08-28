@@ -8,7 +8,7 @@ import { createElement, useEffect, useState, type ReactElement } from 'react'
 import { getJson, postAction } from '../api.js'
 import { useXyT, t as translate, activeLocale, type XyT } from '../i18n.js'
 import { localYmd, softConfirm, softConfirmDanger, useActionGuard } from '../hooks.js'
-import { toast } from '../ui.js'
+import { focusPageTitle, toast } from '../ui.js'
 import { dateSuffix, formatShortDate } from './format.js'
 import type { ApiTask } from './types.js'
 
@@ -72,6 +72,42 @@ export function latestCheckedDate(grid: ReadonlyArray<{ readonly date: string; r
 }
 
 /**
+ * 过期任务的页内复活行：延长截止日即重新开始（与对话侧 update_task 同一写路径）。
+ * 此前过期任务的详情只有「让 AI 总结 + 删除」——失败态成了死路，页面用户无从知道
+ * 任务可复活。日期输入沿用快速新建的 type=date 原生控件。
+ */
+function ReviveRow(props: { taskId: string; today: string; onDone: () => void | Promise<void> }): ReactElement {
+  const t = useXyT()
+  const [due, setDue] = useState('')
+  const [error, setError] = useState<string | undefined>(undefined)
+  const { busy, guard } = useActionGuard()
+  const submit = (): void => {
+    if (due === '') { setError(t('quick.fieldRequired')); return }
+    if (due < props.today) { setError(t('err.due_past')); return }
+    setError(undefined)
+    guard(() => postAction('update-task', { taskId: props.taskId, dueDate: due }).then(() => {
+      toast(t('detail.revive.done'), 'ok')
+      setDue('')
+      return Promise.resolve(props.onDone())
+    }))
+  }
+  return createElement('div', null,
+    createElement('span', { className: 'xy-quick-label' }, t('detail.revive.label')),
+    createElement('div', { className: 'xy-rename' },
+      createElement('input', {
+        type: 'date', className: 'xy-input', min: props.today, value: due,
+        // 与服务端 10 年地平线（store.DUE_DATE_HORIZON_DAYS）同口径：远期截止会让
+        // 机会日序列物化爆炸，输入侧直接封顶，错误码只作兜底
+        max: localYmd(new Date(Date.now() + 3650 * 86_400_000)),
+        'aria-label': t('detail.revive.label'),
+        'aria-invalid': error !== undefined || undefined,
+        onChange: (e: { target: { value: string } }) => { setDue(e.target.value); setError(undefined) },
+      }),
+      createElement('button', { className: 'xy-btn xy-btn-primary', disabled: busy || due === '', onClick: submit }, t('detail.revive.action'))),
+    error !== undefined ? createElement('span', { className: 'xy-field-err', role: 'alert' }, error) : null)
+}
+
+/**
  * 任务详情面板：expanded 由调用方持有（TaskLine trailing 放 DetailToggle）。
  * today 缺省取本地日期；onChanged 在任何写动作成功后回调（供列表 reload，
  * 返回 Promise 时 busy 窗口延伸到上层刷新完成）。id 供 aria-controls 关联。
@@ -99,11 +135,14 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
 
   const act = (action: string, body: Record<string, unknown>, doneText: () => string): void => {
     // 删除任务成功后详情必然 404：跳过回取，仅回调上层刷新移除该行——
-    // 否则父列表 reload 完成前会闪现「加载失败 + 对死任务的重试」
+    // 否则父列表 reload 完成前会闪现「加载失败 + 对死任务的重试」。
+    // 行移除后焦点会落空（触发按钮随行销毁），刷新完成后把焦点交给页面标题兜底
     const skipDetailRefetch = action === 'delete-task'
     guard(() => postAction(action, body).then(() => {
       toast(doneText(), 'ok')
-      if (skipDetailRefetch) return Promise.resolve(props.onChanged()).then(() => undefined)
+      if (skipDetailRefetch) {
+        return Promise.resolve(props.onChanged()).then(() => { focusPageTitle() })
+      }
       return Promise.all([fetchDetail(), Promise.resolve(props.onChanged())]).then(() => undefined)
     }))
   }
@@ -136,11 +175,13 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
     ...Array.from({ length: recent.length > 0 ? weekdayMon0(recent[0]!.date) : 0 }, (_, i) =>
       createElement('span', { key: `pad-${i}`, className: 'xy-dcell xy-dcell-blank', 'aria-hidden': 'true' })),
     ...recent.map((cell) => {
+      // 悬停 title 与读屏口径分离：title 是鼠标用户可见文案走本地化短日期（§5.10
+      // 界面禁裸奔 ISO）；汇总 aria 保持一句话摘要，ISO 不再暴露给界面
       const label = cell.state === 'checked'
-        ? t('detail.grid.checked', { date: cell.date })
+        ? t('detail.grid.checked', { date: formatShortDate(cell.date) })
         : cell.state === 'missed'
-          ? t('detail.grid.missed', { date: cell.date })
-          : t('detail.grid.future', { date: cell.date })
+          ? t('detail.grid.missed', { date: formatShortDate(cell.date) })
+          : t('detail.grid.future', { date: formatShortDate(cell.date) })
       const tone = cell.state === 'checked' ? 'xy-dcell-checked' : cell.state === 'future' ? 'xy-dcell-future' : 'xy-dcell-missed'
       return createElement('span', {
         key: cell.date,
@@ -229,6 +270,8 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
   }, t('action.askAi')))
   ops.push(createElement('button', {
     key: 'delete', className: 'xy-btn xy-btn-danger', disabled: busy,
+    // 行级语义：多个展开行并存时读屏按钮列表不再播报一串同名「删除」
+    'aria-label': `${t('common.delete')} · ${task.name}`,
     onClick: () => {
       void softConfirmDanger(translate('confirm.deleteTask', { name: task.name })).then((ok) => {
         if (ok) act('delete-task', { taskId: task.taskId }, () => translate('toast.deleted', { name: task.name }))
@@ -257,6 +300,16 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
     createElement('div', null,
       createElement('span', { className: 'xy-quick-label' }, t('detail.micro.title')),
       microBlock),
+    // 过期任务的复活闭环：说明行 + 页内延长截止日（失败态不再是「只能删除」的死路）
+    task.status === 'closed' && task.closedReason === 'expired'
+      ? createElement('div', null,
+          createElement('span', { className: 'xy-meta' }, t('task.expiredHint')),
+          createElement(ReviveRow, {
+            taskId: task.taskId,
+            today,
+            onDone: () => Promise.all([fetchDetail(), Promise.resolve(props.onChanged())]).then(() => undefined),
+          }))
+      : null,
     createElement('div', null,
       createElement('span', { className: 'xy-quick-label' }, t('detail.ops.title')),
       // 周期/进度元信息不再重复：TaskLine 行本身已展示同口径信息（cycle·duration·status·next·due）

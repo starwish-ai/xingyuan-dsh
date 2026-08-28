@@ -2,8 +2,10 @@
 import { createElement, useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import { getJson, postAction, ActionError } from '../api.js'
 import { useXyT, t as translate } from '../i18n.js'
-import { softConfirm, softConfirmDanger, useActionGuard, usePageData, useStableScrollbar } from '../hooks.js'
-import { PageEmpty, PageError, PageSkeleton, toast, IconEdit, IconTrash } from '../ui.js'
+import { localYmd, softConfirm, softConfirmDanger, useActionGuard, usePageData, useScrollTopOnMount, useStableScrollbar } from '../hooks.js'
+import { PageEmpty, PageError, PageSkeleton, StaleBanner, toast, IconEdit, IconTrash, focusPageTitle } from '../ui.js'
+import { getViewState, setViewState } from '../view-state.js'
+import { formatMediumDate } from './format.js'
 import type { MemoriesPayload, MemoryItem } from './types.js'
 
 const MEMORY_CATEGORY_KEYS = ['memory.cat.personal', 'memory.cat.preference', 'memory.cat.habit', 'memory.cat.event', 'memory.cat.other'] as const
@@ -39,7 +41,10 @@ function impLabel(id: string): string {
 export function MemoryPage(): ReactElement {
   const t = useXyT()
   const stabilize = useStableScrollbar()
-  const [query, setQuery] = useState('')
+  useScrollTopOnMount()
+  // 搜索词跨标签切换保留（view-state 快照）：搜到一半切走再回来不丢词
+  const [query, setQueryRaw] = useState(() => getViewState('memory.query', ''))
+  const setQuery = (next: string): void => { setViewState('memory.query', next); setQueryRaw(next) }
   // 防抖取数：搜索词变化 250ms 后才请求，避免逐键打接口
   const [debounced, setDebounced] = useState('')
   const debounceRef = useRef<number | undefined>(undefined)
@@ -81,14 +86,15 @@ export function MemoryPage(): ReactElement {
       .finally(() => { if (seq === moreSeqRef.current) setLoadingMore(false) })
   }
 
-  /** 写操作后的全量刷新：追加页必须丢弃（offset 语义已失效），回到首屏。 */
-  const refreshAll = (): void => {
+  /** 写操作后的全量刷新：追加页必须丢弃（offset 语义已失效），回到首屏。
+   * 返回刷新 promise 供调用方接续动作（焦点移交），不再各自补一发 reload。 */
+  const refreshAll = (): Promise<void> => {
     moreSeqRef.current += 1
     // 同 useEffect 的失效点：在途加载被弃时按钮态就地复位（防死锁）
     setLoadingMore(false)
     setMore([])
     setLoadError(undefined)
-    void page.reload()
+    return page.reload().then(() => undefined)
   }
 
   const [keyDraft, setKeyDraft] = useState('')
@@ -114,9 +120,12 @@ export function MemoryPage(): ReactElement {
     noticeTimer.current = window.setTimeout(() => setNotice((current) => (current === text ? undefined : current)), 2600)
   }, [])
 
-  if (page.error !== undefined) return createElement(PageError, { message: page.error, onRetry: page.reload })
+  if (page.error !== undefined && page.data === undefined) return createElement(PageError, { message: page.error, onRetry: page.reload })
   const data = page.data
   if (data === undefined) return createElement(PageSkeleton)
+  // 首屏刷新失败但数据仍在：诚实降级为旧数据 + 陈旧提示（清空/删除不可恢复类操作
+  // 尤其不能让用户在失败态误判列表内容）
+  const stale = page.error !== undefined
 
   // 首屏 + 已加载追加页合并后再做本地关键词过滤（服务端 q 为服务端匹配，二者互补）
   const allItems: ReadonlyArray<MemoryItem> = [...data.memories, ...more]
@@ -138,13 +147,13 @@ export function MemoryPage(): ReactElement {
   /** 保存记忆本体（写成功 → 刷新 + 短通知 + 复位表单）。 */
   const submitMemory = (overwrite: boolean): Promise<void> =>
     postAction('memory-add', { key: keyDraft.trim(), value: valueDraft.trim(), category, importance, overwrite })
-      .then((payload) => {
-        refreshAll()
-        flash(payload.overwrote === true || overwrite
-          ? t('memory.savedOverwrite', { key: keyDraft.trim() })
-          : t('memory.savedNew', { key: keyDraft.trim() }))
-        resetForm()
-      })
+      .then((payload) =>
+        refreshAll().then(() => {
+          flash(payload.overwrote === true || overwrite
+            ? t('memory.savedOverwrite', { key: keyDraft.trim() })
+            : t('memory.savedNew', { key: keyDraft.trim() }))
+          resetForm()
+        }))
 
   /** 实际保存：服务端因「已存在未带 overwrite」拒绝时（code=overwrite_required）补确认重试一次。 */
   const doSave = (overwrite: boolean): void => {
@@ -169,7 +178,9 @@ export function MemoryPage(): ReactElement {
     setFormError(undefined)
     const knownExists = editingKey !== undefined || allItems.some((m) => m.key === key)
     if (knownExists && editingKey === undefined) {
-      void softConfirm(t('memory.overwriteAsk', { key })).then((ok) => { if (ok) doSave(false) })
+      // 新增撞键：先弹一次覆盖确认，确认后直接带 overwrite=true 提交——
+      // 不再经 doSave(false) 让服务端再拒一次、补第二次确认（同一意图只确认一次）
+      void softConfirm(t('memory.overwriteAsk', { key })).then((ok) => { if (ok) doSave(true) })
       return
     }
     doSave(knownExists)
@@ -180,13 +191,14 @@ export function MemoryPage(): ReactElement {
       if (!ok) return
       // 删除的正是正在编辑的条目：成功后必须复位编辑态，否则残留的 editingKey
       // 会让下一次保存以 overwrite:true 静默重建这条已删除记录（无确认、无感知）。
-      // 复位挂在成功分支——删除失败时草稿照常保留
+      // 复位挂在成功分支——删除失败时草稿照常保留。行销毁焦点落空，交给页面标题
       const wasEditing = editingKey === m.key
-      guard(() => postAction('memory-delete', { key: m.key }).then(() => {
-        refreshAll()
-        flash(t('memory.deletedOne', { key: m.key }))
-        if (wasEditing) resetForm()
-      }))
+      guard(() => postAction('memory-delete', { key: m.key }).then(() =>
+        refreshAll().then(() => {
+          flash(t('memory.deletedOne', { key: m.key }))
+          if (wasEditing) resetForm()
+          focusPageTitle()
+        })))
     })
   }
 
@@ -195,11 +207,12 @@ export function MemoryPage(): ReactElement {
     // 清空后任何编辑态都失去载体（同 removeOne 的复活风险），成功后一并复位
     void softConfirmDanger(t('memory.confirmClear', { total: data.total })).then((ok) => {
       if (!ok) return
-      guard(() => postAction('memory-clear', {}).then(() => {
-        refreshAll()
-        flash(t('memory.clearedAll'))
-        resetForm()
-      }))
+      guard(() => postAction('memory-clear', {}).then(() =>
+        refreshAll().then(() => {
+          flash(t('memory.clearedAll'))
+          resetForm()
+          focusPageTitle()
+        })))
     })
   }
 
@@ -208,9 +221,10 @@ export function MemoryPage(): ReactElement {
       createElement('span', { className: 'xy-rowtitle' },
         m.importance === 'high' ? createElement('span', { className: 'xy-star-hi', 'aria-hidden': 'true' }, '★') : null,
         m.key),
-      createElement('span', { className: 'xy-meta' }, m.value),
+      // 超长记忆值 3 行截断（≤1000 字符的记录不再撑出数屏高的行；完整值在删除确认里可见）
+      createElement('span', { className: 'xy-meta xy-memval' }, m.value),
       createElement('span', { className: 'xy-meta' },
-        `${catLabel(m.category)} · ${t('memory.importanceLabel', { level: impLabel(m.importance) })} · ${m.createdAt.slice(0, 10)}`)),
+        `${catLabel(m.category)} · ${t('memory.importanceLabel', { level: impLabel(m.importance) })} · ${formatMediumDate(localYmd(new Date(m.createdAt)))}`)),
     createElement('div', { className: 'xy-memactions' },
       // 行内图标幽灵键（≥26px 命中目标）：长列表降噪，语义走 aria-label 带 key 上下文
       createElement('button', {
@@ -223,6 +237,7 @@ export function MemoryPage(): ReactElement {
       }, createElement(IconTrash)))))
 
   return createElement('div', { className: 'xy-page', ref: stabilize },
+    stale ? createElement(StaleBanner, { onRetry: () => void page.reload() }) : null,
     createElement('div', { className: 'xy-page-head' },
       createElement('h2', { className: 'xy-page-title' }, t('memory.pageTitle')),
       createElement('span', { className: 'xy-meta' }, t('memory.summary', { total: data.total }))),

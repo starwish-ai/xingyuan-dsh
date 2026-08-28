@@ -5,6 +5,123 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2026-08-28
+
+> **Note:** this release is a six-perspective quality pass (product, visual design,
+> end user, dsh-platform conformance, architecture, UX) over every interaction,
+> display and code path. It closes the failure side of the habit loop — an expired
+> task used to be indistinguishable from an achieved one and was a dead end on the
+> pages — and makes the plugin honest in English wherever it previously leaked
+> built-in Chinese vocabulary. No data format changes; existing databases and
+> recorded sessions replay as before.
+
+### Added
+- **Expired vs achieved, end to end**: task views carry `closedReason`; the Tasks
+  page splits the former "Closed" bucket into **Achieved** and **Expired** groups,
+  task rows say which one they are, and an expired task's detail panel explains the
+  state and offers an in-page **extend due date → restart** action (same store write
+  path as the chat-side `update_task`). An expired task is no longer a dead row with
+  a delete button.
+- **Confirm card language** (`xingyuan-pref.confirmLang`, default Chinese): the
+  platform does not expose UI language to host-side plugins (verified against rc.2),
+  so the in-chat confirmation card's header, buttons and question text now follow
+  this explicit setting with full English strings; the Settings page gains a
+  "Confirm card language" select with optimistic save and write verification.
+- **Built-in chart vocabulary localizes on the client**: chart cards map known
+  built-in Chinese titles, enum labels (weekdays, hour buckets, task statuses,
+  series names) and fixed subtitles to the interface language, while user data
+  (wish/task names) and unknown values replay verbatim. Coverage is locked by
+  `test/chart-labels.test.ts` against the real chart builder, so a new built-in
+  word without a mapping fails the build.
+- **Level names localize**: the Growth page renders level names and rewards from
+  the interface language by level number (server strings remain the Chinese
+  fallback); locked to the server table by the same test.
+- **Route contract compliance**: `/xingyuan` prefix registration is effect-scoped —
+  the disposer returned by `webServer.register` is no longer discarded, so hot
+  reload / re-activation can no longer die on a duplicate-prefix throw or leave a
+  stale handler serving a closed domain. A loader-level remount test with a
+  duplicate-throwing webServer stub pins this.
+- New contract tests: `style-contract` (no `color-mix(` anywhere; semi-transparent
+  colors only inside the token zone; key semantic tokens must exist in both
+  themes), `chart-labels` (built-in chart vocabulary fully covered by the
+  localization maps, and client level names locked verbatim to the server table),
+  `sqlite-backend` (version-mismatch rejection, corrupt-global rejection,
+  write → cold-read persistence), plus a tool-suite audit pinning the 10-minute
+  HITL timeout on every confirmation-waiting tool and the "use real IDs from list
+  results" note on every ID parameter.
+
+### Changed
+- **System prompts no longer assert gated behavior**: six spots claimed the system
+  "will pop a confirmation card" unconditionally — wrong when the write-confirmation
+  setting is off (tool descriptions already hedged; the prompts now hedge the same
+  way, "删除始终弹出" stays asserted since deletes always confirm).
+- **Memory overwrite asks once**: creating a memory with an existing key showed the
+  overwrite confirmation, then the server rejection re-asked the identical question;
+  the confirmed path now submits with `overwrite: true` directly.
+- **Settings tab-visibility tells the truth**: memory-mode (non-loopback) and
+  read-only states get their own notices instead of silently grey controls, and
+  writes verify post-settle snapshot like the chat-preferences controls, toasting
+  on silent revert (`scope.set()` resolves even on failure).
+- **Honest stale-data degradation**: when a refetch fails after a successful action
+  (or on focus refetch), pages keep the loaded data and show a "refresh failed,
+  data may be outdated" banner with inline retry instead of flipping to a full-page
+  error; Today's retry now reloads both endpoints at once.
+- **Motion & touch discipline**: the growth bar drops its layout-animating `height`
+  transition and the toggle knob animates `transform` only; every purely decorative
+  hover is gated behind `(hover:hover) and (pointer:fine)` so touch screens no
+  longer stick hover tints; error toasts use a dedicated assertive `role=alert`
+  container; the confirm dialog locks body scroll; after deletes/undoes destroy the
+  triggered row, focus moves to the page title instead of falling to `<body>`.
+- **Cross-tab state survives**: memory search query, calendar month offset and
+  expanded task details persist across view-tab switches via a module-scoped
+  snapshot store; view pages scroll back to top on mount.
+- **Visual tokens**: new `--xyd-label-on-2` pair fixes secondary text on secondary
+  surfaces (≈4.3:1 → ≥5:1 in both themes) across the task-card preview strip, group
+  count pills, level chips, future grid cells and the growth chart axis ticks;
+  success/warn washes, calendar state fills,
+  shadows and hero colors are explicit themed token pairs (no more shared-alpha
+  washes that vanished on dark); calendar hover wash no longer paints over the
+  picked chip; 待打卡 chips gain the inset ring their legend dot always had;
+  standalone dark "complete" chip darkens to AA contrast; 11px CJK text raises to
+  12px; month-adjacent days brighten from 1.8:1 to readable-but-dim; the mock
+  generator itself is `color-mix`-free again.
+- **Error codes completed end-to-end**: `not_claimed`, `no_opportunity_left`,
+  `no_checkins`, `title_too_long`, `name_too_long`, `once_today_only`,
+  `payload_too_large`, `bad_json_body`, `bad_coach_style`, `bad_interests` now flow
+  from store/routes to localized client strings (English users no longer receive
+  raw Chinese domain messages); HTTP status suffixes localize their brackets.
+- **Dates**: hover tooltips on the check-in grid and calendar cells localize while
+  aria keeps ISO precision; memory timestamps render as medium dates; the growth
+  chart axis uses Intl ticks (Aug 27 / 8-27); the English "Commit {date}" button
+  becomes "Early check-in · {date}" so the button itself carries check-in semantics.
+- **Writes stay in one place**: memory delete/clear and profile updates go through
+  store use cases (`deleteMemory`, `clearMemories`, `updateProfileGlobal`) shared by
+  tools and routes; profile fields clamp at the same limits on both faces (nickname
+  50 / occupation 100 / interests 20×50) — the tool path was previously unbounded
+  and injects into every system prompt turn.
+- **Batch reads honor the store contract**: wish/task list paths use
+  `freshWishes` and a single shared checkin-count index instead of per-item
+  full-table rescans for the completed-day counts; the
+  chart builder computes its checkin index only for the one chart that consumes it;
+  semantically invalid dates (`2026-13-01`) are rejected with a stable `bad_date`
+  code instead of an unlocalizable RangeError; session-log repair sweeps its
+  `.xy-repair-*` atomic-write temp files; `./types` export resolves types and
+  runtime to the same module.
+- **Copy honesty**: delete confirmations (chat and pages) now mention the
+  micro-step plan that the cascade removes; quick-create forms soft-confirm on an
+  exact duplicate name/title (the chat path dedupes via `check_similar_*`, the
+  page path previously did not); wish progress bars expose `role=progressbar`; the
+  four create tools declare the same 10-minute HITL timeout as their siblings;
+  task-related ID parameters all carry the "use real IDs from list results"
+  discipline.
+
+### Fixed
+- `start_micro_action` gates on a freshened task status, so a task that expired
+  since its last write can no longer start a breakdown.
+- `create_wish_with_tasks` no longer over-claims atomicity in its pre-validation
+  comment (task-field failures are honestly reported; the wish and created tasks
+  are kept).
+
 ## [0.5.4] - 2026-08-28
 
 > **Note:** trailing chart statistics no longer count future pre-checked days (see

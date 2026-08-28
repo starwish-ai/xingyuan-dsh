@@ -24,7 +24,7 @@ export interface LevelConfig {
 /** 等级表（Lv.1–Lv.10）。 */
 export const LEVEL_CONFIGS: readonly LevelConfig[] = [
   { level: 1, levelName: '初心者', requiredExperience: 0, rewardDescription: '开启星愿之旅' },
-  { level: 2, levelName: '探索者', requiredExperience: 100, rewardDescription: '解锁更多AI对话功能' },
+  { level: 2, levelName: '探索者', requiredExperience: 100, rewardDescription: '解锁更多 AI 对话功能' },
   { level: 3, levelName: '实践者', requiredExperience: 300, rewardDescription: '获得专属头像框' },
   { level: 4, levelName: '坚持者', requiredExperience: 600, rewardDescription: '解锁高级教练风格' },
   { level: 5, levelName: '奋斗者', requiredExperience: 1000, rewardDescription: '获得专属徽章' },

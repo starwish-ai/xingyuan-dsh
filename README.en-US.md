@@ -43,6 +43,7 @@ Business data lives at `~/.dsh/xingyuan/xingyuan.sqlite` and survives uninstall 
 | Write confirmation | Whether create / check-in writes need confirmation (deletion always does) |
 | Memory injection limit | Max memories injected per turn |
 | Tab visibility | Three modes (follow session / always show / always hide) plus per-tab toggles; defaults to follow session |
+| Confirm card language | Language of the in-chat confirmation card (Chinese / English; the platform does not expose UI language to plugins, defaults to Chinese) |
 
 ## Development
 

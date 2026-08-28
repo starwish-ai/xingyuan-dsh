@@ -27,6 +27,7 @@ function makeConfig(confirmWrites: boolean): Config {
     chartRankLimit: 10,
     chartRankMax: 20,
     confirmWrites,
+    confirmLang: 'zh',
   }
 }
 
@@ -233,5 +234,52 @@ describe('工具层：删除级联清理（打卡记录 + 微行动状态，不�
     expect(store.domain.table('tasks').get(t2)).toBeUndefined()
     expect(getMicroAction(store, t1)).toBeUndefined()
     expect(getMicroAction(store, t2)).toBeUndefined()
+  })
+})
+
+describe('工具面机械审计：HITL 超时与 ID 引用纪律（§5.4）', () => {
+  /** 会弹确认卡（读 userQuestions，可能阻塞 agent 回合）的全部工具。 */
+  const HITL_WAITING = [
+    'create_wish_with_tasks', 'create_wish', 'create_task', 'batch_create_tasks',
+    'delete_wish', 'batch_delete_wishes', 'check_in_task', 'cancel_check_in_task',
+    'delete_task', 'batch_delete_tasks', 'delete_memory',
+    'start_micro_action', 'complete_micro_step', 'restart_micro_action',
+  ] as const
+
+  it('HITL 等待类工具全部声明 timeoutMs=600_000（协作取消承诺）', () => {
+    const store = memoryStore()
+    const registered: Array<Record<string, unknown>> = []
+    const agent = { session: { append: () => {} } }
+    const ctx = {
+      xingyuan: store,
+      tools: { register: (def: Record<string, unknown>) => registered.push(def) },
+      userQuestions: { ask: async () => ({ answers: [{ selected: ['确认'] }] }) },
+    } as unknown as Parameters<typeof registerTools>[0]
+    registerTools(ctx, makeConfig(true))
+    const byName = new Map(registered.map((def) => [def.name as string, def]))
+    expect(byName.size).toBe(45)
+    for (const name of HITL_WAITING) {
+      const def = byName.get(name)
+      expect(def, `${name} 未注册`).toBeDefined()
+      expect(def!['timeoutMs'], `${name} 缺 timeoutMs`).toBe(600_000)
+    }
+  })
+
+  it('ID 类参数描述全部携带「取列表返回的真实值」纪律', () => {
+    const store = memoryStore()
+    const registered: Array<Record<string, unknown>> = []
+    const ctx = {
+      xingyuan: store,
+      tools: { register: (def: Record<string, unknown>) => registered.push(def) },
+      userQuestions: { ask: async () => ({ answers: [{ selected: ['确认'] }] }) },
+    } as unknown as Parameters<typeof registerTools>[0]
+    registerTools(ctx, makeConfig(true))
+    for (const def of registered) {
+      const parameters = (def.parameters ?? {}) as Record<string, { description?: string }>
+      for (const [param, spec] of Object.entries(parameters)) {
+        if (!/^(taskId|taskIds|wishId|wishIds)$/.test(param)) continue
+        expect(spec.description ?? '', `${def.name as string}.${param} 缺 ID 纪律说明`).toContain('真实值')
+      }
+    }
   })
 })

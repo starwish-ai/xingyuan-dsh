@@ -30,6 +30,9 @@ export function SwatchRow(props: {
         key,
         type: 'button',
         className: `xy-swatch${picked ? ' xy-picked' : ''}`,
+        // busy 传导到色板本体：写操作在途时 22 格一并禁用——守卫吞掉的重入点击
+        // 不再是无反馈的「点了没反应」（守卫语义对用户可见化）
+        disabled: props.busy === true,
         style: {
           ...categoryVars(key, ''),
           background: 'hsl(var(--cat-h) calc(var(--cat-sbg, 58) * 1%) 52%)',
