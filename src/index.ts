@@ -9,6 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { makeXingyuanStore, xingyuanDomainSpec } from './domain.js'
+import { installPrefSettings } from './pref-settings.js'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { registerXingyuanRoutes } from './routes/index.js'
 import { ensurePresetRoot } from './preset-root.js'
@@ -59,6 +60,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   })
   // 界面偏好命名空间（标签页显隐）常驻注册：不依赖 settings 服务存在，服务挂载后自动生效
   installUiSettings(ctx)
+  // 对话偏好命名空间（二次确认 + 记忆注入上限）常驻注册：与界面偏好同款时序。
+  // 返回的读取 thunk 由领域服务持有，preset 层经 ctx.xingyuan.prefs() 读取——
+  // 命名空间必须常驻，否则整页可见而数据随 preset 懒加载缺席，写入静默失败。
+  const readPrefs = installPrefSettings(ctx)
   // preset 发布成功后再开领域；两步就绪后才 provide，注入方（preset 子树）由
   // cordis inject 语义等待本行激活完成
   await ensurePresetRoot()
@@ -68,7 +73,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     return
   }
   domain = opened
-  ctx.provide('xingyuan', makeXingyuanStore(opened))
+  ctx.provide('xingyuan', makeXingyuanStore(opened, readPrefs))
   registerXingyuanRoutes(webServer, ctx.xingyuan, config)
   if (config.repairSessionLogs) {
     try {

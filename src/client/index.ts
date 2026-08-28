@@ -11,7 +11,7 @@ import { STYLE_TEXT } from './styles.js'
 import { CARD_VIEWS } from './cards.js'
 import type { XyState } from './types.js'
 import { installTabVisibility } from './tab-visibility.js'
-import { SettingsSection, type SettingsScopeLike, type UiScopeLike } from './pages/settings.js'
+import { SettingsSection, type PrefScopeLike, type UiScopeLike } from './pages/settings.js'
 
 export const inject = ['slots', 'settingsScope', 'conversationEvents']
 
@@ -114,13 +114,15 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('conversation.view', () => installTabVisibility(ctx))
 
   // 星愿设置整页（设置 → 星愿）：教练风格/画像（星愿库）+ 二次确认开关与注入上限
-  // （preset 命名空间）+ 标签页显隐（bundle 常驻命名空间 xingyuan-ui，未选星愿也可调）
+  // （bundle 常驻命名空间 xingyuan-pref）+ 标签页显隐（bundle 常驻命名空间 xingyuan-ui）。
+  // 两个偏好命名空间都挂在常驻层：整页由本文件无条件注册，命名空间若随 preset 懒加载
+  // 缺席，就会出现「整页可见但两项写不进去且静默失败」。
   ctx.slots.inject('settings.section', () => {
-    const scope = ctx.settingsScope.bind({ namespace: 'xingyuan' }) as unknown as SettingsScopeLike
+    const prefscope = ctx.settingsScope.bind({ namespace: 'xingyuan-pref' }) as unknown as PrefScopeLike
     const uiscope = ctx.settingsScope.bind({ namespace: 'xingyuan-ui' }) as unknown as UiScopeLike
     return ctx.slots.register(
       { name: 'settings.section', id: 'xingyuan', order: 60, label: () => t('settings.tabLabel'), locale: XY_NS },
-      () => SettingsSection({ scope, uiscope }),
+      () => SettingsSection({ scope: prefscope, uiscope }),
     )
   })
 }

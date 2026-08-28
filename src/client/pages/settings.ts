@@ -1,16 +1,25 @@
 /** 星愿设置整页（设置 → 星愿）：教练风格/画像（星愿库）+ 二次确认开关与注入上限
- * （preset 命名空间）+ 标签页显隐（bundle 常驻命名空间 xingyuan-ui，未选星愿也可调）。 */
+ * （bundle 常驻命名空间 xingyuan-pref）+ 标签页显隐（bundle 常驻命名空间 xingyuan-ui，
+ * 未选星愿也可调）。 */
 import { createElement, useEffect, useRef, useState, useSyncExternalStore, type ReactElement } from 'react'
 import { getJson, postJson } from '../api.js'
 import { toastError } from '../ui.js'
 import { useXyT, activeLocale, type XyKey } from '../i18n.js'
 import { TAB_IDS, type TabId, type TabVisibilityMode } from '../../tab-policy.js'
+import {
+  MEMORY_LIMIT_MAX,
+  MEMORY_LIMIT_MIN,
+  PREF_DEFAULTS,
+  parseMemoryLimit,
+} from '../../pref-policy.js'
 
-/** 与 dsh-client-runtime 的 SettingsScope 快照对齐的叶子视图（只读字段）。 */
-interface ScopeSnapshotLike {
+/** xingyuan-pref 命名空间快照（对话偏好字段）。 */
+interface PrefScopeSnapshotLike {
   readonly status: 'loading' | 'ready' | 'unavailable'
   readonly value?: { readonly confirmWrites?: boolean; readonly memoryInjectLimit?: number }
   readonly writable: boolean
+  /** `host` 与宿主文档同步；`memory` 为远程/临时模式，此时任何写入都不会落盘。 */
+  readonly mode: 'host' | 'memory'
 }
 
 /** xingyuan-ui 命名空间快照（标签页显隐字段）。 */
@@ -34,9 +43,11 @@ export interface UiScopeLike {
 /**
  * settingsScope.bind() 返回的真实形状：getSnapshot()/subscribe()/set()/unset()。
  * 注意 scope 本身没有 .value 字段——值在快照里（此前直接读 scope.value 导致整节渲染崩溃）。
+ * 另：set() 失败是 resolve 而非 reject（内部 catch 后静默 recover），故调用方须事后
+ * 比对快照确认落盘，见下方 verifyWritten。
  */
-export interface SettingsScopeLike {
-  getSnapshot(): ScopeSnapshotLike
+export interface PrefScopeLike {
+  getSnapshot(): PrefScopeSnapshotLike
   subscribe(listener: () => void): () => void
   set(field: string, value: unknown): Promise<void>
   unset(field: string): Promise<void>
@@ -69,7 +80,7 @@ const TAB_LABEL_KEYS: Record<TabId, XyKey> = {
   memory: 'tab.memory',
 }
 
-export function SettingsSection(props: { scope: SettingsScopeLike; uiscope: UiScopeLike }): ReactElement {
+export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeLike }): ReactElement {
   const t = useXyT()
   const scope = props.scope
   // 正确订阅：useSyncExternalStore + getSnapshot（scope 契约见 dsh-client-runtime contract/settings-scope）
@@ -78,7 +89,7 @@ export function SettingsSection(props: { scope: SettingsScopeLike; uiscope: UiSc
     () => scope.getSnapshot(),
   )
   const writable = snap.status === 'ready' && snap.writable
-  const limit = String(snap.value?.memoryInjectLimit ?? 40)
+  const limit = String(snap.value?.memoryInjectLimit ?? PREF_DEFAULTS.memoryInjectLimit)
 
   // 界面偏好命名空间（标签页显隐）独立订阅：两个命名空间各自走自己的快照
   const uisnap = useSyncExternalStore(
@@ -96,6 +107,9 @@ export function SettingsSection(props: { scope: SettingsScopeLike; uiscope: UiSc
   // 记忆注入上限：草稿态编辑（null=显示快照值），失焦才校验提交——避免逐键持久化与非法中间值死锁
   const [limitDraft, setLimitDraft] = useState<string | null>(null)
   const [limitError, setLimitError] = useState(false)
+  // 记忆注入上限：写入在途的乐观值（与开关的 pendingToggle 同款，用于禁用控件并顶住回显，
+  // 否则提交后到快照回折前会闪回旧值）
+  const [pendingLimit, setPendingLimit] = useState<number | undefined>(undefined)
   const [saving, setSaving] = useState(false)
   const [savedMsg, setSavedMsg] = useState('')
   // 二次确认开关：本地乐观值（undefined=跟随远端快照）——写入在途时 UI 立即响应，失败回滚
@@ -106,8 +120,21 @@ export function SettingsSection(props: { scope: SettingsScopeLike; uiscope: UiSc
   const savedTimer = useRef<number | undefined>(undefined)
   // 档案加载代数守卫：慢响应不得覆盖用户已开始的草稿
   const profileSeqRef = useRef(0)
-  // 开关显示值：乐观本地值优先（写入在途），否则跟随远端快照
-  const confirmWrites = pendingToggle !== undefined ? pendingToggle : snap.value?.confirmWrites !== false
+  // 偏好写序号：两个控件共用同一个 scope（即同一条写队列）。控制器以 writeGeneration
+  // 做栅栏——一次写被更新的写取代时只记 pendingRevision、不回折快照，而其 .then 又
+  // 先于后继写执行，此时比对快照必然读到旧值。故只有最后结算的那次有权判定成败。
+  const writeSeqRef = useRef(0)
+  // 开关显示值：乐观本地值优先（写入在途），否则远端快照，值缺席回落 schema 默认。
+  // 不可写成 `!== false`——那样「值未知」会被渲染成「已开启」，安全策略类开关尤其不能撒谎。
+  const confirmWrites = pendingToggle ?? snap.value?.confirmWrites ?? PREF_DEFAULTS.confirmWrites
+  // 偏好区提示：判定顺序不可换——memory 模式下 status 同样是 unavailable，
+  // 先判 mode 才不会把「远程/临时模式」误报成「命名空间未就绪」
+  const prefNoticeKey: XyKey | undefined =
+    snap.status === 'loading' ? 'settings.pref.loading'
+      : snap.mode === 'memory' ? 'settings.pref.unavailable'
+      : snap.status === 'unavailable' ? 'settings.pref.notRegistered'
+      : !snap.writable ? 'settings.pref.readOnly'
+      : undefined
   // 标签页显隐显示值：乐观优先，否则远端快照，再兜底 schema 默认
   const tabMode: TabVisibilityMode = pendingMode ?? uisnap.value?.tabVisibilityMode ?? 'follow'
   const hiddenTabs: readonly TabId[] = pendingHidden ?? uisnap.value?.hiddenTabs ?? []
@@ -172,23 +199,56 @@ export function SettingsSection(props: { scope: SettingsScopeLike; uiscope: UiSc
     run().catch(toastError).finally(() => setSaving(false))
   }
 
+  /**
+   * 校验偏好是否真的落盘：scope.set() 失败时是 resolve 而非 reject（内部 catch 后静默
+   * recover），故只能在写入结算后比对快照——值没变即视为未保存，须显式告知用户。
+   *
+   * seq 为发起写时取的号：只有仍是队列里最后一次写才校验，否则快照本就不会回折本次
+   * 的结果（被更新的写取代），比对必然误报。见 writeSeqRef。
+   */
+  const verifyWritten = (
+    seq: number,
+    field: 'confirmWrites' | 'memoryInjectLimit',
+    value: boolean | number,
+  ): void => {
+    if (seq !== writeSeqRef.current) return
+    if (scope.getSnapshot().value?.[field] !== value) toastError(new Error(t('settings.pref.writeFailed')))
+  }
+
   const commitLimit = (): void => {
     const raw = limitDraft
     setLimitDraft(null)
     setLimitError(false)
-    if (raw === null || !writable || raw.trim() === '') return
-    const n = Number(raw)
+    if (raw === null || !writable) return
+    // 空串视为放弃编辑：静默回显保存值。若在此报错，会同时出现「已填回旧值」与
+    // 「请输入 5-200 的整数」两条互相矛盾的信息。
+    if (raw.trim() === '') return
+    const parsed = parseMemoryLimit(raw)
     // 非法输入就地报错（不再静默回弹）：用户明确知道哪里错、该怎么改
-    if (!Number.isFinite(n) || Math.round(n) !== n) { setLimitError(true); return }
-    const clamped = Math.min(200, Math.max(5, Math.round(n)))
-    if (clamped !== Number(raw)) {
-      // 越界但可夹取：直接按夹取值提交并回显，同时给出行内提示
-      void scope.set('memoryInjectLimit', clamped).then(() => setLimitDraft(String(clamped))).catch(toastError)
+    if (parsed === undefined) { setLimitError(true); return }
+    if (parsed.clamped) {
+      // 越界但可夹取：按夹取值提交并回显，同时给出行内提示
+      const seq = ++writeSeqRef.current
+      setPendingLimit(parsed.value)
+      void scope.set('memoryInjectLimit', parsed.value)
+        .then(() => {
+          setLimitDraft(String(parsed.value))
+          setPendingLimit(undefined)
+          verifyWritten(seq, 'memoryInjectLimit', parsed.value)
+        })
+        .catch((err: unknown) => { setPendingLimit(undefined); toastError(err) })
       setLimitError(true)
       return
     }
-    if (clamped === snap.value?.memoryInjectLimit) return
-    void scope.set('memoryInjectLimit', clamped).catch(toastError)
+    if (parsed.value === snap.value?.memoryInjectLimit) return
+    const seq = ++writeSeqRef.current
+    setPendingLimit(parsed.value)
+    void scope.set('memoryInjectLimit', parsed.value)
+      .then(() => {
+        setPendingLimit(undefined)
+        verifyWritten(seq, 'memoryInjectLimit', parsed.value)
+      })
+      .catch((err: unknown) => { setPendingLimit(undefined); toastError(err) })
   }
 
   const coachLabel = (id: string | undefined): string => {
@@ -276,11 +336,10 @@ export function SettingsSection(props: { scope: SettingsScopeLike; uiscope: UiSc
       createElement('p', { className: 'xy-hint' }, t('settings.profile.sharedHint'))),
     createElement('section', { className: 'xy-panel' },
       createElement('h3', { className: 'xy-panel-head' }, t('settings.pref.title')),
-      snap.status === 'unavailable'
-        ? createElement('p', { className: 'xy-hint' }, t('settings.pref.unavailable'))
-        : snap.status === 'loading'
-          ? createElement('p', { className: 'xy-hint' }, t('settings.pref.loading'))
-          : null,
+      // 整页 section 没有官方卡片那套「按命名空间自动显隐」的保护，失败呈现归注册方
+      prefNoticeKey !== undefined
+        ? createElement('p', { className: 'xy-hint' }, t(prefNoticeKey))
+        : null,
       createElement('label', { className: 'xy-field' },
         createElement('span', { className: 'xy-field-head' },
           createElement('input', {
@@ -294,8 +353,9 @@ export function SettingsSection(props: { scope: SettingsScopeLike; uiscope: UiSc
               // 乐观写：先落 UI 再等持久化；失败回滚到快照口径并 toast
               const next = e.target.checked
               setPendingToggle(next)
+              const seq = ++writeSeqRef.current
               void scope.set('confirmWrites', next)
-                .then(() => setPendingToggle(undefined))
+                .then(() => { setPendingToggle(undefined); verifyWritten(seq, 'confirmWrites', next) })
                 .catch((err: unknown) => {
                   setPendingToggle(undefined)
                   toastError(err)
@@ -307,11 +367,14 @@ export function SettingsSection(props: { scope: SettingsScopeLike; uiscope: UiSc
       createElement('label', { className: 'xy-field' },
         createElement('span', { className: 'xy-field-head' }, t('settings.pref.memoryLimit')),
         createElement('input', {
-          type: 'number', min: 5, max: 200, className: 'xy-input xy-input-num', name: 'memoryInjectLimit', inputMode: 'numeric',
+          type: 'number', min: MEMORY_LIMIT_MIN, max: MEMORY_LIMIT_MAX,
+          className: 'xy-input xy-input-num', name: 'memoryInjectLimit', inputMode: 'numeric',
           'aria-label': t('settings.pref.memoryLimit'),
           'aria-invalid': limitError || undefined,
           ...(limitError ? { 'aria-describedby': 'xy-limit-error' } : {}),
-          value: limitDraft ?? limit, disabled: !writable,
+          // 写入在途时顶住乐观值并禁用（与开关同款），避免闪回旧值与并发写交错
+          value: limitDraft ?? (pendingLimit !== undefined ? String(pendingLimit) : limit),
+          disabled: !writable || pendingLimit !== undefined,
           onChange: (e: { target: { value: string } }) => { setLimitDraft(e.target.value); setLimitError(false) },
           onBlur: commitLimit,
           onKeyDown: (e: { key: string; currentTarget: { blur(): void } }) => {

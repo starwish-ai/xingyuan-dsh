@@ -4,6 +4,7 @@
  */
 import { xingyuanDomainSpec } from '../src/domain.js'
 import type { XingyuanStore } from '../src/domain.js'
+import { PREF_DEFAULTS } from '../src/pref-policy.js'
 export function memoryStore(): XingyuanStore {
   const tables = new Map<string, Map<string, unknown>>()
   for (const name of Object.keys(xingyuanDomainSpec.tables)) tables.set(name, new Map())
@@ -36,6 +37,7 @@ export function memoryStore(): XingyuanStore {
   return {
     spec: xingyuanDomainSpec,
     domain,
+    prefs: () => PREF_DEFAULTS,
     newId: () => `id-${++idSeq.n}`,
     checkinKey: (taskId: string, date: string) => `${taskId}|${date}`,
   }

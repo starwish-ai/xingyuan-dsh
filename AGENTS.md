@@ -71,6 +71,8 @@ XingYuan-Dsh/
 ├── src/
 │   ├── index.ts            # bundle 常驻入口：发布 preset → 开领域 → provide('xingyuan') → 注册路由
 │   ├── tab-policy.ts       # 标签页显隐纯策略与常量（host/client 共用，见 §5.11）
+│   ├── pref-policy.ts      # 对话偏好纯策略与常量（host/client 共用，见 §5.8）
+│   ├── pref-settings.ts    # bundle 层对话偏好命名空间 xingyuan-pref（二次确认/注入上限）
 │   ├── ui-settings.ts      # bundle 层界面偏好命名空间 xingyuan-ui（标签页显隐常驻可调）
 │   ├── domain.ts           # defineDomain 四张表 + global schema + XingyuanStore 服务
 │   ├── sqlite.ts           # 自带 sqlite 存储后端（StorageBackend 契约实现）
@@ -363,14 +365,49 @@ wish-guide/task-guide/memory-guide/config-guide/chart-guide/reminder-guide(110�
 关键行为准则已写入 identity/constraints：执行操作类工具后必须一句话明确告知结果；
 预工具叙述在工具回合结束丢弃属于 dsh 轮次流程天然行为，无需额外处理。
 
-### 5.8 设置卡（preset/side.ts ↔ client/pages/settings.ts）
+### 5.8 设置页（设置 → 星愿）与两个常驻命名空间
 
-- preset 侧：`settingsNamespace('xingyuan')` 定义命名空间，
-  `installSettingsSection(ctx, NS, Config, config, { setSource, onChange })` 安装；
-  工具侧持 getter 对象读 `source()`，设置热改后即时生效，无需重建注册。
-- client 侧：设置整页读写同一 namespace（settingsScope）。
+设置整页由 client 半侧 `slots.inject('settings.section')` **无条件注册**，常驻可见；
+页内四组分节的数据来源分成两类：
+
+| 分节 | 数据源 | 命名空间 |
+|---|---|---|
+| 教练风格 / 用户画像 | 星愿数据库 global 单例，经 `/xingyuan/api/profile` | — |
+| 二次确认 / 记忆注入上限 | **bundle 层常驻**命名空间 `xingyuan-pref` | `src/pref-settings.ts` |
+| 标签页显示 | **bundle 层常驻**命名空间 `xingyuan-ui` | `src/ui-settings.ts` |
+
+- **偏好必须常驻**（踩过的坑，勿改回去）：settings 子系统明载「注册绑定调用方 fiber，
+  dispose 该 fiber 即移除 namespace」。preset 挂载虽是按 preset 常驻，但**懒加载**——
+  首次开星愿会话才建立。此前两项偏好挂在 preset 层，于是每次 dsh 重启后、
+  开过星愿会话之前，整页可见而命名空间缺席，两项 unavailable 且写入静默失败
+  （`scope.set()` 失败是 resolve 而非 reject），表现为「点了弹回原样、没有任何提示」。
+  官方 cookbook 的 `settings.plugin.item` 卡片会按「Host 是否服务该命名空间」自动显隐，
+  **整页 `settings.section` 没有这层保护**——`slots.d.ts` 契约把失败呈现的责任
+  明确交给注册方。故选择让数据常驻以对齐常驻 UI，而非让 UI 跟随数据（那会让设置页
+  出现部分字段时有时无的割裂，且安全策略类设置「有时候找不到」不可接受）。
+- **preset 层不再注册 settings 命名空间**：`src/preset/side.ts` 的 `Config` 只剩无 UI 的
+  组合层参数，经 `ctx.xingyuan.prefs()` 读对话偏好（thunk，每次调用取当前解析值，
+  热改即时生效）。官方口径「组合配置仍留在 cordis.yml——namespace 只承载用户可编辑
+  子集」，无 UI 的字段本就不该占命名空间。
+- **判定新设置项归属的口径**：作用域属于「单次会话的能力」（工具参数、提示词行为、
+  skill）→ preset 层；属于「用户的全局偏好」（安全策略、界面、资源上限）→ bundle 常驻层。
+- client 侧：整页经 `ctx.settingsScope.bind({ namespace })` 读写，两个偏好命名空间各自
+  独立订阅；判定不可用的提示按「`mode==='memory'`（远程/临时）→ `status==='unavailable'`
+  （未就绪）→ `!writable`（只读）」顺序分支——顺序不可换，memory 模式下 status 同样是
+  unavailable。
+- **两个控件共用一个 scope = 共用一条写队列**：控制器以 `writeGeneration` 做栅栏，
+  一次写被更新的写取代时**只记 `pendingRevision`、不回折快照**，而被取代的旧写其
+  `.then` 又先于后继写执行——此时比对快照必然读到旧值。故写入结算后校验落盘
+  （`verifyWritten`）必须用组件内写序号判定"自己仍是队列里最后一次"，
+  且每个控件都要有 pending 守卫（缺守卫就会误报"保存未生效"）。见 settings.ts。
+- **`ctx.inject` 即使依赖已就绪也在后续微任务才回调**（实测）：注册命名空间的断言
+  须 await 一拍，不能写同步断言。见 test/pref-settings.test.ts。
 - 官方限制：设置卡本质是 schemastery 表单，无自定义按钮——引导闭环必须 chat-first，
   复杂交互（应用内确认对话框/toast）做在 client 半侧 `ui.ts`。
+- **工具描述是注册时烘焙的静态字符串**：dsh-tools 校验 `description` 必须是 string
+  （不支持 getter），改设置也不会重建描述。故凡受设置开关门控的行为，描述里**一律
+  不可断言**其发生——只能写成"开与关都成立"的措辞（如 `CREATE_NOTE`），否则模型会
+  向用户宣称做了实际没做的事。删除类始终确认，不受门控，可以断言（见 tools.ts 组注释）。
 
 ### 5.9 HTTP 路由（routes/）
 
@@ -466,8 +503,12 @@ accent 点缀孤点，形似渲染事故）。半透明衍生色一律在 styles
 - **设置宿主**：bundle 层命名空间 `xingyuan-ui`（`src/ui-settings.ts`，
   `installSettingsSection` 经 `ctx.inject(['settings'])` 等待服务挂载，缺席自动不跑）。
   字段 `tabVisibilityMode` + `hiddenTabs`，默认值写进 schema 与 `tab-policy` 常量同源。
-  挂在常驻层而非 preset 层：未选星愿也能调，且「全部隐藏」状态下开关仍可达
-  （preset 命名空间随星愿会话卸载而消失，会死锁）。
+  挂在常驻层而非 preset 层：未选星愿也能调，且「全部隐藏」状态下开关仍可达。
+  > 更正（原注「preset 命名空间随星愿会话卸载而消失」不准确）：按官方 agent-presets
+  > 文档，preset 挂载是 **per-preset standing mount**——进程内只挂一次，**只随整棵树
+  > 卸载**，不随单个会话关闭而消失。真正的问题是它**懒加载**：首次开星愿会话才建立。
+  > 故准确表述为「dsh 重启后、开过星愿会话之前，preset 层命名空间不存在」，结论
+  > （必须挂常驻层）不变，且同样适用于对话偏好，见 §5.8。
 - **注册机制**（`src/client/tab-visibility.ts`）：`conversation.view` 标签环按
   「全部已注册 entries」投影标签、无 per-session 过滤，故按会话显隐只能动态维护
   注册表——控制器订阅「设置快照 × sessions 列表快照」，任一变化时 dispose 旧组、
@@ -546,7 +587,8 @@ wishProgress / wishAchievement / continuousCheckin / checkinTimeDistribution / w
 | 来源 | 字段（默认值） |
 |---|---|
 | bundle 主行 Config | rangeDefaultDays(7)、rangeMaxDays(31)、memoryListLimit(500)、repairSessionLogs(true) |
-| preset side Config（同时映射为 Web 设置页表单项） | memoryInjectLimit(40)、batchWishLimit(50)、batchTaskLimit(100)、chartTrendDays(14)、chartDistributionDays(30)、chartMaxDays(90)、chartRankLimit(10)、chartRankMax(20)、confirmWrites(true) |
+| preset side Config（无 Web 设置界面，仅组合层可调） | batchWishLimit(50)、batchTaskLimit(100)、chartTrendDays(14)、chartDistributionDays(30)、chartMaxDays(90)、chartRankLimit(10)、chartRankMax(20) |
+| bundle 对话偏好命名空间 xingyuan-pref（Web 设置页「对话偏好」卡） | confirmWrites(true)、memoryInjectLimit(40，5-200 整数，`step(1)` 让服务端也拒绝小数)——见 §5.8 |
 | bundle 界面偏好命名空间 xingyuan-ui（Web 设置页「标签页显示」卡） | tabVisibilityMode(follow)、hiddenTabs([])——schemastery 枚举用 const+union 表达，见 §5.11 |
 
 配置变更触发 HMR 热替换；不做任何跨重载的模块级单例状态。
@@ -598,6 +640,11 @@ npm provenance 开启）。
 9. **标签页显隐默认跟随会话预设**：六个会话视图标签默认仅在星愿预设的会话显示，
    设置可切「始终显示/始终隐藏」并按标签勾选；界面偏好命名空间常驻 bundle 层
    （未选星愿也可调，避免「全部隐藏后开关不可达」死锁，见 §5.11）。
+10. **用户偏好一律常驻 bundle 层**：设置整页常驻可见，故任何有 Web 设置界面的偏好
+    （安全策略、界面、资源上限）都必须注册在 bundle 层常驻命名空间，不得挂 preset
+    层——preset 挂载懒加载，会导致「重启后未开过星愿会话时偏好不可改且写入静默失败」。
+    判定口径：作用域属「单次会话的能力」→ preset 层；属「用户的全局偏好」→ bundle 层
+    （见 §5.8）。preset 层按需经服务（如 `ctx.xingyuan.prefs()`）读取常驻偏好。
 
 ## 11. 已知限制
 
@@ -615,6 +662,13 @@ npm provenance 开启）。
   环境，凡用它的属性按无效处理（空态插画曾因此整体隐形只剩孤立色点，已移除插画
   并全站改显式 rgba 令牌，见 styles.ts 头注）。
 - 主行 id 与 preset 目录名避让、roots 不能 patch 追加（§4 两个硬约束）。
+- 设置整页（`settings.section`）没有官方 `settings.plugin.item` 卡片那套「按命名空间
+  自动显隐」的保护：整页无条件渲染，注册方必须自己呈现不可用与失败态（§5.8）。
+  且官方 `scope.set()` 失败时是 **resolve 而非 reject**（内部 catch 后静默 recover），
+  `toastError` 不会自动触发——client 必须在写入结算后比对快照确认落盘。
+- 非回环连接（浏览器地址不是 `localhost` / `127.0.0.0/8` / `::1`）下，settings RPC 被
+  宿主降级为 memory 模式：所有偏好命名空间 `mode==='memory'`、不可写。这是 dsh 的安全
+  约束（settings RPCs are loopback-only），设置页只能提示，无法绕过。
 - dsh 技术预览期升级锁版本 `0.1.1-rc.2`；跨版本升级前核对 release notes 与排障索引。
 
 ## 12. 官方参考文档

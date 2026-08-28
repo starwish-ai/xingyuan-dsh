@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import { xingyuanDomainSpec } from '../src/domain.js'
 import type { XingyuanGlobal, XingyuanStore } from '../src/domain.js'
+import { PREF_DEFAULTS } from '../src/pref-policy.js'
 import { completeMicroStep, getMicroAction, restartMicroAction, startMicroAction } from '../src/micro.js'
 
 function memoryStore(): XingyuanStore {
@@ -17,7 +18,13 @@ function memoryStore(): XingyuanStore {
     table: () => { throw new Error('micro tests do not touch tables') },
     close: async () => {},
   } as unknown as XingyuanStore['domain']
-  return { spec: xingyuanDomainSpec, domain, newId: () => 'x', checkinKey: (t: string, d: string) => `${t}|${d}` }
+  return {
+    spec: xingyuanDomainSpec,
+    domain,
+    prefs: () => PREF_DEFAULTS,
+    newId: () => 'x',
+    checkinKey: (t: string, d: string) => `${t}|${d}`,
+  }
 }
 
 const STEPS = [

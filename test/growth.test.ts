@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { xingyuanDomainSpec } from '../src/domain.js'
 import type { XingyuanStore } from '../src/domain.js'
+import { PREF_DEFAULTS } from '../src/pref-policy.js'
 import {
   BASE_EXPERIENCE,
   LEVEL_CONFIGS,
@@ -41,7 +42,13 @@ function memoryStore(): XingyuanStore {
     },
     close: async () => {},
   } as unknown as XingyuanStore['domain']
-  return { spec: xingyuanDomainSpec, domain, newId: () => 'x', checkinKey: (taskId: string, date: string) => `${taskId}|${date}` }
+  return {
+    spec: xingyuanDomainSpec,
+    domain,
+    prefs: () => PREF_DEFAULTS,
+    newId: () => 'x',
+    checkinKey: (taskId: string, date: string) => `${taskId}|${date}`,
+  }
 }
 
 /** 写入一条打卡记录（键 = taskId|date，与真实存储一致）。 */

@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { domainTable, defineDomain, type Domain, type DomainTableSpec } from '@deepseek-ai/dsh-storage-domain'
 import { z } from 'zod'
+import type { PrefSettings } from './pref-policy.js'
 
 export const DOMAIN_VERSION = 1
 
@@ -152,6 +153,8 @@ export type MemoryRecord = TableValue<(typeof xingyuanDomainSpec.tables)['memori
 export interface XingyuanStore {
   readonly spec: typeof xingyuanDomainSpec
   readonly domain: Domain<typeof xingyuanDomainSpec>
+  /** 对话偏好：bundle 层常驻命名空间的解析值（非领域数据），每次调用读当前值。 */
+  prefs(): PrefSettings
   newId(): string
   checkinKey(taskId: string, date: string): string
 }
@@ -165,10 +168,14 @@ declare module '@deepseek-ai/cordis' {
  type TableValue<S extends DomainTableSpec> = S extends DomainTableSpec<string, infer V> ? V : never
 
 /** 由已打开领域构造服务句柄（bundle 入口组装用）。 */
-export function makeXingyuanStore(domain: Domain<typeof xingyuanDomainSpec>): XingyuanStore {
+export function makeXingyuanStore(
+  domain: Domain<typeof xingyuanDomainSpec>,
+  readPrefs: () => PrefSettings,
+): XingyuanStore {
   return {
     spec: xingyuanDomainSpec,
     domain,
+    prefs: readPrefs,
     newId: () => randomUUID(),
     checkinKey: (taskId, date) => `${taskId}|${date}`,
   }

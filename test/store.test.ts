@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import { xingyuanDomainSpec } from '../src/domain.js'
 import type { XingyuanStore } from '../src/domain.js'
+import { PREF_DEFAULTS } from '../src/pref-policy.js'
 import { createTask, createWish, performCheckIn, cancelCheckIn, claimTask, planForDay, updateTask, updateWish } from '../src/store.js'
 import { removeTaskCompletely } from '../src/cascade.js'
 import { addDays, todayIso } from '../src/opportunity.js'
@@ -42,6 +43,7 @@ function memoryStore(): XingyuanStore {
   return {
     spec: xingyuanDomainSpec,
     domain,
+    prefs: () => PREF_DEFAULTS,
     newId: () => `id-${++idSeq.n}`,
     checkinKey: (taskId: string, date: string) => `${taskId}|${date}`,
   }

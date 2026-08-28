@@ -186,10 +186,20 @@ function wishNameOf(store: XingyuanStore, task: TaskRecord): string | undefined 
   return task.wishId !== undefined ? store.domain.table('wishes').get(task.wishId)?.title : undefined
 }
 
-/** 愿望记录构造已收口至 store.createWish/updateWish（校验同源）；此处保留字段预检以便在确认卡前失败。 */
-const DELETE_NOTE = '删除不可恢复：会弹出系统确认卡片，直接调用等待确认结果即可，无需自行询问用户。'
-const CREATE_NOTE = '会弹出系统确认卡片展示完整创建内容，直接调用等待确认结果即可，无需自行询问用户；用户在确认卡取消则向用户说明并询问要调整的地方。'
-const CANCEL_CHECKIN_NOTE = '会弹出系统确认卡片，直接调用等待确认结果即可，无需自行询问用户。'
+/**
+ * 写操作的模型侧提示文案（拼进工具 description）。
+ *
+ * 两类不可混用：
+ * - `DELETE_NOTE`：删除类**始终**弹确认卡，不受设置开关影响，故可以断言「会弹卡」。
+ * - `CREATE_NOTE` / `CANCEL_CHECKIN_NOTE`：受「写操作二次确认」开关门控（见
+ *   `confirmGate`），而工具描述是注册时烘焙的静态字符串——dsh-tools 校验
+ *   `description` 必须是 string（不支持 getter），改设置也不会重建描述。故这两条
+ *   一律写成「开与关都成立」的措辞：绝不可断言会弹卡，否则关掉开关后模型会向用户
+ *   宣称已弹出确认卡，而实际没有卡片。
+ */
+const DELETE_NOTE = '删除不可恢复：会弹出系统确认卡片，直接调用等待确认结果即可，无需事先询问用户。'
+const CREATE_NOTE = '无需事先询问用户，直接调用即可；结果返回前不要宣称已创建。若系统弹出确认卡片且用户在卡片上取消，则向用户说明并询问要调整的地方。'
+const CANCEL_CHECKIN_NOTE = '无需事先询问用户，直接调用即可；结果返回前不要宣称已取消。'
 
 /** 分类颜色白名单（schema enum 与展示色共用同一事实源）。 */
 const COLOR_KEY_ENUM: readonly string[] = CATEGORY_COLOR_KEYS
@@ -691,7 +701,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
   ctx.tools.register(defineTool({
     name: 'check_in_task',
     description: '任务打卡。何时使用：用户完成任务并需要记录打卡时使用。支持指定日期打卡（日历补卡/提前勾），不传日期则自动勾选今天（含）起最早未勾选的打卡日——过去的日期不会自动补，补卡请在日历中指定日期。'
-      + '注意：本工具会弹出系统确认卡片，确认后自动执行；今天不是打卡日时自动勾选的是未来日期（提前打卡 = 承诺当天完成），回复时请用「打卡日」等通俗用语并如实告知勾选日期。',
+      // 与 CREATE_NOTE 同口径：是否弹卡受设置门控，描述里不可断言（见 DELETE_NOTE 组注释）
+      + '注意：无需事先询问用户，直接调用即可；今天不是打卡日时自动勾选的是未来日期（提前打卡 = 承诺当天完成），回复时请用「打卡日」等通俗用语并如实告知勾选日期。',
     parameters: {
       taskId: { type: 'string', required: true, description: '任务ID，取列表返回的真实值' },
       checkInDate: { type: 'string', description: '打卡日期，可选。yyyy-MM-dd，必须是任务的打卡日；不传则自动勾选今天（含）起最早未勾选的打卡日' },
