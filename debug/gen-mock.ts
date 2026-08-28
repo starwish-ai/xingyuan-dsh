@@ -59,21 +59,24 @@ const DC = (n: string, extra = ''): string => DCELL('xy-dcell-checked', n, extra
 const DM = (n: string): string => DCELL('xy-dcell-missed', n)
 const DF = (n: string): string => DCELL('xy-dcell-future', n)
 
-// 4 行 × 7 列：窗口 8/3(Mon)..8/30(Sun)，today=8/27（周四，第 4 行）；首行前 2 占位演示错位对齐
+// 5 行：窗口=截至今日末 28 格口径——8/2..8/27（26 日）+ 预勾 8/29、8/30（28 日未打卡
+// 不进网格，27 后直接跳 29 演示稀疏）；today=8/27（周四，第 5 行）未打卡=future 底色
+// + accent 环（today 环不覆盖状态底色）；首行前 6 占位（8/2=周日）演示错位对齐。
 const dcells = [
-  BLANK, BLANK,
-  DC('3'), DM('4'), DC('5'), DF('6'), DF('7'), DC('8'), DC('9'),
+  BLANK, BLANK, BLANK, BLANK, BLANK, BLANK,
+  DC('2'),
+  DC('3'), DM('4'), DC('5'), DC('6'), DM('7'), DC('8'), DC('9'),
   DC('10'), DM('11'), DC('12'), DC('13'), DC('14'), DM('15'), DC('16'),
-  DC('17'), DF('18'), DF('19'), DF('20'), DC('21'), DC('22'), DC('23'),
-  DC('24'), DC('25'), DC('26'), DC('27', ' xy-dcell-today'), DF('28'), DF('29'), DF('30'),
+  DC('17'), DC('18'), DM('19'), DC('20'), DC('21'), DM('22'), DC('23'),
+  DC('24'), DC('25'), DC('26'), DF('27', ' xy-dcell-today'), DC('29'), DC('30'),
 ].join('')
-const dgridSummary = '近 28 个机会日：已打 17，未打 4，未来 7'
+const dgridSummary = '近 28 格窗口：已打 21（含预勾 2），漏打 6，今天待打卡'
 
 const detailLegend = `
 <div class="xy-legend">
   <span><i class="xy-dot xy-dcell-checked" aria-hidden="true"></i>已打卡</span>
   <span><i class="xy-dot xy-dcell-missed" aria-hidden="true"></i>未打卡</span>
-  <span><i class="xy-dot xy-dcell-future" aria-hidden="true"></i>未来机会日</span>
+  <span><i class="xy-dot xy-dcell-future" aria-hidden="true"></i>待打卡</span>
 </div>`
 
 /** 展开详情（镜像 detail.ts）：周对齐网格 + 操作区 [主操作][辅助][危险] 单行成组，无重复元信息行。 */
@@ -93,6 +96,7 @@ const detailOps = `
     <span class="xy-quick-label">操作</span>
     <div class="xy-detail-ops">
       <button class="xy-btn xy-btn-primary" type="button">✓ 打卡</button>
+      <button class="xy-btn" type="button" aria-label="撤销 8月30日 的打卡">取消打卡</button>
       <button class="xy-btn" type="button">让 AI 总结</button>
       <button class="xy-btn xy-btn-danger" type="button">删除</button>
     </div>

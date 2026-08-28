@@ -5,7 +5,7 @@
  * 完成全部步骤后引导用户打卡，不自动代打。
  */
 import type { MicroActionState, XingyuanStore } from './domain.js'
-import { ToolError } from './store.js'
+import { mutateGlobal, ToolError } from './store.js'
 
 /** 步骤数约束（对齐 Web AI 拆解 3-7 步）。 */
 export const MICRO_STEPS_MIN = 3
@@ -17,12 +17,13 @@ export function getMicroAction(store: XingyuanStore, taskId: string): MicroActio
 }
 
 async function writeGlobal(store: XingyuanStore, taskId: string, next: MicroActionState | undefined): Promise<void> {
-  const global = store.domain.global.get()
-  const rest = { ...global.microActions }
-  if (next === undefined) delete rest[taskId]
-  else rest[taskId] = next
-  const microActions = Object.keys(rest).length > 0 ? rest : undefined
-  await store.domain.global.set({ ...global, microActions })
+  // merge 基于串行队列内的最新快照：并发写不同任务互不吞并（lost-update 防护）
+  await mutateGlobal(store, (global) => {
+    const rest = { ...global.microActions }
+    if (next === undefined) delete rest[taskId]
+    else rest[taskId] = next
+    return { ...global, microActions: Object.keys(rest).length > 0 ? rest : undefined }
+  })
 }
 
 /**

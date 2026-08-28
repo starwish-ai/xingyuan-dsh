@@ -9,6 +9,7 @@
  * - 经验 = 每条打卡记录发放一份，按该记录所在日期的连续值加成（同日多条共享同一连续值）。
  */
 import type { XingyuanStore } from './domain.js'
+import { freshWishes } from './store.js'
 import { todayIso } from './opportunity.js'
 
 /** 等级配置行（t_level_config）。 */
@@ -176,19 +177,9 @@ export interface GrowthSummary {
  * （freshWish/freshTask 语义：进度跨日陈旧由读侧消除）。
  */
 export function growthSummary(store: XingyuanStore, today: string = todayIso()): GrowthSummary {
-  let totalWishes = 0
-  let completedWishes = 0
-  for (const [, wish] of store.domain.table('wishes').entries()) {
-    totalWishes++
-    let required = 0
-    let completed = 0
-    for (const [, task] of store.domain.table('tasks').entries()) {
-      if (task.wishId !== wish.wishId) continue
-      required += task.requiredDays
-      completed += task.completedDays
-    }
-    if (required > 0 && completed >= required) completedWishes++
-  }
+  // 单遍任务索引批量新鲜化（freshWishes），替代逐愿望嵌套全表扫描 O(W×T)
+  const wishes = freshWishes(store)
+  const completedWishes = wishes.filter((wish) => wish.progress >= 100).length
   let totalTasks = 0
   let completedTasks = 0
   for (const [, task] of store.domain.table('tasks').entries()) {
@@ -200,7 +191,7 @@ export function growthSummary(store: XingyuanStore, today: string = todayIso()):
     today,
     stats,
     level: resolveLevel(stats.totalExperience),
-    totalWishes,
+    totalWishes: wishes.length,
     completedWishes,
     totalTasks,
     completedTasks,

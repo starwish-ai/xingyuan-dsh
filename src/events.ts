@@ -71,6 +71,12 @@ export interface XingyuanChartEventData {
   readonly subtitle?: string
   readonly chartType: 'line' | 'column' | 'bar' | 'pie' | 'arcbars' | 'heatmap' | 'radar'
   readonly data: readonly XingyuanChartDatum[]
+  /**
+   * 生成时刻（ISO）：图表卡是 whole-value 冻结快照，重放时据此标注「生成于」，
+   * 避免历史会话里的旧图被误读为当前数据（事件溯源：事实不可变，标注让历史性可见）。
+   * optional：旧事件无此字段则不显示标注（诚实降级，不编造时间）。
+   */
+  readonly generatedAt?: string
 }
 
 /** 单个图表数据点。 */
@@ -81,6 +87,12 @@ export interface XingyuanChartDatum {
   readonly ratio?: number
   /** 分组序列名（weekComparison 等分组图用）。 */
   readonly series?: string
+  /**
+   * 无数据点（如 checkinRateTrend 的无安排日）：渲染为空槽而非 0 值柱——
+   * 「没有安排」≠「完成率为 0」，缺失必须显式可见（数据可视化 null≠zero 惯例）。
+   * optional：旧事件无此字段照常渲染，回放兼容。
+   */
+  readonly inactive?: boolean
 }
 
 /** 微行动步骤快照（事件卡展示用）。 */

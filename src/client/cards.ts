@@ -18,7 +18,7 @@ import { toast, toastError } from './ui.js'
 import { localYmd, softConfirm } from './hooks.js'
 import { useXyT, t, activeLocale } from './i18n.js'
 import { categoryVars } from '../category-color.js'
-import { cycleLabel, durationText, dateSuffix } from './pages/format.js'
+import { cycleLabel, durationText, dateSuffix, formatMediumDate, formatShortDate } from './pages/format.js'
 import type { XyState } from './types.js'
 
 /**
@@ -111,7 +111,7 @@ function TaskView(props: CardProps<'xy-task'>): ReactElement {
   const showClaim = !deleted && phase === 'idle' && task.status === 'pending'
   const showCheckIn = !deleted && phase !== 'done' && (task.status === 'in_progress' || phase === 'claimed')
   const preview = event.opportunityPreview.length > 0
-    ? t('task.upcoming', { dates: event.opportunityPreview.join(activeLocale() === 'en' ? ', ' : '、') })
+    ? t('task.upcoming', { dates: event.opportunityPreview.map((date) => formatShortDate(date)).join(activeLocale() === 'en' ? ', ' : '、') })
     : undefined
   return createElement('div', { className: `xy-card ${deleted ? 'xy-deleted' : ''}` },
     createElement('div', { className: 'xy-card-head' },
@@ -130,7 +130,7 @@ function TaskView(props: CardProps<'xy-task'>): ReactElement {
         ? createElement('button', { className: 'xy-btn xy-btn-primary xy-btn-inline', disabled: busy, onClick: () => run('checkin') }, t('action.checkin'))
         : null),
     createElement('div', { className: 'xy-meta' },
-      `${cycleLabel(task.checkInCycle)}${task.dueDate !== undefined ? ` · ${t('task.due', { date: task.dueDate })}` : ''} · ${durationText(task.completedDays, task.requiredDays)}`),
+      `${cycleLabel(task.checkInCycle)}${task.dueDate !== undefined ? ` · ${t('task.due', { date: formatShortDate(task.dueDate) })}` : ''} · ${durationText(task.completedDays, task.requiredDays)}`),
     deleted === false && preview !== undefined
       ? createElement('div', { className: 'xy-preview' }, preview)
       : null)
@@ -183,10 +183,10 @@ function CheckinView(props: CardProps<'xy-checkin'>): ReactElement {
       createElement('span', { className: `xy-glyph ${cancelled ? 'xy-glyph-back' : 'xy-glyph-ok'}`, 'aria-hidden': 'true' }, cancelled ? '↩' : '✓'),
       createElement('span', { className: 'xy-title' },
         cancelled
-          ? t('checkin.cancelled', { task: event.taskName, date: event.date })
+          ? t('checkin.cancelled', { task: event.taskName, date: formatShortDate(event.date) })
           : t('checkin.success', { task: event.taskName }))),
     createElement('div', { className: 'xy-meta' },
-      `${event.date}${event.wishName !== undefined ? ` · ${event.wishName}` : ''} · ${durationText(event.completedDays, event.requiredDays)}`))
+      `${formatShortDate(event.date)}${event.wishName !== undefined ? ` · ${event.wishName}` : ''} · ${durationText(event.completedDays, event.requiredDays)}`))
 }
 
 function ChartView(props: CardProps<'xy-chart'>): ReactElement {
@@ -199,21 +199,28 @@ function ChartView(props: CardProps<'xy-chart'>): ReactElement {
       createElement('span', { className: 'xy-badge xy-badge-chart' }, t('badge.chart')),
       createElement('span', { className: 'xy-title' }, event.title),
       event.subtitle !== undefined ? createElement('span', { className: 'xy-meta' }, event.subtitle) : null),
-    chartBody(event, t('chart.noData'), hoverIdx, setHoverIdx))
+    // 快照时点标注（事件溯源：卡片=当时的事实）：无 generatedAt 的旧事件诚实降级不显示。
+    // 中格式带年份——回放的旧卡可能跨年，「生成于 3月5日」须能定位到哪一年。
+    // ISO → 本地日再格式化：直接 slice 会把 UTC 日期当本地日（UTC+8 零点后 8 小时内差一天）
+    event.generatedAt !== undefined
+      ? createElement('div', { className: 'xy-meta' }, t('chart.generatedAt', { date: formatMediumDate(localYmd(new Date(event.generatedAt))) }))
+      : null,
+    chartBody(event, t('chart.noData'), t('chart.noSchedule'), hoverIdx, setHoverIdx))
 }
 
 /** 图表卡主体：四类渲染路径（占比条/占比列表/热力格/柱图）颜色全部走主题变量，深浅色自适应。 */
 function chartBody(
   event: XingyuanChartEventData,
   noDataText: string,
+  noScheduleText: string,
   hoverIdx: number | null,
   onHover: (idx: number | null) => void,
 ): ReactElement {
   const { chartType, data } = event
   if (data.length === 0) return createElement('div', { className: 'xy-meta' }, noDataText)
-  const max = Math.max(...data.map((d) => d.value), 1)
+  const max = Math.max(...data.filter((d) => !d.inactive).map((d) => d.value), 1)
   const labelValue = (d: XingyuanChartEventData['data'][number]): string =>
-    `${d.label}${activeLocale() === 'en' ? ': ' : '：'}${d.value}`
+    `${d.label}${activeLocale() === 'en' ? ': ' : '：'}${d.inactive === true ? noScheduleText : d.value}`
   if (chartType === 'arcbars') {
     const ratio = Math.min(Math.max(data[0]!.ratio ?? 0, 0), 1)
     return createElement('div', { className: 'xy-arcwrap' },
@@ -255,19 +262,21 @@ function chartBody(
     const r = Math.min(2, h, w / 2)
     return `M${x},${y + h}L${x},${y + r}Q${x},${y} ${x + r},${y}L${x + w - r},${y}Q${x + w},${y} ${x + w},${y + r}L${x + w},${y + h}Z`
   }
-  const bars = data.map((d, i) => {
+  const bars = data.flatMap((d, i) => {
+    // 无安排日不画柱（缺失≠0）：空槽由下标占位保留，柱序与日期轴不塌缩
+    if (d.inactive === true) return []
     // 微值可见性下限：有值但按比例不足 2px 的柱给 2px，避免「有数据却看不见」
     const rawH = Math.round((d.value / max) * (height - 24))
     const h = d.value > 0 ? Math.max(rawH, 2) : rawH
     const seriesIdx = d.series !== undefined ? seriesList.indexOf(d.series) : -1
-    return createElement('path', {
+    return [createElement('path', {
       key: i,
       d: topRoundedBar(i * step + 2, height - 18 - h, Math.max(step - 4, 2), h),
       style: { fill: seriesIdx > 0 ? seriesColor(seriesIdx) : 'var(--xyd-accent)', opacity: seriesIdx > 0 ? 0.55 : 0.85 },
       onMouseEnter: () => onHover(i),
     },
       // 每根柱子带 <title>：原生悬停提示；精确数值另由上方悬浮明细条实时呈现
-      createElement('title', null, labelValue(d)))
+      createElement('title', null, labelValue(d)))]
   })
   // 标签用原始下标定位：indexOf 会把重复标签（如分组系列的「周一」×2）全部钉到首个位置
   const labelStep = data.length <= 10 ? 1 : Math.ceil(data.length / 8)
@@ -299,7 +308,7 @@ function chartBody(
         ...bars,
         ...labels)),
     createElement('span', { className: 'xy-visually-hidden' },
-      data.map((d) => `${d.label} ${d.value}`).join(activeLocale() === 'en' ? '; ' : '；')))
+      data.map((d) => `${d.label} ${d.inactive === true ? noScheduleText : d.value}`).join(activeLocale() === 'en' ? '; ' : '；')))
 }
 
 export const CARD_VIEWS = {

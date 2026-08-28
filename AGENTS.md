@@ -224,10 +224,16 @@ export const xingyuanDomainSpec = defineDomain({
 1. 不传日期 = 自动勾选今天（含）起**最早未勾选**的机会日；
 2. 过去的日期不会自动补，补卡须指定日期（日历页入口）；
 3. 今天不是机会日时勾选的是未来日期——**提前打卡 = 承诺当天完成**，回复须如实告知；
-4. 取消打卡可指定日期撤销；一次打卡对应一个机会日。
+4. 取消打卡可指定日期撤销；一次打卡对应一个机会日；页面撤销入口一律显式带日期
+   （详情页=最近一条打卡含预勾、今日页=当天），不依赖「不传日期=撤最近一次」。
+5. **过期关闭的任务不能打卡**（写路径与页面共用 syncTaskValue 同口径新鲜化校验，不得以
+   库内陈旧 status 绕过）；如需补历史，先延长截止日使任务重新开始。
 
-进度口径：愿望进度 = 应打天数完成率；任务的 requiredDays/completedDays 由机会日序列与
+进度口径：愿望进度 = 应打天数完成率（**floor 而非 round**——round 曾使 249/250 显示 100%
+并触发提前归档）；任务的 requiredDays/completedDays 由机会日序列与
 checkins 表推导，跨天恒为最新（不冗余存储历史状态）。
+once 且无截止日的任务没有机会日序列，只在**今天**常驻于今日页/日历（打卡即完成、完成后
+保留在完成区可撤销）——它计入完成率分母，故必须始终有打卡触点。
 
 ### 5.3 成长体系（growth.ts）
 
@@ -306,7 +312,7 @@ ctx.tools.register(defineTool({
 | `xingyuan/wish` | op(created/updated/deleted) + 愿望快照 |
 | `xingyuan/task` | op + 任务快照 + 未来机会日预览（≤5 个） |
 | `xingyuan/checkin` | checked/cancelled + 任务名 + 日期 + 进度计数 |
-| `xingyuan/chart` | chartKey + title + chartType(line/column/bar/pie/arcbars/heatmap/radar) + 数据点 |
+| `xingyuan/chart` | chartKey + title + chartType(line/column/bar/pie/arcbars/heatmap/radar) + 数据点 + generatedAt（快照时点，回放标注「生成于」） |
 | `xingyuan/micro` | started/stepped/restarted/finished + 步骤数组 + currentStepNumber |
 
 client 半侧注册三处声明合并位 + 一个 Definition 工厂：
@@ -441,11 +447,18 @@ URL 构造函数。背景：记忆页搜索曾把 URL 拼成 `?q=词?offset=0`�
 下一条任务的分割线贴死；详情每段「标签 → 内容」固定纵向节奏
 （`.xy-detail>div` gap 5px，段间 10px）。
 
-**打卡记录周对齐网格**（`detail.ts`）：近 28 个机会日按周一始 7 列 CSS Grid 排布
+**打卡记录周对齐网格**（`detail.ts`）：窗口=**截至今日的机会日末 28 格 + 全部已打卡
+日期并入**（预勾未来日、once 无截止日/无截止日周期任务的机会日序列外打卡都是
+既成事实，序列为空时网格即打卡历史、详情页撤销入口依赖它；未勾选的未来日归
+「接下来的机会日」预览；整条序列直出曾把客户端 `slice(-28)` 推向未来尾部、
+今天的打卡反而不可见），按周一始 7 列 CSS Grid 排布
 （与日历页表头同构，GitHub/Streaks 惯例）——首格前按星期序补 `.xy-dcell-blank`
 隐形占位（真实数据按机会日稀疏返回，错位是常态），今日格加 `xy-dcell-today`
 accent 环（与日历圆章 today 环同一语法）；禁改回流式 flex-wrap（换行参差、
 连续性不可读）。读屏口径不变：格子 aria-hidden + 容器 role=img 一句汇总。
+撤销打卡的日期必须**显式随请求携带**：详情页=网格内最近一条打卡（含预勾，
+`latestCheckedDate`），今日页=当天；弹框文案与实际撤销对象同源（服务端
+「不传日期=撤最近一次」的隐式口径不得再被页面依赖）。
 
 **行内低频动作图标化**：长列表里重复出现的编辑/删除用 `.xy-btn-icon` 图标幽灵键
 （26px 方形命中目标，线稿 SVG 走 `ui.ts` 的 `IconEdit`/`IconTrash`——勿再加
@@ -579,6 +592,16 @@ wishProgress / wishAchievement / continuousCheckin / checkinTimeDistribution / w
 
 数据全部由 storageDomain 现算（`charts.ts`），卡片经 `xingyuan/chart` 事件渲染；
 趋势类默认 14 天窗、分布类 30 天、上限 90，均可配（§8 配置面）。
+
+统计口径（改图表前必读，`test/charts.test.ts` 锁定）：
+- 统计类图表只统计今天（含）以前的打卡，**未来预勾不进任何统计桶**（weekComparison 曾把
+  下周预勾按其星期几错算进本周柱）；唯一例外是日历热力图（逐日记录而非聚合统计）；
+- checkinRateTrend 的**无安排日产出 inactive 空槽而非 0%**（缺失≠零惯例；
+  `XingyuanChartDatum.inactive` 为 optional 字段，渲染器跳过画柱、悬停/读屏报「无安排」）；
+- taskCompletionRate 分母含未领取任务的应打天数（与愿望进度同一公式），存在未领取任务时
+  副标题注明「含未领取任务」；
+- 图表事件携带 `generatedAt`：图表卡是生成时刻的冻结快照（whole-value），回放时卡片标注
+  「生成于」，避免历史会话旧图被误读为当前数据。
 
 ## 8. 可配置项一览
 

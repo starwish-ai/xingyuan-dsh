@@ -33,6 +33,7 @@ import {
   CYCLE_LABELS,
   freshTask,
   freshWish,
+  mutateGlobal,
   performCheckIn,
   planForDay,
   planForRange,
@@ -700,7 +701,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
 
   ctx.tools.register(defineTool({
     name: 'check_in_task',
-    description: '任务打卡。何时使用：用户完成任务并需要记录打卡时使用。支持指定日期打卡（日历补卡/提前勾），不传日期则自动勾选今天（含）起最早未勾选的打卡日——过去的日期不会自动补，补卡请在日历中指定日期。'
+    description: '任务打卡。何时使用：用户完成任务并需要记录打卡时使用。支持指定日期打卡（日历补卡/提前勾），不传日期则自动勾选今天（含）起最早未勾选的打卡日——过去的日期不会自动补，补卡请在日历中指定日期。已过期完结的任务无法打卡，须先延长截止日使任务重新开始后才能继续打卡。'
       // 与 CREATE_NOTE 同口径：是否弹卡受设置门控，描述里不可断言（见 DELETE_NOTE 组注释）
       + '注意：无需事先询问用户，直接调用即可；今天不是打卡日时自动勾选的是未来日期（提前打卡 = 承诺当天完成），回复时请用「打卡日」等通俗用语并如实告知勾选日期。',
     parameters: {
@@ -749,7 +750,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     description: '取消打卡。何时使用：撤销误打卡记录时使用。可指定日期取消；不传日期则自动取消该任务最近一次打卡记录。' + CANCEL_CHECKIN_NOTE,
     parameters: {
       taskId: { type: 'string', required: true, description: '任务ID' },
-      checkInDate: { type: 'string', description: '取消打卡日期，可选。yyyy-MM-dd；仅当用户明确指定某天时传' },
+      checkInDate: { type: 'string', description: '取消打卡日期，可选。yyyy-MM-dd。用户提到具体日期（含「今天」「昨天」等指代）时必须换算并传入；仅在用户完全未指明日期时才省略（此时取消最近一次打卡，可能不是用户想撤的那条）' },
     },
     output: TEXT_OUTPUT,
     timeoutMs: 600_000,
@@ -1043,7 +1044,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     },
     output: TEXT_OUTPUT,
     async execute(args) {
-      await store.domain.global.set({ ...store.domain.global.get(), coachStyle: args.style })
+      // 与页面 profile 动作同一串行收口：并发写互不覆盖
+      await mutateGlobal(store, (current) => ({ ...current, coachStyle: args.style }))
       return `已更新教练风格为：${styleLabel(args.style)}`
     },
   }))
@@ -1075,12 +1077,14 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     },
     output: TEXT_OUTPUT,
     async execute(args) {
-      const current = store.domain.global.get()
-      const profile = { ...current.profile }
-      if (args.nickname !== undefined) profile.nickname = args.nickname
-      if (args.occupation !== undefined) profile.occupation = args.occupation
-      if (args.interests !== undefined) profile.interests = [...args.interests]
-      await store.domain.global.set({ ...current, profile })
+      // merge 基于串行队列内的最新快照：工具面与页面动作并发互不覆盖
+      await mutateGlobal(store, (current) => {
+        const profile = { ...current.profile }
+        if (args.nickname !== undefined) profile.nickname = args.nickname
+        if (args.occupation !== undefined) profile.occupation = args.occupation
+        if (args.interests !== undefined) profile.interests = [...args.interests]
+        return { ...current, profile }
+      })
       return '已更新用户画像。'
     },
   }))
@@ -1101,7 +1105,9 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
     async execute(args, exec) {
-      const spec = buildChart(args.chartKey as ChartKey, args satisfies ChartParams, store, {
+      // title 入事件与回包：trim + 30 字上限（纵深防御——其余自由文本字段均有界）
+      const title = args.title !== undefined ? (args.title.trim().slice(0, 30) || undefined) : undefined
+      const spec = buildChart(args.chartKey as ChartKey, { ...args, title }, store, {
         trendDays: config.chartTrendDays,
         distributionDays: config.chartDistributionDays,
         maxDays: config.chartMaxDays,
@@ -1115,6 +1121,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         ...(spec.subtitle !== undefined ? { subtitle: spec.subtitle } : {}),
         chartType: spec.chartType,
         data: spec.data,
+        // 快照生成时刻：卡片回放时标注「生成于」，历史会话旧图不被误读为当前数据
+        generatedAt: new Date().toISOString(),
       })
       const top = spec.data
         .filter((d) => d.value > 0)

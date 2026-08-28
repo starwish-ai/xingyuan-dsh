@@ -46,9 +46,10 @@ export function countKey<K extends XyKey>(n: number, oneKey: K, manyKey: K): K {
   return englishPlural(n) ? manyKey : oneKey
 }
 
-/** 打卡日期后缀（toast/完成态用）：zh 全角括号 / en 半角括号，由词典统一口径。 */
+/** 打卡日期后缀（toast/完成态用）：入参 ISO，内部本地化为短日期（§5.10 界面禁裸奔 ISO）；
+ * zh 全角括号 / en 半角括号由词典统一口径。 */
 export function dateSuffix(date: string | undefined): string {
-  return date !== undefined && date !== '' ? t('common.dateSuffix', { date }) : ''
+  return date !== undefined && date !== '' ? t('common.dateSuffix', { date: formatShortDate(date) }) : ''
 }
 
 /** 紧凑按钮内的本地化短日期：'2026-03-05' → 「3月5日」/「Mar 5」（解析失败原样回显）。 */

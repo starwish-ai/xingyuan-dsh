@@ -6,18 +6,59 @@
 import { gzipSync } from 'node:zlib'
 import type { ServerResponse } from 'node:http'
 
-/** 输出 gzip HTML（no-store；页面体量小、内容动态）。 */
-export function html(res: ServerResponse, body: string): void {
-  const gz = gzipSync(Buffer.from(body, 'utf8'))
-  res.writeHead(200, {
-    'content-type': 'text/html; charset=utf-8',
-    'content-encoding': 'gzip',
-    'cache-control': 'no-store',
-  })
-  res.end(gz)
+/** 页面模板为常量字符串：压缩结果按模板体缓存，每页至多压一次（零重复 CPU）。 */
+const gzipCache = new Map<string, Buffer>()
+
+/** Accept-Encoding 是否接受 gzip（RFC 9110 §12.5.3）：头缺席 = 任何编码可接受；
+ * 空字段值 = 不要任何编码（回明文）；gzip 被显式列出时以其 q 值为准（最具体匹配
+ * 优先，gzip;q=0 不被 *;q=1 覆盖）；未列出时才看通配符。 */
+function acceptsGzip(header: string | undefined): boolean {
+  if (header === undefined) return true
+  if (header.trim() === '') return false
+  let wildcardAccepts = false
+  let gzipQ: number | undefined
+  for (const part of header.split(',')) {
+    const [token, ...params] = part.trim().split(';')
+    let q = 1
+    for (const param of params) {
+      const m = /^\s*q\s*=\s*([\d.]+)\s*$/.exec(param)
+      if (m !== null) q = Number.parseFloat(m[1]!)
+    }
+    const coding = token!.trim().toLowerCase()
+    if (coding === 'gzip' || coding === 'x-gzip') gzipQ = q
+    else if (coding === '*') wildcardAccepts = q > 0
+  }
+  if (gzipQ !== undefined) return gzipQ > 0
+  return wildcardAccepts
 }
 
-export function pageToday(res: ServerResponse): void {
+/** 页面 HTML 响应：按 Accept-Encoding 协商 gzip/明文（no-store；内容动态）。 */
+export function html(res: ServerResponse, body: string, acceptEncoding?: string): void {
+  let payload: Buffer
+  let contentEncoding: Record<string, string> = {}
+  if (acceptsGzip(acceptEncoding)) {
+    let gz = gzipCache.get(body)
+    if (gz === undefined) {
+      gz = gzipSync(Buffer.from(body, 'utf8'))
+      gzipCache.set(body, gz)
+    }
+    payload = gz
+    contentEncoding = { 'content-encoding': 'gzip' }
+  } else {
+    // 客户端显式声明不含 gzip（如 Accept-Encoding: identity）：回明文而非二进制乱码
+    payload = Buffer.from(body, 'utf8')
+  }
+  res.writeHead(200, {
+    'content-type': 'text/html; charset=utf-8',
+    ...contentEncoding,
+    // 内容协商响应的标准配套头：即使 no-store，也向中间层声明按 Accept-Encoding 变化
+    vary: 'Accept-Encoding',
+    'cache-control': 'no-store',
+  })
+  res.end(payload)
+}
+
+export function pageToday(res: ServerResponse, acceptEncoding?: string): void {
   html(res, `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -57,10 +98,10 @@ async function load(){
 }
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 load()
-</script></body></html>`)
+</script></body></html>`, acceptEncoding)
 }
 
-export function pageCalendar(res: ServerResponse): void {
+export function pageCalendar(res: ServerResponse, acceptEncoding?: string): void {
   html(res, `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -97,10 +138,10 @@ async function pick(el){
   }catch(e){ document.getElementById('detail').textContent='加载失败：'+(e instanceof Error ? e.message : e); }
 }
 load()
-</script></body></html>`)
+</script></body></html>`, acceptEncoding)
 }
 
-export function pageGrowth(res: ServerResponse): void {
+export function pageGrowth(res: ServerResponse, acceptEncoding?: string): void {
   html(res, `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -110,6 +151,9 @@ export function pageGrowth(res: ServerResponse): void {
 <script>
 const LEVEL_TINTS=['#475569','#2563eb','#047857','#0e7490','#0369a1','#1d4ed8','#6d28d9','#b45309','#c2410c','#be123c'];
 function levelTint(l){return LEVEL_TINTS[Math.min(10,Math.max(1,l|0))-1]||LEVEL_TINTS[0]}
+// 渐变暗档预混（JS 内 darkenHex 同款思路）：color-mix() 在壳的浏览器矩阵里存在
+// 不支持环境，整条声明按无效处理（styles.ts 头注同款兼容铁律），故用 rgb 预混
+function shade(hex,f){var n=parseInt(hex.slice(1),16);return 'rgb('+Math.round(((n>>16)&255)*f)+','+Math.round(((n>>8)&255)*f)+','+Math.round((n&255)*f)+')'}
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 async function load(){
   try{
@@ -117,7 +161,7 @@ async function load(){
   const tint=levelTint(g.level);
   const expText = g.nextLevelExperience==null ? '已满级' : (g.totalExperience+' / '+g.nextLevelExperience+' EXP');
   let html =
-   '<div class="hero" style="background:linear-gradient(135deg,color-mix(in srgb,'+tint+' 76%,#000),'+tint+')">'+
+   '<div class="hero" style="background:linear-gradient(135deg,'+shade(tint,.76)+','+tint+')">'+
      '<div class="hero-badge" style="background:'+tint+'">Lv.'+g.level+'</div>'+
      '<div class="hero-main"><p class="muted on-hero">当前等级</p><h2>Lv.'+g.level+' · '+esc(g.levelName)+'</h2>'+
      '<div class="bar"><i style="width:'+g.levelProgress+'%"></i></div>'+
@@ -137,7 +181,7 @@ async function load(){
 }
 function stat(v,label){return '<div class="card"><p class="num">'+v+'</p><p class="muted">'+label+'</p></div>'}
 load()
-</script></body></html>`)
+</script></body></html>`, acceptEncoding)
 }
 
 /** 双主题：浅色为基，prefers-color-scheme: dark 时整组变量翻转。

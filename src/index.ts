@@ -14,6 +14,7 @@ import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { registerXingyuanRoutes } from './routes/index.js'
 import { ensurePresetRoot } from './preset-root.js'
 import { repairSessionLogs } from './session-log-repair.js'
+import { sweepOrphans } from './consistency-sweep.js'
 import { installUiSettings } from './ui-settings.js'
 
 export { xingyuanDomainSpec, DOMAIN_VERSION, COACH_STYLES } from './domain.js'
@@ -75,6 +76,17 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   domain = opened
   ctx.provide('xingyuan', makeXingyuanStore(opened, readPrefs))
   registerXingyuanRoutes(webServer, ctx.xingyuan, config)
+  // 启动一致性清扫（契约内无事务的级联删除补偿控制）：fire-and-forget 不阻塞激活，
+  // 异常只告警——清扫是收敛性补救，失败留给下次启动重试
+  void sweepOrphans(ctx.xingyuan)
+    .then((report) => {
+      if (report.orphanCheckins + report.orphanTasks + report.orphanMicroEntries > 0) {
+        console.log(`[xingyuan] 一致性清扫：清除孤儿打卡 ${report.orphanCheckins} 条、孤儿任务 ${report.orphanTasks} 个、悬挂微行动 ${report.orphanMicroEntries} 项`)
+      }
+    })
+    .catch((error) => {
+      console.warn('[xingyuan] 一致性清扫异常（已忽略，下次启动重试）：', error)
+    })
   if (config.repairSessionLogs) {
     try {
       const report = await repairSessionLogs({ listLiveSessionIds: () => liveSessionIds(sessions) })

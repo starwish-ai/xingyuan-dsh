@@ -2,7 +2,7 @@
  * 星愿业务操作：工具面与 /xingyuan/* 路由共用的领域逻辑。
  * 口径唯一来源：机会日/达标/复活判定全部走 opportunity.ts。
  */
-import type { CheckinRecord, MemoryRecord, TaskRecord, WishRecord, XingyuanStore } from './domain.js'
+import type { CheckinRecord, MemoryRecord, TaskRecord, WishRecord, XingyuanGlobal, XingyuanStore } from './domain.js'
 import { CATEGORY_COLOR_KEYS } from './category-color.js'
 import {
   addDays,
@@ -224,7 +224,7 @@ export async function syncWishProgress(store: XingyuanStore, wishId: string): Pr
     required += task.requiredDays
     completed += task.completedDays
   }
-  const progress = required > 0 ? Math.min(100, Math.round((completed / required) * 100)) : 0
+  const progress = required > 0 ? Math.min(100, Math.floor((completed / required) * 100)) : 0
   await store.domain.table('wishes').update(wishId, (wish) => ({
     ...wish,
     totalRequiredDays: required,
@@ -243,17 +243,32 @@ export function freshTask(store: XingyuanStore, task: Task, today = todayIso(), 
   return syncTaskValue(store, task, today, counts)
 }
 
-/** 愿望进度快照（只读新鲜计算，不落库）：下属任务应打/已打汇总 → 完成率。 */
-export function freshWish(store: XingyuanStore, wish: Wish): Wish {
-  let required = 0
-  let completed = 0
+/**
+ * 单遍任务索引的批量新鲜化（O(W+T)）：freshWish 逐个调用是 O(W×T) 嵌套全表扫描，
+ * 愿望列表/图表/成长汇总等批量读场景一律走本函数。公式与 freshWish 逐字段一致
+ * （进度 floor 而非 round——round 会让 249/250 变 100% 提前归档）。
+ */
+export function freshWishes(store: XingyuanStore, wishes?: Wish[]): Wish[] {
+  const source = wishes ?? [...store.domain.table('wishes').entries()].map(([, wish]) => wish)
+  const agg = new Map<string, { required: number; completed: number }>()
   for (const [, task] of store.domain.table('tasks').entries()) {
-    if (task.wishId !== wish.wishId) continue
-    required += task.requiredDays
-    completed += task.completedDays
+    if (task.wishId === undefined) continue
+    const entry = agg.get(task.wishId) ?? { required: 0, completed: 0 }
+    entry.required += task.requiredDays
+    entry.completed += task.completedDays
+    agg.set(task.wishId, entry)
   }
-  const progress = required > 0 ? Math.min(100, Math.round((completed / required) * 100)) : 0
-  return { ...wish, totalRequiredDays: required, totalCompletedDays: completed, progress, archived: progress >= 100 }
+  return source.map((wish) => {
+    const required = agg.get(wish.wishId)?.required ?? 0
+    const completed = agg.get(wish.wishId)?.completed ?? 0
+    const progress = required > 0 ? Math.min(100, Math.floor((completed / required) * 100)) : 0
+    return { ...wish, totalRequiredDays: required, totalCompletedDays: completed, progress, archived: progress >= 100 }
+  })
+}
+
+/** 愿望进度快照（只读新鲜计算，不落库）：下属任务应打/已打汇总 → 完成率（floor 口径）。 */
+export function freshWish(store: XingyuanStore, wish: Wish): Wish {
+  return freshWishes(store, [wish])[0]!
 }
 
 /**
@@ -270,10 +285,16 @@ export async function performCheckIn(
   today = todayIso(),
 ): Promise<{ date: string; task: Task }> {
   const tasks = store.domain.table('tasks')
-  const task = tasks.get(taskId)
-  if (!task) throw new ToolError(`任务不存在：${taskId}`, 'not_found')
+  const raw = tasks.get(taskId)
+  if (!raw) throw new ToolError(`任务不存在：${taskId}`, 'not_found')
+  // 写前新鲜化（与页面同一 syncTaskValue 实现）：跨日过期关闭是状态契约，
+  // 不得以库内陈旧 status 绕过——补卡须先延长截止日复活（shouldRestartFromExpired）
+  const task = syncTaskValue(store, raw, today)
   if (task.status === 'pending') throw new ToolError('任务尚未领取，请先领取任务')
-  if (task.status === 'closed') throw new ToolError('任务已完结，无法打卡', 'task_closed')
+  if (task.status === 'closed' && task.closedReason === 'expired') {
+    throw new ToolError('任务已过期完结：如需补卡，请先延长截止日使任务重新开始', 'task_closed')
+  }
+  if (task.status === 'closed') throw new ToolError('任务已达标完结，无需再打卡', 'task_closed')
 
   const checked = checkedDatesOf(store, taskId)
   const target = date ?? findFirstUncheckedOpportunityDate(anchorOf(task), task.dueDate, task.checkInCycle, checked, today)
@@ -445,9 +466,62 @@ export async function updateTask(
 
 /** 未来 N 天逐日安排（today 页/未来预览共用）。 */
 export function planForRange(store: XingyuanStore, start: string, end: string): DayPlan[] {
+  // 单遍预聚合：任务新鲜化/机会日集合/打卡计数只算一次——
+  // 此前经 planForDay 逐日重扫全表，O(天数×(任务×机会日+打卡表)) 热路径
   const plans: DayPlan[] = []
-  for (let d = start; d <= end; d = addDays(d, 1)) plans.push(planForDay(store, d))
+  const prepared = prepareDayTasks(store)
+  for (let d = start; d <= end; d = addDays(d, 1)) plans.push(planFromPrepared(store, d, prepared))
   return plans
+}
+
+interface PreparedTask {
+  readonly task: Task
+  readonly wish?: Wish
+  readonly opportunities: ReadonlySet<string>
+  /** 仅一次且无截止日的任务：没有机会日序列（随时可做），只在今天有日程面。 */
+  readonly resident: boolean
+}
+
+/** 任务批量预聚合（新鲜化 + 机会日集合 + 常驻判定），供单日/区间两条读路径共用。 */
+function prepareDayTasks(store: XingyuanStore, today = todayIso()): PreparedTask[] {
+  const counts = checkinCountIndex(store)
+  const wishes = store.domain.table('wishes')
+  const prepared: PreparedTask[] = []
+  for (const [, raw] of store.domain.table('tasks').entries()) {
+    const task = syncTaskValue(store, raw, today, counts)
+    const resident = task.checkInCycle === 'once' && task.dueDate === undefined
+      && (task.status === 'pending'
+        || task.status === 'in_progress'
+        || (task.status === 'closed' && task.closedReason === 'achieved'))
+    prepared.push({
+      task,
+      wish: task.wishId !== undefined ? wishes.get(task.wishId) : undefined,
+      opportunities: new Set(calculateOpportunityDates(anchorOf(task), task.dueDate, task.checkInCycle)),
+      resident,
+    })
+  }
+  return prepared
+}
+
+function planFromPrepared(store: XingyuanStore, date: string, prepared: readonly PreparedTask[], today = todayIso()): DayPlan {
+  const items: DayItem[] = []
+  for (const { task, wish, opportunities, resident } of prepared) {
+    // 达标关闭的任务不再出现在日程面；仅 once 无截止日任务的今天例外——
+    // 已打卡的今天保留在完成区（撤销入口），否则撤销无路可走
+    if (task.status === 'closed' && task.closedReason === 'achieved' && !(resident && date === today)) continue
+    // 落位判定：有机会日序列按序列；常驻任务只在今天出现（它的打卡语义只有今天合法）
+    if (!opportunities.has(date) && !(resident && date === today)) continue
+    const checked = store.domain.table('checkins').get(store.checkinKey(task.taskId, date)) !== undefined
+    items.push({
+      task,
+      wish,
+      checked,
+      canCheckIn: !checked && task.status === 'in_progress',
+      canCancel: checked,
+    })
+  }
+  items.sort((a, b) => a.task.name.localeCompare(b.task.name))
+  return { date, items }
 }
 
 /**
@@ -456,26 +530,7 @@ export function planForRange(store: XingyuanStore, start: string, end: string): 
  * 仅进行中任务可勾——待领取须先领取；已完结（含过期关闭）不可勾，取消打卡不受限。
  */
 export function planForDay(store: XingyuanStore, date: string): DayPlan {
-  const wishes = store.domain.table('wishes')
-  const items: DayItem[] = []
-  const counts = checkinCountIndex(store)
-  const today = todayIso()
-  for (const [taskId, raw] of store.domain.table('tasks').entries()) {
-    const task = syncTaskValue(store, raw, today, counts)
-    if (task.status === 'closed' && task.closedReason === 'achieved') continue
-    const opportunities = calculateOpportunityDates(anchorOf(task), task.dueDate, task.checkInCycle)
-    if (!opportunities.includes(date)) continue
-    const checked = store.domain.table('checkins').get(store.checkinKey(taskId, date)) !== undefined
-    items.push({
-      task,
-      wish: task.wishId ? wishes.get(task.wishId) : undefined,
-      checked,
-      canCheckIn: !checked && task.status === 'in_progress',
-      canCancel: checked,
-    })
-  }
-  items.sort((a, b) => a.task.name.localeCompare(b.task.name))
-  return { date, items }
+  return planFromPrepared(store, date, prepareDayTasks(store))
 }
 
 /**
@@ -492,13 +547,14 @@ export async function renameCategory(store: XingyuanStore, oldName: string, newN
     await store.domain.table('wishes').put(key, next)
     renamed.push(next)
   }
-  const global = store.domain.global.get()
-  const overrides = { ...(global.categoryColors ?? {}) }
-  if (overrides[oldName] !== undefined) {
+  // 覆盖键迁移经串行队列：与页面颜色覆盖/画像写并发互不覆盖
+  await mutateGlobal(store, (global) => {
+    const overrides = { ...(global.categoryColors ?? {}) }
+    if (overrides[oldName] === undefined) return global
     overrides[newName] = overrides[oldName]!
     delete overrides[oldName]
-    await store.domain.global.set({ ...global, categoryColors: overrides })
-  }
+    return { ...global, categoryColors: overrides }
+  })
   return renamed
 }
 
@@ -550,4 +606,29 @@ export function monthRange(month: string | undefined, today: string): [string, s
   const [y, m] = [Number(base.slice(0, 4)), Number(base.slice(5, 7))]
   const end = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10)
   return [base, end]
+}
+
+// ===== global 槽串行写（lost-update 防护）=====
+
+const globalWriteQueues = new WeakMap<XingyuanStore, Promise<unknown>>()
+
+/**
+ * global 读-改-写串行化收口。Node 事件循环在 await 间隙让出线程，裸的
+ * get→计算→set 三段式在并发写（双开页签 / 并发工具调用）下，后写者会基于
+ * 旧快照整包覆盖，静默吞掉先写者的更新（lost update）。本函数把同一 store 的
+ * global 变更排成 promise 链：mutator 在链上独占执行，其读到的快照恒为
+ * 上一笔已结算的结果。注意：mutator 内不得再调用本函数（会排队死锁），
+ * 也不得把 mutator 里的 await 间隙当并发边界——链保证的只是互斥顺序。
+ * mutator 返回原快照引用 = 无变更，跳过落库（幂等调用零写入）。
+ */
+export async function mutateGlobal(store: XingyuanStore, mutator: (global: XingyuanGlobal) => XingyuanGlobal | Promise<XingyuanGlobal>): Promise<void> {
+  const tail = globalWriteQueues.get(store) ?? Promise.resolve()
+  const run = tail.then(async () => {
+    const current = store.domain.global.get()
+    const next = await mutator(current)
+    if (next !== current) await store.domain.global.set(next)
+  })
+  // 链不断裂：失败被吞进本笔的 rejected 分支，后续 mutator 仍基于最新已结算状态执行
+  globalWriteQueues.set(store, run.catch(() => {}))
+  return run
 }

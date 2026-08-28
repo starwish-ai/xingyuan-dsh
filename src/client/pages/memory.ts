@@ -60,6 +60,9 @@ export function MemoryPage(): ReactElement {
   const moreSeqRef = useRef(0)
   useEffect(() => {
     moreSeqRef.current += 1
+    // 使在途加载失效的同时必须复位按钮态：否则在途请求的 finally 因 seq 失配
+    // 跳过复位，loadingMore 永挂 true——「加载更多」自此点不动（P0 级交互死锁）
+    setLoadingMore(false)
     setMore([])
     setLoadError(undefined)
   }, [debounced])
@@ -81,6 +84,8 @@ export function MemoryPage(): ReactElement {
   /** 写操作后的全量刷新：追加页必须丢弃（offset 语义已失效），回到首屏。 */
   const refreshAll = (): void => {
     moreSeqRef.current += 1
+    // 同 useEffect 的失效点：在途加载被弃时按钮态就地复位（防死锁）
+    setLoadingMore(false)
     setMore([])
     setLoadError(undefined)
     void page.reload()

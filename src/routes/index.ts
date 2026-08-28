@@ -48,9 +48,12 @@ export function registerXingyuanRoutes(webServer: Context['webServer'], store: X
     try {
       if (req.method === 'GET') {
         if (GET_PAGES.has(path)) {
-          if (path === '/calendar') return pageCalendar(res)
-          if (path === '/growth') return pageGrowth(res)
-          return pageToday(res)
+          // Accept-Encoding 透传给页面响应做内容协商（RFC 9110 §12.5.3）
+          const acceptEncoding = req.headers['accept-encoding']
+          const ae = Array.isArray(acceptEncoding) ? acceptEncoding.join(',') : acceptEncoding
+          if (path === '/calendar') return pageCalendar(res, ae)
+          if (path === '/growth') return pageGrowth(res, ae)
+          return pageToday(res, ae)
         }
         return json(res, 200, getApi(deps, path, url))
       }

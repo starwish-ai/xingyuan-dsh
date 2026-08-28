@@ -3,7 +3,7 @@
  * 数据全部由 storageDomain 现算（打卡明细 + 任务 + 愿望），卡片走 xingyuan/chart 事件。
  */
 import type { XingyuanChartDatum } from '../events.js'
-import { anchorOf, checkinCountIndex, freshTask, freshWish, type Task, type Wish } from '../store.js'
+import { anchorOf, checkinCountIndex, freshTask, freshWishes, type Task, type Wish } from '../store.js'
 import { computeCheckInStats } from '../growth.js'
 import type { XingyuanStore } from '../domain.js'
 import { calculateOpportunityDates, todayIso } from '../opportunity.js'
@@ -90,10 +90,14 @@ interface CheckinFact {
   readonly hour: number
 }
 
-function checkinFacts(store: XingyuanStore, sinceDay?: number): CheckinFact[] {
+function checkinFacts(store: XingyuanStore, sinceDay?: number, untilDay?: number): CheckinFact[] {
   const facts: CheckinFact[] = []
   for (const [, record] of store.domain.table('checkins').entries()) {
-    if (sinceDay !== undefined && dayNumber(record.date) < sinceDay) continue
+    const day = dayNumber(record.date)
+    if (sinceDay !== undefined && day < sinceDay) continue
+    // 统计窗上界：未来预勾不进统计（「近 N 天」是 trailing window；
+    // 唯一例外是日历热力图——它是逐日记录而非聚合统计）
+    if (untilDay !== undefined && day > untilDay) continue
     facts.push({
       taskId: record.taskId,
       date: record.date,
@@ -143,10 +147,10 @@ export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanSt
     case 'checkinTrend': {
       const startDay = dayNumber(today) - days + 1
       const counts = new Map<number, number>()
-      for (const fact of checkinFacts(store)) {
-        const day = dayNumber(fact.date)
-        if (day < startDay) continue
-        counts.set(day, (counts.get(day) ?? 0) + 1)
+      // checkinFacts 已按 [startDay, today] 双侧过滤（上界=今天：窗口内只有
+      // 未来预勾时 counts 为空 → 走「暂无数据」，统计不含未来）
+      for (const fact of checkinFacts(store, startDay, dayNumber(today))) {
+        counts.set(dayNumber(fact.date), (counts.get(dayNumber(fact.date)) ?? 0) + 1)
       }
       const data: XingyuanChartDatum[] = []
       for (let d = startDay; d <= dayNumber(today); d++) {
@@ -181,16 +185,19 @@ export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanSt
     case 'taskCompletionRate': {
       let required = 0
       let completed = 0
+      let hasPending = false
       for (const task of tasksOf(store, params.wishId)) {
         required += task.requiredDays
         completed += task.completedDays
+        if (task.status === 'pending') hasPending = true
       }
       if (required <= 0) return undefined
       const ratio = completed / required
       return {
         chartKey: key,
         title: params.title ?? '任务完成率',
-        subtitle: `${completed}/${required} 天`,
+        // 口径透明（诚实标注惯例）：分母含未领取任务的应打天数，与愿望进度同一公式
+        subtitle: `${completed}/${required} 天${hasPending ? '（含未领取任务）' : ''}`,
         chartType: 'arcbars',
         data: [{ label: '完成率', value: completed, ratio }],
       }
@@ -198,25 +205,29 @@ export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanSt
     case 'checkinRateTrend': {
       const startDay = dayNumber(today) - days + 1
       const byDate = new Map<string, number>()
-      for (const fact of checkinFacts(store)) {
-        if (dayNumber(fact.date) < startDay) continue
+      for (const fact of checkinFacts(store, startDay, dayNumber(today))) {
         byDate.set(fact.date, (byDate.get(fact.date) ?? 0) + 1)
       }
+      // 每任务的机会日集合只算一次（此前逐日全量重算，O(天数×任务×机会日) 热路径）
+      const dueSets = tasksOf(store)
+        .filter((task) => task.status !== 'pending')
+        .map((task) => new Set(calculateOpportunityDates(anchorOf(task), task.dueDate, task.checkInCycle)))
       const data: XingyuanChartDatum[] = []
       let totalDue = 0
       let totalDone = 0
       for (let d = startDay; d <= dayNumber(today); d++) {
         const date = isoOfDay(d)
         let due = 0
-        for (const task of tasksOf(store)) {
-          if (task.status === 'pending') continue
-          const opportunities = calculateOpportunityDates(anchorOf(task), task.dueDate, task.checkInCycle)
-          if (opportunities.includes(date)) due++
+        for (const opportunities of dueSets) {
+          if (opportunities.has(date)) due++
         }
         const done = byDate.get(date) ?? 0
         totalDue += due
         totalDone += Math.min(done, due)
-        data.push({ label: date.slice(5), value: due > 0 ? Math.round((Math.min(done, due) / due) * 100) : 0 })
+        // 无安排日 = 缺失而非零（null≠zero）：产出 inactive 点，渲染为空槽
+        data.push(due > 0
+          ? { label: date.slice(5), value: Math.round((Math.min(done, due) / due) * 100) }
+          : { label: date.slice(5), value: 0, inactive: true })
       }
       if (totalDue <= 0) return undefined
       return {
@@ -232,7 +243,9 @@ export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanSt
       const lastMonday = isoOfDay(dayNumber(monday) - 7)
       const thisWeek = new Map<number, number>()
       const lastWeek = new Map<number, number>()
-      for (const fact of checkinFacts(store, dayNumber(lastMonday))) {
+      // 双侧闭区间 [lastMonday, today]：未来预勾（含下周）不进任何桶——
+      // 此前无上界，下周预勾会按其自身星期几错算进本周柱（bug）
+      for (const fact of checkinFacts(store, dayNumber(lastMonday), dayNumber(today))) {
         const bucket = fact.date >= monday ? thisWeek : lastWeek
         const weekday = (new Date(`${fact.date}T00:00:00Z`).getUTCDay() + 6) % 7
         bucket.set(weekday, (bucket.get(weekday) ?? 0) + 1)
@@ -263,7 +276,7 @@ export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanSt
     }
     case 'checkinByCategory': {
       const startDay = dayNumber(today) - clamp(params.days ?? config.distributionDays, 1, config.maxDays) + 1
-      const counts = countByCategory(store, checkinFacts(store, startDay))
+      const counts = countByCategory(store, checkinFacts(store, startDay, dayNumber(today)))
       if (!counts.size) return undefined
       return {
         chartKey: key,
@@ -308,7 +321,7 @@ function buildTailChart(
   if (key === 'checkinRanking') {
     const startDay = dayNumber(today) - clamp(params.days ?? config.distributionDays, 1, config.maxDays) + 1
     const counts = new Map<string, number>()
-    for (const fact of checkinFacts(store, startDay)) counts.set(fact.taskId, (counts.get(fact.taskId) ?? 0) + 1)
+    for (const fact of checkinFacts(store, startDay, dayNumber(today))) counts.set(fact.taskId, (counts.get(fact.taskId) ?? 0) + 1)
     const names = new Map(tasksOf(store).map((task) => [task.taskId, task.name]))
     if (!counts.size) return undefined
     const data = [...counts.entries()]
@@ -328,8 +341,8 @@ function buildTailChart(
     return { chartKey: key, title: params.title ?? '任务分布', subtitle: '按愿望 TopN', chartType: 'bar', data }
   }
   if (key === 'wishProgress') {
-    // 新鲜进度（读侧口径）：跨日陈旧的库存值不参与排行与筛选
-    const wishes = wishesOf(store).map((wish) => freshWish(store, wish)).filter((wish) => !wish.archived)
+    // 新鲜进度（读侧口径，单遍任务索引）：跨日陈旧的库存值不参与排行与筛选
+    const wishes = freshWishes(store).filter((wish) => !wish.archived)
     if (!wishes.length) return undefined
     const data = wishes
       .slice()
@@ -339,7 +352,7 @@ function buildTailChart(
     return { chartKey: key, title: params.title ?? '愿望进度', subtitle: '%（应打天数完成率）', chartType: 'bar', data }
   }
   if (key === 'wishAchievement') {
-    const wishes = wishesOf(store).map((wish) => freshWish(store, wish))
+    const wishes = freshWishes(store)
     if (!wishes.length) return undefined
     const achieved = wishes.filter((wish) => wish.progress >= 100).length
     return {
@@ -365,7 +378,7 @@ function buildTailChart(
     const startDay = dayNumber(today) - clamp(params.days ?? config.distributionDays, 1, config.maxDays) + 1
     const counts = new Map(HOUR_BUCKETS.map((bucket) => [bucket.label, 0]))
     let total = 0
-    for (const fact of checkinFacts(store, startDay)) {
+    for (const fact of checkinFacts(store, startDay, dayNumber(today))) {
       const bucket = HOUR_BUCKETS.find((b) => fact.hour >= b.from && fact.hour <= b.to)
       if (!bucket) continue
       counts.set(bucket.label, (counts.get(bucket.label) ?? 0) + 1)
@@ -384,7 +397,7 @@ function buildTailChart(
   const startDay = dayNumber(today) - clamp(params.days ?? config.distributionDays, 1, config.maxDays) + 1
   const counts = new Map<number, number>(WEEKDAY_LABELS.map((_, index) => [index, 0]))
   let total = 0
-  for (const fact of checkinFacts(store, startDay)) {
+  for (const fact of checkinFacts(store, startDay, dayNumber(today))) {
     const weekday = (new Date(`${fact.date}T00:00:00Z`).getUTCDay() + 6) % 7
     counts.set(weekday, (counts.get(weekday) ?? 0) + 1)
     total++

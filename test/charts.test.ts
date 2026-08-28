@@ -7,6 +7,7 @@ import { buildChart, type ChartConfig } from '../src/preset/charts.js'
 import type { CheckinRecord } from '../src/domain.js'
 import { memoryStore } from './memory-store.js'
 import { addDays, todayIso } from '../src/opportunity.js'
+import { claimTask, createTask, performCheckIn } from '../src/store.js'
 
 const CONFIG: ChartConfig = {
   trendDays: 14,
@@ -55,6 +56,73 @@ describe('图表读侧新鲜化', () => {
     const labels = spec!.data.map((d) => d.label)
     expect(labels).toContain(addDays(today, -3))
     expect(labels).not.toContain(addDays(today, -400))
+  })
+})
+
+describe('统计窗与无安排日口径', () => {
+  function putFact(store: ReturnType<typeof memoryStore>, taskId: string, date: string): void {
+    const key = `${taskId}|${date}`
+    void store.domain.table('checkins').put(key, { checkinId: key, taskId, date, checkedAt: `${date}T10:00:00Z` } satisfies CheckinRecord)
+  }
+
+  it('weekComparison：未来预勾（含下周）不进任何桶——此前会错算进本周同星期柱', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    putFact(store, 't1', today)
+    putFact(store, 't1', addDays(today, 7)) // 下周同星期几的未来预勾
+    const spec = buildChart('weekComparison', {}, store, CONFIG)
+    expect(spec).toBeDefined()
+    const sum = (series: string): number =>
+      spec!.data.filter((d) => d.series === series).reduce((acc, d) => acc + d.value, 0)
+    expect(sum('本周')).toBe(1)
+    expect(sum('上周')).toBe(0)
+  })
+
+  it('checkinRateTrend：无安排日产出 inactive 点而非 0%', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    const task = await createTask(store, { name: '每日', checkInCycle: 'daily', dueDate: addDays(today, 2) }, today)
+    await claimTask(store, task.taskId, today)
+    await performCheckIn(store, task.taskId, undefined, today)
+    const spec = buildChart('checkinRateTrend', { days: 5 }, store, CONFIG)
+    expect(spec).toBeDefined()
+    const data = spec!.data
+    expect(data).toHaveLength(5)
+    // 今日（锚点=领取日）有安排且已打卡 → 真实 100%
+    expect(data[4]!.inactive).toBeUndefined()
+    expect(data[4]!.value).toBe(100)
+    // 领取前的日子无机会日 → 缺失而非零
+    expect(data.slice(0, 4).every((d) => d.inactive === true)).toBe(true)
+  })
+
+  it('checkinTrend：窗口内只有未来预勾时返回 undefined（统计不含未来）', () => {
+    const store = memoryStore()
+    putFact(store, 't1', addDays(todayIso(), 3))
+    expect(buildChart('checkinTrend', {}, store, CONFIG)).toBeUndefined()
+  })
+
+  it('checkinByCategory：统计窗只含今天（含）以前，未来预勾不混入', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    putFact(store, 't1', today)
+    putFact(store, 't1', addDays(today, 10))
+    const spec = buildChart('checkinByCategory', {}, store, CONFIG)
+    expect(spec).toBeDefined()
+    expect(spec!.data.reduce((acc, d) => acc + d.value, 0)).toBe(1)
+  })
+
+  it('taskCompletionRate：分母含未领取任务时副标题注明口径，领取后恢复朴素文案', async () => {
+    const store = memoryStore()
+    void store.domain.table('wishes').put('w', {
+      wishId: 'w', title: '愿望w', categoryName: '学习',
+      progress: 0, totalRequiredDays: 0, totalCompletedDays: 0, archived: false, createdAt: `${todayIso()}T00:00:00`,
+    } as never)
+    const task = await createTask(store, { name: '未领取', wishId: 'w', checkInCycle: 'daily', dueDate: addDays(todayIso(), 5) }, todayIso())
+    const pendingSpec = buildChart('taskCompletionRate', {}, store, CONFIG)
+    expect(pendingSpec?.subtitle).toContain('含未领取')
+    await claimTask(store, task.taskId, todayIso())
+    const claimedSpec = buildChart('taskCompletionRate', {}, store, CONFIG)
+    expect(claimedSpec?.subtitle).not.toContain('含未领取')
   })
 })
 

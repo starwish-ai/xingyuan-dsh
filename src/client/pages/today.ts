@@ -5,7 +5,7 @@ import { toast } from '../ui.js'
 import { useXyT } from '../i18n.js'
 import { softConfirm, useActionGuard, usePageData, useStableScrollbar, localYmd } from '../hooks.js'
 import { PageEmpty, PageError, PageSkeleton } from '../ui.js'
-import { cycleLabel, dateSuffix, formatFriendlyDate } from './format.js'
+import { cycleLabel, dateSuffix, formatFriendlyDate, formatShortDate } from './format.js'
 import { todayHintStore } from '../tab-hint.js'
 import type { DayPayload, OverviewPayload } from './types.js'
 
@@ -46,8 +46,9 @@ export function TodayPage(): ReactElement {
     task.status === 'in_progress'
       ? createElement('button', {
           className: 'xy-btn xy-btn-primary',
+          // planForDay 保证展示行必为未打卡的进行中任务，canCheckIn 恒 true——
+          // 不再有「disabled 但无解释」的死分支；disabled 仅服务动作在途的 busy 窗口
           disabled: busy || !task.canCheckIn,
-          title: task.canCheckIn ? undefined : t('today.notCheckinDay'),
           onClick: () => act('checkin', { taskId: task.taskId }, (p) =>
             t('toast.checkinOk') + dateSuffix(typeof p.date === 'string' ? String(p.date) : undefined)),
         }, t('action.checkin'))
@@ -65,8 +66,10 @@ export function TodayPage(): ReactElement {
     createElement('button', { className: 'xy-btn', disabled: busy, onClick: () => {
       void softConfirm(t('confirm.undoToday', { name: task.name })).then((ok) => {
         if (!ok) return
-        act('cancel-checkin', { taskId: task.taskId }, (p) => typeof p.date === 'string'
-          ? t('toast.undoneAt', { date: String(p.date) })
+        // 完成区行=今天的打卡：日期必须显式携带——服务端「不传日期=撤最近一次」
+        // 会误撤未来预勾（弹框却说撤今天）
+        act('cancel-checkin', { taskId: task.taskId, date: data.today }, (p) => typeof p.date === 'string'
+          ? t('toast.undoneAt', { date: formatShortDate(String(p.date)) })
           : t('toast.undone'))
       })
     } }, t('action.undoCheckin'))))

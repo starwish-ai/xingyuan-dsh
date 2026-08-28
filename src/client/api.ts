@@ -59,8 +59,26 @@ export async function postAction(path: string, body: Record<string, unknown>): P
   return postJson(`/xingyuan/api/action/${path}`, body)
 }
 
+/** 请求超时：手动 AbortController——AbortSignal.timeout 为 Baseline 2024 "Newly available"，
+ * 不满足 dsh 壳的保守浏览器矩阵（同 color-mix 禁令的判断口径），不用。 */
+const REQUEST_TIMEOUT_MS = 15_000
+
+async function fetchWithTimeout(path: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  try {
+    return await fetch(path, { ...init, signal: controller.signal })
+  } catch (e) {
+    // 超时中止统一转本地化文案；真实网络错误原样抛出（保留连接拒绝等语义）
+    if (e instanceof DOMException && e.name === 'AbortError') throw new Error(t('common.requestTimeout'))
+    throw e
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 export async function postJson<T = Record<string, unknown>>(path: string, body: Record<string, unknown>): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetchWithTimeout(path, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -69,7 +87,7 @@ export async function postJson<T = Record<string, unknown>>(path: string, body: 
 }
 
 export async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(path, { headers: { accept: 'application/json' } })
+  const response = await fetchWithTimeout(path, { headers: { accept: 'application/json' } })
   return parsePayload<T>(response, () => t('common.requestFailed'))
 }
 

@@ -18,6 +18,7 @@ import {
   claimTask,
   freshTask,
   freshWish,
+  freshWishes,
   monthRange,
   performCheckIn,
   planForDay,
@@ -31,6 +32,7 @@ import {
 import { addDays, calculateOpportunityDates, findFirstUncheckedOpportunityDate, todayIso } from '../opportunity.js'
 import { LEVEL_CONFIGS, growthSummary } from '../growth.js'
 import { getMicroAction } from '../micro.js'
+import { mutateGlobal } from '../store.js'
 import { removeTaskCompletely, removeWishCompletely } from '../cascade.js'
 import { ActionError, HttpError } from './errors.js'
 import type { RoutesConfig } from './config.js'
@@ -47,6 +49,8 @@ const MEMORY_IMPORTANCE = ['high', 'medium', 'low'] as const
 const CYCLES = ['once', 'daily', 'weekly', 'monthly'] as const
 /** 详情页打卡网格展示的「未来机会日」数量上限。 */
 const UPCOMING_DATES_LIMIT = 8
+/** 打卡记录网格窗口上限（格）。窗口=截至今日的机会日末 N 格，预勾的未来日并入后仍按 N 截尾。 */
+const GRID_DATES_LIMIT = 28
 
 const STATUS_RANK: Record<TaskRecord['status'], number> = { in_progress: 0, pending: 1, closed: 2 }
 
@@ -85,8 +89,12 @@ export function getApi(deps: ApiDeps, path: string, url: URL): unknown {
   if (path === '/api/overview' || path === '/api/today') return overview(deps)
   if (path === '/api/day') return day(deps, url.searchParams.get('date') ?? undefined)
   if (path === '/api/range') {
-    const start = url.searchParams.get('start') ?? todayIso()
-    const end = url.searchParams.get('end') ?? addDays(start, config.rangeDefaultDays - 1)
+    // 日期参数校验与 POST 面同一契约（bad_date）：非法 start 此前会在 addDays 内
+    // 抛无 code 的 RangeError，客户端只能看到原始英文异常
+    const startRaw = url.searchParams.get('start') ?? todayIso()
+    const start = isoDateOrThrow(startRaw)
+    const endRaw = url.searchParams.get('end') ?? addDays(start, config.rangeDefaultDays - 1)
+    const end = isoDateOrThrow(endRaw)
     const cap = addDays(start, config.rangeMaxDays - 1)
     return { days: rangePlans(deps, start, end >= start && end <= cap ? end : cap) }
   }
@@ -223,7 +231,8 @@ function overview(deps: ApiDeps): Record<string, unknown> {
 }
 
 function day(deps: ApiDeps, date?: string): Record<string, unknown> {
-  const target = date ?? todayIso()
+  // GET 面同样按 bad_date 契约拒绝非法日期（此前静默返回空任务列表，客户端无从察觉拼参错误）
+  const target = date === undefined ? todayIso() : isoDateOrThrow(date)
   const plan = planForDay(deps.store, target)
   return { date: plan.date, tasks: dayTasks(plan), taskCount: plan.items.length }
 }
@@ -298,9 +307,8 @@ function wishes(deps: ApiDeps): Record<string, unknown> {
   const { store } = deps
   return {
     today: todayIso(),
-    // freshWish：读路径按今日重算进度/状态（与工具侧「进度恒新鲜」同口径）
-    wishes: [...store.domain.table('wishes').entries()].map(([, raw]) => {
-      const w = freshWish(store, raw)
+    // freshWishes：单遍任务索引批量新鲜化（与工具侧「进度恒新鲜」同口径）
+    wishes: freshWishes(store).map((w) => {
       const tasks: Array<Record<string, unknown>> = []
       for (const [, t] of store.domain.table('tasks').entries()) {
         if (t.wishId === w.wishId) tasks.push(taskView(store, t))
@@ -328,7 +336,7 @@ function tasks(deps: ApiDeps): Record<string, unknown> {
   return { today: todayIso(), tasks: list.sort(byDisplayOrder) }
 }
 
-/** 任务详情聚合：任务快照 + 全部机会日网格事实 + 未来预览 + 微行动状态。 */
+/** 任务详情聚合：任务快照 + 打卡记录网格（截至今天的机会日末段 + 预勾） + 未来预览 + 微行动状态。 */
 function taskDetail(deps: ApiDeps, taskId: string | undefined): Record<string, unknown> {
   const { store } = deps
   if (taskId === undefined || taskId.trim() === '') throw new ActionError('missing_field', '缺少必填字段：taskId', { field: 'taskId' })
@@ -338,7 +346,18 @@ function taskDetail(deps: ApiDeps, taskId: string | undefined): Record<string, u
   const checked = checkedDatesOf(store, taskId)
   const today = todayIso()
   const series = calculateOpportunityDates(anchorOf(fresh), fresh.dueDate, fresh.checkInCycle)
-  const grid = series.map((date) => ({
+  // 网格窗口（回归 2026-08：整条序列曾把客户端 slice(-28) 推向未来尾部，
+  // 今天的打卡反而不可见）：截至今天的机会日末 28 格为底，已打卡日期无条件并入——
+  // 预勾（未来）与机会日序列之外的打卡（once 无截止日、无截止日周期任务任意日补记）
+  // 都是既成事实，序列为空时网格即打卡历史（撤销入口依赖它）；仍未勾选的
+  // 未来日归 upcoming 预览。
+  const window = new Set(series.filter((date) => date <= today).slice(-GRID_DATES_LIMIT))
+  for (const date of checked) window.add(date)
+  // 「今天」恒在窗口：极端量级的未来预勾（>27 个）理论上可把它挤出末 28 截尾，
+  // 「今天该打卡」的提示不能被吃掉（与日历 today 环同一原则）
+  const trimmed = [...window].sort().slice(-GRID_DATES_LIMIT)
+  const gridDates = trimmed.includes(today) || !window.has(today) ? trimmed : [...trimmed.slice(1), today].sort()
+  const grid = gridDates.map((date) => ({
     date,
     state: checked.has(date) ? ('checked' as const) : date < today ? ('missed' as const) : ('future' as const),
   }))
@@ -400,40 +419,42 @@ function profilePayload(deps: ApiDeps): Record<string, unknown> {
 
 async function actionUpdateProfile(deps: ApiDeps, body: JsonBody): Promise<unknown> {
   const { store } = deps
-  const current = store.domain.global.get()
-  const next = { ...current, profile: { ...current.profile } }
-  if (body.coachStyle !== undefined) {
-    const style = String(body.coachStyle)
-    if (!(COACH_STYLES as readonly string[]).includes(style)) {
-      throw new Error('教练风格必须是 gentle（温柔型）/ strict（严格型）/ humorous（幽默型）')
+  // 读-改-写整体进串行队列：merge 基于最新已结算快照，并发请求互不覆盖
+  await mutateGlobal(store, (current) => {
+    const next = { ...current, profile: { ...current.profile } }
+    if (body.coachStyle !== undefined) {
+      const style = String(body.coachStyle)
+      if (!(COACH_STYLES as readonly string[]).includes(style)) {
+        throw new Error('教练风格必须是 gentle（温柔型）/ strict（严格型）/ humorous（幽默型）')
+      }
+      next.coachStyle = style as (typeof COACH_STYLES)[number]
     }
-    next.coachStyle = style as (typeof COACH_STYLES)[number]
-  }
-  if (body.nickname !== undefined) {
-    const nickname = clampStr(body.nickname, 50)
-    if (nickname === '') delete next.profile.nickname
-    else next.profile.nickname = nickname
-  }
-  if (body.occupation !== undefined) {
-    const occupation = clampStr(body.occupation, 100)
-    if (occupation === '') delete next.profile.occupation
-    else next.profile.occupation = occupation
-  }
-  if (body.interests !== undefined) {
-    const raw = Array.isArray(body.interests)
-      ? body.interests
-      : typeof body.interests === 'string' ? body.interests.split(/[,，、\s]+/) : null
-    if (raw === null) throw new Error('兴趣格式错误：应为字符串数组或逗号分隔字符串')
-    const cleaned: string[] = []
-    for (const item of raw) {
-      const v = clampStr(item, 50)
-      if (v !== '') cleaned.push(v)
-      if (cleaned.length >= 20) break
+    if (body.nickname !== undefined) {
+      const nickname = clampStr(body.nickname, 50)
+      if (nickname === '') delete next.profile.nickname
+      else next.profile.nickname = nickname
     }
-    if (cleaned.length === 0) delete next.profile.interests
-    else next.profile.interests = cleaned
-  }
-  await store.domain.global.set(next)
+    if (body.occupation !== undefined) {
+      const occupation = clampStr(body.occupation, 100)
+      if (occupation === '') delete next.profile.occupation
+      else next.profile.occupation = occupation
+    }
+    if (body.interests !== undefined) {
+      const raw = Array.isArray(body.interests)
+        ? body.interests
+        : typeof body.interests === 'string' ? body.interests.split(/[,，、\s]+/) : null
+      if (raw === null) throw new Error('兴趣格式错误：应为字符串数组或逗号分隔字符串')
+      const cleaned: string[] = []
+      for (const item of raw) {
+        const v = clampStr(item, 50)
+        if (v !== '') cleaned.push(v)
+        if (cleaned.length >= 20) break
+      }
+      if (cleaned.length === 0) delete next.profile.interests
+      else next.profile.interests = cleaned
+    }
+    return next
+  })
   return profilePayload(deps)
 }
 
@@ -504,8 +525,11 @@ async function actionCreateWish(deps: ApiDeps, body: JsonBody): Promise<unknown>
 
 async function actionCreateTask(deps: ApiDeps, body: JsonBody): Promise<unknown> {
   requireFields(body, ['name', 'cycle'])
-  const name = clampStr(body.name, 100)
-  if (name === '') throw new ActionError('missing_field', '任务名不能为空', { field: 'name' })
+  // 超长显式报错而非静默截断——与愿望标题（store 报错）同一口径，用户知情才可修正
+  const rawName = String(body.name).trim()
+  if (rawName === '') throw new ActionError('missing_field', '任务名不能为空', { field: 'name' })
+  if (rawName.length > 100) throw new Error('任务名不能超过 100 字符（当前 ' + String(rawName.length) + ' 字）')
+  const name = rawName
   const cycle = String(body.cycle)
   if (!(CYCLES as readonly string[]).includes(cycle)) {
     throw new ActionError('missing_field', `周期必须是：${CYCLES.join('/')}`, { field: 'cycle' })
@@ -549,12 +573,13 @@ async function actionDeleteWish(deps: ApiDeps, body: JsonBody): Promise<unknown>
 // ===== 分类管理 =====
 
 async function setCategoryOverride(deps: ApiDeps, name: string, colorKey: string | null): Promise<void> {
-  const global = deps.store.domain.global.get()
-  const overrides = { ...(global.categoryColors ?? {}) }
-  if (colorKey === null) delete overrides[name]
-  else overrides[name] = colorKey
-  const next = { ...global, categoryColors: Object.keys(overrides).length > 0 ? overrides : undefined }
-  await deps.store.domain.global.set(next)
+  // 读-改-写整体进串行队列：并发改不同分类颜色互不覆盖
+  await mutateGlobal(deps.store, (global) => {
+    const overrides = { ...(global.categoryColors ?? {}) }
+    if (colorKey === null) delete overrides[name]
+    else overrides[name] = colorKey
+    return { ...global, categoryColors: Object.keys(overrides).length > 0 ? overrides : undefined }
+  })
 }
 
 async function actionCategoryRename(deps: ApiDeps, body: JsonBody): Promise<unknown> {

@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { memoryListUrl } from '../src/client/pages/memory.js'
+import { latestCheckedDate } from '../src/client/pages/detail.js'
 import { getApi, postApi } from '../src/routes/api.js'
 import type { ApiDeps } from '../src/routes/api.js'
 import type { RoutesConfig } from '../src/routes/config.js'
@@ -41,5 +42,31 @@ describe('memoryListUrl（记忆搜索 URL 构造）', () => {
     }
     expect(payload.total).toBe(1)
     expect(payload.memories[0]?.key).toBe('经济状况')
+  })
+})
+
+describe('latestCheckedDate（任务详情撤销目标）', () => {
+  const grid = (cells: Array<[string, 'checked' | 'missed' | 'future']>) =>
+    cells.map(([date, state]) => ({ date, state }))
+
+  it('今天已打卡 + 存在未来预勾：撤销目标=最近的预勾日（回归：弹框曾说「今天」、实际撤的是预勾日）', () => {
+    const target = latestCheckedDate(grid([
+      ['2026-08-27', 'missed'],
+      ['2026-08-28', 'checked'],
+      ['2026-09-29', 'checked'],
+    ]))
+    expect(target).toBe('2026-09-29')
+  })
+
+  it('只有今天打卡：目标=今天', () => {
+    expect(latestCheckedDate(grid([['2026-08-28', 'checked']]))).toBe('2026-08-28')
+  })
+
+  it('无任何打卡（仅 missed/future）：无撤销目标', () => {
+    expect(latestCheckedDate(grid([
+      ['2026-08-27', 'missed'],
+      ['2026-08-28', 'future'],
+    ]))).toBeUndefined()
+    expect(latestCheckedDate([])).toBeUndefined()
   })
 })

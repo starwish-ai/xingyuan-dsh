@@ -4,7 +4,7 @@ import { getJson, postAction } from '../api.js'
 import { t } from '../i18n.js'
 import { softConfirm, useActionGuard, usePageData, useStableScrollbar, localYmd } from '../hooks.js'
 import { PageError, PageSkeleton, toast } from '../ui.js'
-import { cycleLabel, dateSuffix, formatFriendlyDate, formatMonth } from './format.js'
+import { cycleLabel, dateSuffix, formatFriendlyDate, formatMonth, formatShortDate } from './format.js'
 import type { CalendarPayload, DayPayload } from './types.js'
 
 function monthOf(offset: number): string {
@@ -73,7 +73,7 @@ export function CalendarPage(): ReactElement {
           ? t('toast.claimed', { name: taskName })
           : action === 'checkin'
             ? t('toast.checkinOk') + dateSuffix(date)
-            : t('toast.undoneAt', { date }), 'ok')
+            : t('toast.undoneAt', { date: formatShortDate(date) }), 'ok')
         // busy 窗口覆盖月历重取；之后仅当操作日仍是当前选中日才回填详情——
         // 动作与快速连点另一日期竞争时，慢的旧响应不得覆盖新选中日的面板
         return page.reload().then(() => {
@@ -81,6 +81,8 @@ export function CalendarPage(): ReactElement {
           const seq = ++pickSeqRef.current
           return getJson<DayPayload>(`/xingyuan/api/day?date=${date}`)
             .then((dayAfter) => { if (seq === pickSeqRef.current) { setDetail(dayAfter); setPickState('idle') } })
+            // 动作已成功、仅详情回取失败：转面板错误态（重试即重新拾取），不静默吞掉也不误报动作失败
+            .catch(() => { if (seq === pickSeqRef.current) setPickState('error') })
         })
       }))
     }
@@ -221,7 +223,9 @@ export function CalendarPage(): ReactElement {
                         createElement('div', { className: 'xy-rowmain' },
                           createElement('span', { className: 'xy-rowtitle' }, task.name),
                           createElement('span', { className: 'xy-meta' }, segments.join(' · '))),
-                        task.status === 'pending' && !task.checked
+                        // 领取仅限今日：claim 无日期语义，claimDate 恒为领取当天——
+                        // 过去/未来选中日的「领取」按钮会造出锚点与所见不符的任务
+                        task.status === 'pending' && !task.checked && detail.date === data.today
                           ? createElement('button', { className: 'xy-btn', disabled: busy, onClick: () => act('claim', task.taskId, task.name, detail.date) }, t('action.claim'))
                           : !task.checked && task.status === 'in_progress'
                             ? createElement('button', { className: 'xy-btn xy-btn-primary', disabled: busy || !task.canCheckIn, onClick: () => act('checkin', task.taskId, task.name, detail.date) }, t('action.checkinThisDay'))

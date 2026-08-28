@@ -28,10 +28,19 @@ export interface PageData<T> {
   readonly reload: () => Promise<void>
 }
 
+/** 窗口重新可见后的重取门槛（ms）：等价 TanStack Query 的 staleTime——
+ * 数据在此年龄内视为新鲜，聚焦不重取；跨天翻篇则无视门槛一律重取。 */
+const FOCUS_REFETCH_MIN_AGE_MS = 60_000
+
 /**
  * 取数三态统一：挂载（或 deps 变化）即拉取，error 存本地化文案，
  * reload 供错误态按钮与动作后刷新复用。path 支持函数形态（如日历按月取参）；
  * 内置序号守卫：快速翻页/连点时慢的旧响应不得覆盖新状态。
+ *
+ * 跨天/回焦自动新鲜化（习惯类应用的基本预期——凌晨挂着的今日页不能还是昨天）：
+ * 监听 visibilitychange/focus，翻篇（本地日期变化）必重取，未翻篇仅当数据年龄
+ * 超过门槛才重取（有节流上限，不空转不定时器）。NN/g「系统应始终让用户知情」：
+ * 时间流逝导致的状态变化要在回到页面时即刻呈现。
  */
 export function usePageData<T>(path: string | (() => string), deps: readonly unknown[] = []): PageData<T> {
   const [data, setData] = useState<T | undefined>(undefined)
@@ -39,16 +48,38 @@ export function usePageData<T>(path: string | (() => string), deps: readonly unk
   const seqRef = useRef(0)
   const pathRef = useRef(path)
   pathRef.current = path
+  const lastLoadAtRef = useRef(0)
+  const lastLoadDayRef = useRef<string | undefined>(undefined)
 
   const load = useCallback((): Promise<void> => {
     const seq = ++seqRef.current
     setError(undefined)
+    lastLoadAtRef.current = Date.now()
+    lastLoadDayRef.current = localYmd(new Date())
     return getJson<T>(typeof pathRef.current === 'function' ? pathRef.current() : pathRef.current)
       .then((payload) => { if (seq === seqRef.current) setData(payload) })
       .catch((e: unknown) => { if (seq === seqRef.current) setError(describeError(e)) })
   }, deps)
 
   useEffect(() => { void load() }, [load])
+
+  useEffect(() => {
+    const maybeReload = (): void => {
+      if (document.visibilityState !== 'visible') return
+      const today = localYmd(new Date())
+      // 翻篇必取；未翻篇按数据年龄节流（TanStack Query focus 重取的 staleTime 语义）
+      if (lastLoadDayRef.current !== today || Date.now() - lastLoadAtRef.current > FOCUS_REFETCH_MIN_AGE_MS) {
+        void load()
+      }
+    }
+    document.addEventListener('visibilitychange', maybeReload)
+    window.addEventListener('focus', maybeReload)
+    return () => {
+      document.removeEventListener('visibilitychange', maybeReload)
+      window.removeEventListener('focus', maybeReload)
+    }
+  }, [load])
+
   return { data, error, reload: load }
 }
 

@@ -1,6 +1,6 @@
 /**
- * 任务详情聚合视图：行内展开——打卡记录网格（近段机会日 checked/missed/future）、
- * 接下来机会日、微行动进度、状态机操作栏（领取/打卡/取消今日/删除）与「让 AI 总结」降级入口。
+ * 任务详情聚合视图：行内展开——打卡记录网格（截至今天的机会日末段 + 预勾）、
+ * 接下来机会日、微行动进度、状态机操作栏（领取/打卡/取消打卡/删除）与「让 AI 总结」降级入口。
  * 数据经 GET /xingyuan/api/task-detail；动作直连 POST（用户点击即本人授权），动作后原位刷新
  * 详情并回调上层列表刷新。
  */
@@ -9,7 +9,7 @@ import { getJson, postAction } from '../api.js'
 import { useXyT, t as translate, activeLocale, type XyT } from '../i18n.js'
 import { localYmd, softConfirm, softConfirmDanger, useActionGuard } from '../hooks.js'
 import { toast } from '../ui.js'
-import { formatShortDate } from './format.js'
+import { dateSuffix, formatShortDate } from './format.js'
 import type { ApiTask } from './types.js'
 
 /** /api/task-detail 响应叶子形状。 */
@@ -55,6 +55,20 @@ export function DetailToggle(props: { open: boolean; onToggle: () => void; contr
 function weekdayMon0(ymd: string): number {
   const date = new Date(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1, Number(ymd.slice(8)), 12)
   return Number.isNaN(date.getTime()) ? 0 : (date.getDay() + 6) % 7
+}
+
+/**
+ * 撤销目标=网格内最近一条打卡（含未来预勾）。必须由客户端解析出具体日期并随请求显式携带：
+ * 服务端「不传日期=撤最近一次」的隐式口径下，弹框文案无法与实际撤销对象同源
+ * （今天已打卡 + 未来预勾并存时，弹框说撤今天、实际撤掉的是预勾日）。
+ */
+export function latestCheckedDate(grid: ReadonlyArray<{ readonly date: string; readonly state: string }>): string | undefined {
+  let latest: string | undefined
+  for (const cell of grid) {
+    if (cell.state !== 'checked') continue
+    if (latest === undefined || cell.date > latest) latest = cell.date
+  }
+  return latest
 }
 
 /**
@@ -109,13 +123,15 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
 
   const today = props.today ?? localYmd(new Date())
   const task = detail.task
-  const checkedToday = detail.grid.some((cell) => cell.date === today && cell.state === 'checked')
+  // 撤销目标=最近一条打卡（含预勾）；只要有打卡记录撤销入口就可达（预勾也能在详情页撤销）
+  const undoTarget = latestCheckedDate(detail.grid)
 
   // 网格可访问性：28 格逐格播报是读屏灾难——格子 aria-hidden，整体以一条
   // 汇总 aria-label 暴露（role=img），逐日细节保留 title 供鼠标悬停。
   // 视觉按周对齐（周一始，GitHub/Streaks 惯例）：首行前置隐形占位，今日格加 accent 环，
   // 连续坚持一眼可读；换月错位不再出现流式换行的参差断行。
-  const recent = detail.grid.slice(-28)
+  // 服务端窗口恒 ≤28（GRID_DATES_LIMIT，§5.10 口径）——此处不再重复截尾，避免双份常量漂移
+  const recent = detail.grid
   const gridCells = [
     ...Array.from({ length: recent.length > 0 ? weekdayMon0(recent[0]!.date) : 0 }, (_, i) =>
       createElement('span', { key: `pad-${i}`, className: 'xy-dcell xy-dcell-blank', 'aria-hidden': 'true' })),
@@ -178,18 +194,29 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
       key: 'checkin', className: 'xy-btn xy-btn-primary', disabled: busy,
       onClick: () => {
         const future = task.nextOpportunityDate !== undefined && task.nextOpportunityDate > today ? task.nextOpportunityDate : undefined
-        const submit = (): void => act('checkin', { taskId: task.taskId }, () => translate('toast.checkinOk'))
+        const submit = (): void => act('checkin', { taskId: task.taskId }, () =>
+          // 与今日页/日历/任务行同口径：toast 带实际勾选日期（预勾时不是今天）
+          translate('toast.checkinOk') + dateSuffix(future ?? today))
         if (future === undefined) { submit(); return }
         void softConfirm(translate('confirm.futureCheckin', { name: task.name, date: future })).then((ok) => { if (ok) submit() })
       },
     }, t('action.checkin')))
   }
-  if (checkedToday) {
+  if (undoTarget !== undefined) {
     ops.push(createElement('button', {
       key: 'cancel', className: 'xy-btn', disabled: busy,
+      // 读屏标签携带目标日期：不开确认弹窗即知将撤销哪一天（含预勾场景）
+      'aria-label': t('action.cancelCheckinAria', { date: formatShortDate(undoTarget) }),
       onClick: () => {
-        void softConfirm(translate('confirm.undoToday', { name: task.name })).then((ok) => {
-          if (ok) act('cancel-checkin', { taskId: task.taskId }, () => translate('toast.undoneAt', { date: today }))
+        // 日期显式随请求携带，弹框/toast 与实际撤销对象同源；确认文案保留 ISO（§5.10 口径）
+        const message = undoTarget === today
+          ? translate('confirm.undoToday', { name: task.name })
+          : translate('confirm.undoAt', { name: task.name, date: undoTarget })
+        void softConfirm(message).then((ok) => {
+          if (ok) {
+            act('cancel-checkin', { taskId: task.taskId, date: undoTarget },
+              () => translate('toast.undoneAt', { date: formatShortDate(undoTarget) }))
+          }
         })
       },
     }, t('action.cancelCheckin')))
