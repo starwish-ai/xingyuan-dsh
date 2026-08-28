@@ -5,6 +5,99 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-08-28
+
+> **Note:** this is a patch release but it carries one breaking change — the `xingyuan`
+> settings namespace is replaced by `xingyuan-pref` (see *Removed*). Consumers of the
+> `./domain` subpath must also adapt to `makeXingyuanStore()` taking a second, required
+> argument. Read *Upgrading from 0.5.2 or earlier* before updating.
+
+**Chat preferences are now always editable.** Settings → XingYuan rendered the
+write-confirmation toggle and the memory-injection limit as permanently disabled until a
+XingYuan session had been opened once since the last dsh start; clicking them did nothing
+and produced no error. Both preferences lived in the preset-layer namespace, which only
+comes into existence when the preset is first mounted, so they now live in a
+bundle-resident namespace registered whenever the bundle row is active.
+
+### Upgrading from 0.5.2 or earlier
+
+The two chat preferences moved from the `xingyuan` block of `$DSH_HOME/settings.yaml` to a
+new `xingyuan-pref` block. **A value you had customised is not carried over** and falls back
+to the default: `confirmWrites` returns to `true` (the safe direction — write actions ask for
+confirmation again) and `memoryInjectLimit` to `40`. Re-apply your choices under
+**Settings → XingYuan → Chat preferences**. The leftover `xingyuan:` block is inert and is
+safe to delete.
+
+### Added
+- **`xingyuan-pref` settings namespace** (`src/pref-settings.ts`), installed by the bundle
+  layer next to the existing `xingyuan-ui` namespace, carrying `confirmWrites` (default
+  `true`) and `memoryInjectLimit` (default `40`, integer `5`–`200`). The schema declares
+  `.step(1)`, so the Host also rejects fractional values that a hand-edited settings
+  document or a direct RPC write could otherwise smuggle in.
+- **Shared preference policy module** (`src/pref-policy.ts`) holding the bounds, defaults
+  and input parser for both halves — the host module depends on
+  `@deepseek-ai/dsh-settings` and must never reach the browser bundle. This also removes
+  the `5`/`200`/`40` literals that were previously repeated in the settings page. Covered
+  by `test/pref-policy.test.ts`.
+- **Write verification**: `scope.set()` resolves rather than rejects on failure (the client
+  controller catches, recovers and returns silently), so `toastError` never fired. The page
+  now compares the snapshot after each write and raises a "did not save" toast when the
+  value did not change. Both controls share one scope — and therefore one write queue — so
+  the comparison is gated on a per-component write sequence number to stay honest under
+  interleaved writes (see below).
+- **Regression lock** (`test/pref-settings.test.ts`): five tests pinning that the bundle
+  layer registers `xingyuan-pref` as soon as the settings service is available, that the
+  read thunk resolves fresh on every call, that the headless path falls back to the schema
+  defaults, and — structurally — that **no namespace bound by the settings page is ever
+  registered from the preset layer**. That last one is the abstract shape of this bug and is
+  what stops it from coming back.
+- **Four-way readiness notice** for the preferences card: loading, remote/temporary
+  connection (`mode === 'memory'`), namespace not registered, and read-only document. The
+  previous code only covered the first two, leaving the rest as silently disabled controls.
+
+### Fixed
+- The two preferences could not be changed before the first XingYuan session of the process
+  — the root cause described above.
+- The write-confirmation toggle rendered as **on** whenever its value was unavailable
+  (`value?.confirmWrites !== false` reads "unknown" as "true"), which is the worst possible
+  default for a safety switch. It now falls back to the schema default explicitly.
+- Namespace-unavailable and read-only states disabled the controls with no explanation.
+- The "did not save" toast could fire on a write that **had** been saved. Both controls share
+  one settings scope, and the client controller fences writes with a generation counter: when
+  a write is superseded by a newer one it only records a pending revision and does **not**
+  fold the result into the snapshot, while the superseded write's `.then` still runs first and
+  sees the stale value. Verification is now skipped for superseded writes, and the number
+  input got the pending guard the toggle already had.
+- Clearing the memory-injection-limit field and blurring reported "enter an integer between 5
+  and 200" while simultaneously refilling the field with the saved value — two contradictory
+  messages at once. An empty field is again treated as abandoning the edit.
+- Tool descriptions for the creation / check-in / cancel-check-in tools asserted that a system
+  confirmation card would appear. Toggle **Confirm write actions** off and the model kept
+  telling users a card had been shown when none was. Tool descriptions are baked in at
+  registration and dsh-tools requires a plain string (no getter), so they are now worded to
+  hold in both states instead of asserting the card. Delete tools are unaffected — deletes
+  always confirm.
+
+### Changed
+- The preset layer no longer registers a settings namespace. It reads preferences through
+  `ctx.xingyuan.prefs()` — a thunk that resolves the current value on every call, so edits
+  still take effect immediately without re-registering tools or prompts. The remaining
+  `Config` fields (`batchWishLimit`, `chartTrendDays`, …) have no settings UI and stay as
+  composition-only entry config, which matches the upstream rule that a namespace should
+  carry only the user-editable subset.
+- **Breaking for `./domain` consumers**: `makeXingyuanStore(domain)` now takes a second,
+  required argument — `makeXingyuanStore(domain, readPrefs)`, where `readPrefs` is a thunk
+  returning the resolved chat preferences. The required-ness is deliberate: every call site
+  (one in production, five in tests) is surfaced by the compiler rather than silently
+  missing the wiring. `XingyuanStore` gained a matching `prefs()` method.
+
+### Removed
+- The preset-layer `xingyuan` settings namespace and the `confirmWrites` /
+  `memoryInjectLimit` fields of the preset `Config`. **A value customised under the old
+  `xingyuan:` section of `$DSH_HOME/settings.yaml` is no longer read and falls back to the
+  default** — `confirmWrites` therefore returns to `true`, the conservative direction. The
+  stale section is left in the document and is harmless.
+
 ## [0.5.2] - 2026-08-27
 
 ### Added
