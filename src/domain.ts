@@ -7,8 +7,8 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import { domainTable, defineDomain, type Domain, type DomainTableSpec } from '@deepseek-ai/dsh-storage-domain'
-import { z } from 'zod'
+import { domainTable, defineDomain, type Domain, type DomainTableSpec, type KvTable, type TableKeyOf, type TableValueOf } from '@deepseek-ai/dsh-storage-domain'
+import { z, type ZodType } from 'zod'
 import type { PrefSettings } from './pref-policy.js'
 
 export const DOMAIN_VERSION = 1
@@ -167,6 +167,83 @@ declare module '@deepseek-ai/cordis' {
  
  type TableValue<S extends DomainTableSpec> = S extends DomainTableSpec<string, infer V> ? V : never
 
+/**
+ * 写路径越界（领域 schema 在落库前拒绝）：稳定 code 供路由层透传，客户端对未知
+ * code 回落服务端原文（ERROR_KEY 无此码——最后防线，可接受）。
+ * 放在 domain.ts 而非复用 store.ToolError——store 反向导入本模块，会成环。
+ */
+export class RecordInvalidError extends Error {
+  readonly code = 'invalid_record'
+  constructor(message: string) {
+    super(message)
+    this.name = 'RecordInvalidError'
+  }
+}
+
+/** 落库前按声明 schema 校验（合法记录 parse 为恒等；违规拒绝并给出可读字段路径）。 */
+function guardSchema<V>(schema: ZodType<V>, label: string, value: V): void {
+  const result = schema.safeParse(value)
+  if (!result.success) {
+    const issue = result.error.issues[0]
+    const path = issue !== undefined && issue.path.length > 0 ? `.${issue.path.join('.')}` : ''
+    throw new RecordInvalidError(
+      `记录未通过领域 schema 校验，拒绝落库（${label}${path}）：${issue?.message ?? '不符合声明结构'}`,
+    )
+  }
+}
+
+/** 包一层写校验的表句柄：读侧原样透传，put/update 在落库前先过 schema。 */
+function guardTable<K extends string, V>(table: KvTable<K, V>, schema: ZodType<V>, label: string): KvTable<K, V> {
+  return {
+    get: (key) => table.get(key),
+    entries: () => table.entries(),
+    keys: () => table.keys(),
+    // 活值 getter：KvTable 契约是「当前记录数」，快照会在持有句柄跨写后失真
+    get size(): number { return table.size },
+    put: async (key, value) => {
+      guardSchema(schema, label, value)
+      await table.put(key, value)
+    },
+    delete: (key) => table.delete(key),
+    update: (key, fn) => table.update(key, (current) => {
+      const next = fn(current)
+      guardSchema(schema, label, next)
+      return next
+    }),
+  }
+}
+
+/**
+ * 写路径 schema 闸门：dsh-storage-domain 只在冷启动 open 时校验存量记录，写句柄
+ * 明确「不 re-check」（验证发生在 durable read 边界）——写路径若漏校验，一条越界
+ * 记录会落库成功、下次启动 open 整体失败（invalid-record 拒绝打开，插件永久无法
+ * 激活，只能手工改库）。业务层的字段校验只覆盖各自路径，此处单点拦截全部
+ * put/update/global.set 作为最后防线；读侧零开销，写路径仅多一次本地 parse。
+ */
+function guardDomain(domain: Domain<typeof xingyuanDomainSpec>): Domain<typeof xingyuanDomainSpec> {
+  const tables = xingyuanDomainSpec.tables
+  const global = domain.global
+  return {
+    name: domain.name,
+    global: {
+      get: () => global.get(),
+      set: async (value) => {
+        guardSchema(GlobalSchema, 'global', value)
+        await global.set(value)
+      },
+    },
+    table: <N extends keyof typeof tables & string>(name: N) => {
+      const spec = tables[name]
+      return guardTable(
+        domain.table(name),
+        spec.valueSchema as ZodType<TableValueOf<typeof xingyuanDomainSpec, N>>,
+        `table:${name}`,
+      ) as KvTable<TableKeyOf<typeof xingyuanDomainSpec, N>, TableValueOf<typeof xingyuanDomainSpec, N>>
+    },
+    close: () => domain.close(),
+  }
+}
+
 /** 由已打开领域构造服务句柄（bundle 入口组装用）。 */
 export function makeXingyuanStore(
   domain: Domain<typeof xingyuanDomainSpec>,
@@ -174,7 +251,7 @@ export function makeXingyuanStore(
 ): XingyuanStore {
   return {
     spec: xingyuanDomainSpec,
-    domain,
+    domain: guardDomain(domain),
     prefs: readPrefs,
     newId: () => randomUUID(),
     checkinKey: (taskId, date) => `${taskId}|${date}`,

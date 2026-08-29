@@ -28,7 +28,7 @@ Tools are only mounted on sessions using the XingYuan preset; other sessions are
 dsh plugin --profile web add @starwish-ai/xingyuan-dsh
 ```
 
-After starting the Web GUI, installation succeeded when「星愿」appears in the agent picker.
+After starting the Web GUI, installation succeeded when "星愿" (XingYuan) appears in the agent picker.
 
 ## Data & Backup
 

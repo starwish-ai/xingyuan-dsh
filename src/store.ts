@@ -10,6 +10,7 @@ import {
   calculateOpportunityDates,
   calculateRequiredDays,
   findFirstUncheckedOpportunityDate,
+  isIsoDate,
   isTaskDone,
   shouldRestartFromExpired,
   todayIso,
@@ -128,7 +129,7 @@ export function validateColorKey(colorKey: string | undefined | null): string | 
 export function validateEstimatedDate(value: string | undefined, today: string): void {
   const v = value?.trim() || undefined
   if (v === undefined) return
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new ToolError(`预计完成日期格式错误，请使用 yyyy-MM-dd：${value}`, 'bad_date', { date: value })
+  if (!isIsoDate(v)) throw new ToolError(`预计完成日期格式错误或不是真实日期，请使用 yyyy-MM-dd：${value}`, 'bad_date', { date: value })
   if (v < today) throw new ToolError('预计完成日期不能早于今天', 'due_past')
 }
 
@@ -324,7 +325,9 @@ export async function performCheckIn(
 }
 
 function validateTargetDate(task: Task, target: string, today: string): void {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(target)) throw new ToolError(`日期格式错误：${target}`, 'bad_date', { date: target })
+  // 语义校验与其他写路径同口径：无截止日非一次任务允许任意**真实**日期补记，
+  // 但 2026-02-30 这类不存在的日历日期会落进 checkins 表并污染连续性重放
+  if (!isIsoDate(target)) throw new ToolError(`日期格式错误或不是真实日期：${target}`, 'bad_date', { date: target })
   if (!task.dueDate && task.checkInCycle === 'once') {
     // once 无截止日：点击打卡即完成，打卡日=操作当天
     if (target !== today) throw new ToolError(`该任务为仅一次任务且未设截止日，只能打卡今天（${today}）`, 'once_today_only', { today })
@@ -375,7 +378,7 @@ export async function createTask(
   if (input.dueDate && input.dueDate < today) throw new ToolError('截止日期不能早于今天', 'due_past')
   if (dueDate !== undefined) assertDueWithinHorizon(dueDate, today)
   if (input.wishId !== undefined && store.domain.table('wishes').get(input.wishId) === undefined) {
-    throw new ToolError(`愿望不存在：${input.wishId}`)
+    throw new ToolError(`愿望不存在：${input.wishId}`, 'not_found', { wishId: input.wishId })
   }
   const requiredDays = calculateRequiredDays(today, dueDate, input.checkInCycle)
   const task: Task = {
@@ -400,7 +403,9 @@ export async function createTask(
 
 function normalizeDue(due: string | undefined): string | undefined {
   if (!due) return undefined
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) throw new ToolError(`日期格式错误，请使用 yyyy-MM-dd：${due}`, 'bad_date', { date: due })
+  // 语义校验与机会日计算器同一口径（isIsoDate）：2026-02-30 这类不存在的日历日期
+  // 在此拒绝——仅查格式会放行，随后序列为空、任务静默变成「无机会日约束」
+  if (!isIsoDate(due)) throw new ToolError(`日期格式错误或不是真实日期，请使用 yyyy-MM-dd：${due}`, 'bad_date', { date: due })
   return due
 }
 
@@ -532,12 +537,16 @@ function prepareDayTasks(store: XingyuanStore, today = todayIso()): PreparedTask
 function planFromPrepared(store: XingyuanStore, date: string, prepared: readonly PreparedTask[], today = todayIso()): DayPlan {
   const items: DayItem[] = []
   for (const { task, wish, opportunities, resident } of prepared) {
-    // 达标关闭的任务不再出现在日程面；仅 once 无截止日任务的今天例外——
-    // 已打卡的今天保留在完成区（撤销入口），否则撤销无路可走
-    if (task.status === 'closed' && task.closedReason === 'achieved' && !(resident && date === today)) continue
+    const checked = store.domain.table('checkins').get(store.checkinKey(task.taskId, date)) !== undefined
+    // 达标关闭的任务不再出现在日程面；两类例外保留撤销/回看入口：
+    // 1) once 无截止日任务的今天（常驻语义，撤销无路可走的场景）
+    // 2) 当天有打卡记录的——最后一个机会日打卡即达标关闭，行若凭空消失，
+    //    用户会看到「打完卡今日计数反而变少」；完成区保留撤销入口，取消该打卡
+    //    本就会经新鲜化自动复活任务，语义自洽
+    if (task.status === 'closed' && task.closedReason === 'achieved' && !checked
+      && !(resident && date === today)) continue
     // 落位判定：有机会日序列按序列；常驻任务只在今天出现（它的打卡语义只有今天合法）
     if (!opportunities.has(date) && !(resident && date === today)) continue
-    const checked = store.domain.table('checkins').get(store.checkinKey(task.taskId, date)) !== undefined
     items.push({
       task,
       wish,

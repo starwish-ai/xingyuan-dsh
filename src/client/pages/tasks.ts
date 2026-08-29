@@ -53,6 +53,8 @@ export function TasksPage(): ReactElement {
         task,
         today: data.today,
         onChanged: page.reload,
+        // 任务页按状态分桶：领取使行迁移组别，领取后焦点交页面标题兜底
+        focusAfterClaim: true,
         trailing: createElement(DetailToggle, {
           open: expanded.has(task.taskId),
           onToggle: () => toggleDetail(task.taskId),

@@ -36,7 +36,6 @@ import {
   CYCLE_LABELS_EN,
   deleteMemory,
   freshTask,
-  freshWish,
   freshWishes,
   mutateGlobal,
   performCheckIn,
@@ -391,7 +390,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       }
       const fresh = freshWishes(store, hits)
       if (fresh.length === 0) return '没有符合条件的愿望。'
-      return `找到 ${fresh.length} 个愿望：\n${fresh.map((w) => `- [${w.wishId}] 「${w.title}」(${w.categoryName})，进度 ${w.progress}%`).join('\n')}\n引用愿望时必须使用方括号内的真实 ID。`
+      return `找到 ${fresh.length} 个愿望：\n${fresh.map((w) => `- [${w.wishId}] 「${w.title}」(${w.categoryName})，进度 ${w.progress}%`).join('\n')}\n后续工具调用必须使用方括号内的真实 ID；向用户回复时只转述愿望内容，不要展示 ID。`
     },
   }))
 
@@ -690,7 +689,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         hits.push(freshTask(store, task))
       }
       if (hits.length === 0) return '没有符合条件的任务。'
-      return `找到 ${hits.length} 个任务：\n${hits.map((t) => `- [${t.taskId}] ${taskLine(t)}，${statusLabel(t.status)}`).join('\n')}\n引用任务时必须使用方括号内的真实 ID。`
+      return `找到 ${hits.length} 个任务：\n${hits.map((t) => `- [${t.taskId}] ${taskLine(t)}，${statusLabel(t.status)}`).join('\n')}\n后续工具调用必须使用方括号内的真实 ID；向用户回复时只转述任务内容，不要展示 ID。`
     },
   }))
 
@@ -1146,7 +1145,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     parameters: {
       chartKey: { type: 'string', required: true, enum: CHART_KEYS, description: '图表类型标识，15选1，见图表展示指南速查表' },
       days: { type: 'integer', description: '天数，可选。仅趋势/分布类生效：趋势类默认14，分布类默认30，最大90' },
-      wishId: { type: 'string', description: '愿望ID，可选。仅 task_completion_rate/task_status 类生效（指定则仅统计该愿望）' },
+      wishId: { type: 'string', description: '愿望ID，可选。仅 taskCompletionRate/taskStatus 类生效（指定则仅统计该愿望）' },
       month: { type: 'string', description: '月份，可选。仅打卡日历使用，yyyy-MM 如 2026-08；不传统计最近一年' },
       limit: { type: 'integer', description: '返回数量，可选。仅排行/进度类生效，默认10最大20' },
       title: { type: 'string', description: '图表标题，可选。不传时用内建默认标题' },
@@ -1240,7 +1239,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         : `距下一级还需 ${level.nextLevelExperience - level.totalExperience} 经验`
       return [
         `等级：Lv.${level.level} ${level.levelName}（${level.totalExperience} EXP，${nextText}）`,
-        `等级权益：${level.rewardDescription}`,
+        `等级荣誉：${level.rewardDescription}`,
         `打卡：累计 ${stats.totalCheckInDays} 天 · 当前连续 ${stats.continuousCheckInDays} 天 · 最长连续 ${stats.maxContinuousCheckInDays} 天`,
         `愿望：共 ${summary.totalWishes} 个 · 已实现 ${summary.completedWishes} 个`,
         `任务：共 ${summary.totalTasks} 个 · 已达成 ${summary.completedTasks} 个`,

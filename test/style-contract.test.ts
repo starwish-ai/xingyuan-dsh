@@ -53,7 +53,8 @@ describe('客户端样式兼容契约', () => {
       '--xyd-accent', '--xyd-accent-strong', '--xyd-danger', '--xyd-warn', '--xyd-ok',
       '--xyd-label-on-2', '--xyd-ok-soft', '--xyd-ok-border', '--xyd-warn-soft',
       '--xyd-warn-border', '--xyd-ok-badge', '--xyd-shadow-card', '--xyd-shadow-toast',
-      '--xyd-shadow-modal', '--xyd-hover', '--xyd-mask',
+      '--xyd-shadow-modal', '--xyd-hover', '--xyd-mask', '--xyd-on-c2', '--xyd-on-c3',
+      '--xyd-on-dcell',
     ]) {
       const light = STYLE_TEXT.includes(`${token}:`)
       const dark = STYLE_TEXT.includes(`body[data-ds-dark-theme]{`)

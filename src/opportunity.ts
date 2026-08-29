@@ -18,8 +18,14 @@ export function todayIso(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
-function isIsoDate(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
+/** 语义化 ISO 日期校验：格式合法且是真实存在的日历日期。
+ * 注意：仅靠 Date.parse 判 NaN 不够——ES 规范的 ISO 文法只约束「月 01-12、日 01-31」，
+ * 不校验月长度（2026-02-30 会滚动成 03-02 的合法时间戳而非 NaN），必须再做往返
+ * 比对。机会日序列与 store 写路径共用这一份（日期语义校验唯一口径）。 */
+export function isIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const n = Date.parse(`${value}T00:00:00Z`)
+  return !Number.isNaN(n) && new Date(n).toISOString().slice(0, 10) === value
 }
 
 /** UTC 天数序号：同一天恒等，可直接做差与比较（避免本地时区夏令时漂移）。 */

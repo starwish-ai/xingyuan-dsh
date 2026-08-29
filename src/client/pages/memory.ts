@@ -175,6 +175,9 @@ export function MemoryPage(): ReactElement {
     const key = keyDraft.trim()
     const value = valueDraft.trim()
     if (key === '' || value === '') { setFormError(t('memory.needKeyAndValue')); return }
+    // 与服务端 schema 同口径（min 2）：在错误发生的位置就地引导，而非让服务端
+    // 的 missing_field 被客户端按 code 覆盖成通用文案
+    if (key.length < 2) { setFormError(t('memory.keyTooShort')); return }
     setFormError(undefined)
     const knownExists = editingKey !== undefined || allItems.some((m) => m.key === key)
     if (knownExists && editingKey === undefined) {
@@ -285,10 +288,18 @@ export function MemoryPage(): ReactElement {
     data.total > allItems.length
       ? createElement('div', { className: 'xy-meta xy-memcap' }, t('memory.capNote', { total: data.total, shown: allItems.length }))
       : null,
-    data.total === 0
-      ? createElement(PageEmpty, { title: t('memory.empty.title'), hint: t('memory.empty.hint') })
+    data.total === 0 && debounced.trim() === ''
+      ? // 真·空库。服务端 total 本身按关键词过滤，settle 后零命中搜索的 total 也是
+        // 0——不以「无搜索词」为前提区分的话，零命中会错用「还没有任何记忆」文案
+        createElement(PageEmpty, { title: t('memory.empty.title'), hint: t('memory.empty.hint') })
       : filtered.length === 0
-        ? createElement(PageEmpty, { title: t('memory.searchEmpty.title') })
+        ? // 空态仅在防抖 settle 后判定：本地过滤用逐键 query、数据按防抖词取回，
+          // 输入中渲染空白（null = 卸载该节点，无行可显示时不闪空态文案）。
+          // 已知残余：debounce settle → 新数据落地之间旧数据按新词过滤为空时，
+          // 仍可能短暂显示一次空态（数据载荷不带检索词，无法精确判定，量级可接受）
+          query.trim() === debounced.trim()
+            ? createElement(PageEmpty, { title: t('memory.searchEmpty.title') })
+            : null
         : // 列表收进单张分组卡：分隔线行替代逐行描边盒子，长列表不再满屏边框噪音
           createElement('section', { className: 'xy-group' },
             createElement('ul', { className: 'xy-grouplist' }, rows)),

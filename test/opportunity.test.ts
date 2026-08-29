@@ -7,9 +7,28 @@ import {
   calculateOpportunityDates,
   calculateRequiredDays,
   findFirstUncheckedOpportunityDate,
+  isIsoDate,
   isTaskDone,
   shouldRestartFromExpired,
 } from '../src/opportunity.js'
+
+describe('isIsoDate 语义校验（回归：Date.parse 只查「月01-12/日01-31」，不查月长度）', () => {
+  it('月长度非法的日期必须拒绝（2026-02-30 会滚动成 03-02 的合法时间戳）', () => {
+    expect(isIsoDate('2026-02-30')).toBe(false)
+    expect(isIsoDate('2027-02-29')).toBe(false)
+    expect(isIsoDate('2026-04-31')).toBe(false)
+  })
+  it('月/日范围非法与格式非法拒绝；真实日历日期接受（含闰日与地平线远期）', () => {
+    expect(isIsoDate('2026-13-01')).toBe(false)
+    expect(isIsoDate('2026-00-10')).toBe(false)
+    expect(isIsoDate('2026-1-1')).toBe(false)
+    expect(isIsoDate('not-a-date')).toBe(false)
+    expect(isIsoDate('2026-02-28')).toBe(true)
+    expect(isIsoDate('2024-02-29')).toBe(true)
+    expect(isIsoDate('2026-12-31')).toBe(true)
+    expect(isIsoDate('9999-12-31')).toBe(true)
+  })
+})
 
 describe('TaskCheckInCalculatorUtil 对拍：calculateOpportunityDates', () => {
   it('DAILY：锚点日起每天，含截止日', () => {

@@ -69,8 +69,15 @@ const ERROR_KEY: Record<ActionErrorCode, XyKey> = {
   bad_interests: 'err.bad_interests',
 }
 
-/** 把任意抛错转成用户可读文案：ActionError 按键本地化；其余直出消息。 */
+/** 网络层失败的浏览器原文是英文技术串（Chrome "Failed to fetch"、Safari "Load failed"、
+ * Firefox "NetworkError…"、undici "fetch failed"），直出会打破本地化承诺——识别后统一
+ * 转本地化文案。仅匹配 TypeError（fetch 在请求发出前失败的规范类型）中的已知模式，
+ * 其余 TypeError（代码缺陷）仍原样抛出便于排障。 */
+const NETWORK_ERROR_PATTERN = /failed to fetch|load failed|networkerror|fetch failed/i
+
+/** 把任意抛错转成用户可读文案：网络失败/ActionError 按键本地化；其余直出消息。 */
 export function describeError(e: unknown): string {
+  if (e instanceof TypeError && NETWORK_ERROR_PATTERN.test(e.message)) return t('common.networkError')
   if (!(e instanceof ActionError)) return e instanceof Error ? e.message : String(e)
   // 服务端新增未知 code 时回落原始消息，避免渲染 undefined 或插值崩溃
   const key = ERROR_KEY[e.code]

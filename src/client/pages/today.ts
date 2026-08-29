@@ -62,8 +62,13 @@ export function TodayPage(): ReactElement {
           // planForDay 保证展示行必为未打卡的进行中任务，canCheckIn 恒 true——
           // 不再有「disabled 但无解释」的死分支；disabled 仅服务动作在途的 busy 窗口
           disabled: busy || !task.canCheckIn,
-          onClick: () => act('checkin', { taskId: task.taskId }, (p) =>
-            t('toast.checkinOk') + dateSuffix(typeof p.date === 'string' ? String(p.date) : undefined)),
+          onClick: () => {
+            void act('checkin', { taskId: task.taskId }, (p) =>
+              t('toast.checkinOk') + dateSuffix(typeof p.date === 'string' ? String(p.date) : undefined))
+              // 行随刷新从「待完成」组迁入「已完成」组、原按钮销毁，焦点交给页面
+              // 标题兜底（与下方撤销路径同款；领取行留在同一列表内不迁移，无需兜底）
+              .then(focusPageTitle, () => {})
+          },
         }, t('action.checkin'))
       : createElement('button', {
           className: 'xy-btn', disabled: busy,

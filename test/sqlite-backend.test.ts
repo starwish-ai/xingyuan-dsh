@@ -93,4 +93,21 @@ describe('sqlite 后端门禁', () => {
     db.close()
     await expect(unit.loadAll()).rejects.toThrow(/global slot is not valid JSON/)
   })
+
+  it('损坏介质：表行非 JSON 时同样报 malformed-medium（与 global 槽同一排障口径）', async () => {
+    const path = join(workDir, 'corrupt-row.sqlite')
+    const ctx = await mountBackend(path)
+    contexts.push(ctx)
+    const backend = ctx.storage.backend.get('sqlite')!
+    const unit = await backend.kv!.open(descriptor(1))
+    await unit.putRecord('wishes', 'w1', { wishId: 'w1', title: '完好行' })
+    // 第二连接直改库：把表行写成非法 JSON（模拟介质损坏/手改文件）——此前裸
+    // JSON.parse 抛 SyntaxError，与 global 槽的 malformed-medium 报错形态分裂
+    const db = new DatabaseSync(path)
+    db.prepare('UPDATE u_xingyuan_wishes SET value = ? WHERE key = ?').run('{not-json', 'w1')
+    db.close()
+    const err = await unit.loadAll().then(() => undefined, (e: unknown) => e)
+    expect((err as Error).message).toMatch(/record 'w1' is not valid JSON/)
+    expect((err as { code?: string }).code).toBe('malformed-medium')
+  })
 })

@@ -24,15 +24,15 @@ export interface LevelConfig {
 /** 等级表（Lv.1–Lv.10）。 */
 export const LEVEL_CONFIGS: readonly LevelConfig[] = [
   { level: 1, levelName: '初心者', requiredExperience: 0, rewardDescription: '开启星愿之旅' },
-  { level: 2, levelName: '探索者', requiredExperience: 100, rewardDescription: '解锁更多 AI 对话功能' },
-  { level: 3, levelName: '实践者', requiredExperience: 300, rewardDescription: '获得专属头像框' },
-  { level: 4, levelName: '坚持者', requiredExperience: 600, rewardDescription: '解锁高级教练风格' },
-  { level: 5, levelName: '奋斗者', requiredExperience: 1000, rewardDescription: '获得专属徽章' },
-  { level: 6, levelName: '进取者', requiredExperience: 1500, rewardDescription: '解锁更多任务模板' },
-  { level: 7, levelName: '成就者', requiredExperience: 2200, rewardDescription: '获得专属称号' },
-  { level: 8, levelName: '卓越者', requiredExperience: 3000, rewardDescription: '解锁全部教练风格' },
-  { level: 9, levelName: '领航者', requiredExperience: 4000, rewardDescription: '获得限定头像框' },
-  { level: 10, levelName: '星愿大师', requiredExperience: 5200, rewardDescription: '解锁全部特权，成为星愿大师' },
+  { level: 2, levelName: '探索者', requiredExperience: 100, rewardDescription: '晋升「探索者」称号' },
+  { level: 3, levelName: '实践者', requiredExperience: 300, rewardDescription: '晋升「实践者」称号' },
+  { level: 4, levelName: '坚持者', requiredExperience: 600, rewardDescription: '晋升「坚持者」称号' },
+  { level: 5, levelName: '奋斗者', requiredExperience: 1000, rewardDescription: '晋升「奋斗者」称号' },
+  { level: 6, levelName: '进取者', requiredExperience: 1500, rewardDescription: '晋升「进取者」称号' },
+  { level: 7, levelName: '成就者', requiredExperience: 2200, rewardDescription: '晋升「成就者」称号' },
+  { level: 8, levelName: '卓越者', requiredExperience: 3000, rewardDescription: '晋升「卓越者」称号' },
+  { level: 9, levelName: '领航者', requiredExperience: 4000, rewardDescription: '晋升「领航者」称号' },
+  { level: 10, levelName: '星愿大师', requiredExperience: 5200, rewardDescription: '晋升「星愿大师」——星愿之旅的最高荣誉' },
 ]
 
 /** 每条打卡记录的基础经验。 */

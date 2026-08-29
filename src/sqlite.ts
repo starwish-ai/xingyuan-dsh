@@ -36,7 +36,15 @@ class SqliteKvUnit implements KvUnit {
     for (const table of this.descriptor.tables) {
       const rows = this.db.prepare(`SELECT key, value FROM "${this.physical(table)}"`).all() as { key: string; value: string }[]
       const records: Record<string, unknown> = {}
-      for (const row of rows) records[row.key] = JSON.parse(row.value)
+      for (const row of rows) {
+        // 行值损坏与 global 槽同一报错形态（malformed-medium）：此前裸 JSON.parse
+        // 抛 SyntaxError，排障口径分裂
+        try {
+          records[row.key] = JSON.parse(row.value)
+        } catch {
+          throw new StorageError('malformed-medium', `unit '${this.descriptor.name}' table '${table}' record '${row.key}' is not valid JSON`)
+        }
+      }
       tables[table] = records
     }
     return { tables, global: this.readGlobal() }

@@ -25,8 +25,9 @@ agent 选择器出现「星愿」即安装成功。
 | 数据持久化 | 自带 sqlite 后端，`~/.dsh/xingyuan/xingyuan.sqlite` |
 
 技术栈：TypeScript（Node ≥22.5）+ Cordis 插件框架 + React 18（client 半侧）
-+ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/*` 锁定 `^0.1.1-rc.2`（唯一例外
-  `@deepseek-ai/schemastery` 为 `*`，跟随宿主）。
++ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/dsh-*` 锁定 `^0.1.1-rc.2`；
+  `@deepseek-ai/cordis` 跟随宿主 4.x（独立版本线）；`@deepseek-ai/schemastery`
+  为 `*`，跟随宿主。
 
 ### 运行形态
 
@@ -206,6 +207,12 @@ export const xingyuanDomainSpec = defineDomain({
   物理布局为一个 DB 文件：`xingyuan_meta(unit, version)` 戳介质版本并承载 global 槽；
   每张声明表一张物理表 `u_<unit>_<table>`（key TEXT PRIMARY KEY, value TEXT JSON）。
   `node:sqlite` 同步写 + WAL，写入即持久。
+- **写路径 schema 闸门**（`makeXingyuanStore` 单点拦截）：dsh-storage-domain 只在
+  冷启动 open 时校验存量记录，写句柄明确「不 re-check」——业务层字段校验只覆盖
+  各自路径，一条漏网越界记录会落库成功、下次启动 `open` 整体失败（插件永久无法
+  激活）。因此 store 组装时把全部 `put/update/global.set` 包一层声明 schema 校验
+  （`RecordInvalidError`，code `invalid_record` 供路由透传，客户端未知 code 回落原文）；合法记录
+  parse 为恒等，读侧零开销。`test/domain-guard.test.ts` 锁定。
 - **生命周期**：bundle 入口先 `ensurePresetRoot()` 再 `storageDomain.open(spec)`，
   就绪后 `ctx.provide('xingyuan', store)`；`ctx.effect(() => async () => domain.close())`
   保证卸载/HMR 自动关闭。注意：异步 await 间隙访问 `ctx.*` 会命中 inactive context，
@@ -446,6 +453,12 @@ wish-guide/task-guide/memory-guide/config-guide/chart-guide/reminder-guide(110�
 原样透传。请求体上限 64KB。
 
 ### 5.10 客户端半侧开发纪律（视觉与验证踩坑沉淀）
+
+**activeLocale 依赖 rc.2 实测快照字段**：宿主发布的 LocaleFace 契约只声明
+`getSnapshot(): { revision }` 与 `bind(ns)`，语言判定所需的 `snapshot.active`
+不在类型面内但运行时存在（i18n.ts 内有实测记录与 unknown 收窄兜底）；en 格式化
+链路（Intl 日期/复数/标点分隔符）全部经 `activeLocale()`，该字段缺席时静默回落
+zh——升级 dsh 后若发现「英文正文配中文日期」即此处前提失效。
 
 **API 请求 URL 拼接**：带 query 参数的请求一律 `URLSearchParams` 统一构造，
 禁止手工字符串拼接；同资源的多条取数路径（首屏 / 加载更多）必须共用同一个
@@ -710,6 +723,11 @@ npm provenance 开启）。
 - 设置卡是 schemastery 表单，无自定义按钮/复杂控件。
 - 领取不可逆：claim 无「退回待领取」路径（锚点日/应打天数随领取重算，回退语义复杂）；
   误领取的恢复路径是删除重建。有意取舍，勿当缺陷报。
+- 无任务的愿望没有「手动标记达成」路径：达成判定 ≡ 进度 100%（机会日序列推导），
+  裸愿望（create_wish 不附任务）进度恒 0，对话与页面均无达成出口；用户想完结时
+  模型的引导口径是补一个任务来承载完成过程（或删除重建）。已评估过为 update_wish
+  增加 achieved 标记的方案，涉及领域字段/工具/路由/卡片/成长统计多处联动，留待
+  真实需求出现再立项，勿当缺陷报。
 - 页面不承载通用编辑：愿望/任务的改名、改周期、改画像走对话（chat-first）；页面侧
   唯一的编辑动作是过期任务详情内的「延长截止日」复活闭环（/api/action/update-task）。
   扩页面编辑面前先推翻这条记录。
@@ -720,7 +738,8 @@ npm provenance 开启）。
 - 会话事件要求每 (kind,id) 仅一条 start——新事件类型沿用 whole-value 单事件模式最省心。
 - 外部插件会话事件在 rc.2 的读取白名单之外且无 ignorable 写入通道：依赖激活期
   会话日志自愈补标兜底（§5.6）。插件未运行期间写入的事件在下次启动前不可冷读；
-  极端竞态（会话打开与扫描同时发生）可能多报一次错、下次启动自愈。上游若开放
+  极端竞态（会话未被识别为活会话且恰在自愈写回窗口内落盘）最坏可丢失窗口内新
+  写入的事件（备份只有改写前状态），一般情形是多报一次错、下次启动自愈。上游若开放
   ignorable 写入通道或事件注册面，回归官方机制并撤下补标。
 - 客户端样式禁用 color-mix() 等新式取色函数：dsh 壳的浏览器矩阵里存在不支持的
   环境，凡用它的属性按无效处理（空态插画曾因此整体隐形只剩孤立色点，已移除插画

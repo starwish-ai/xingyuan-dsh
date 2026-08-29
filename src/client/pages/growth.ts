@@ -36,8 +36,9 @@ function levelRewardKey(level: number): XyKey {
 }
 function localLevelName(level: number, fallback: string | undefined): string {
   const dict = translate(levelNameKey(level))
-  // 键缺词时 t() 回落键名本身——zh 词表覆盖 1-10，命中即用；否则用服务端原文
-  return dict !== levelNameKey(level) ? dict : fallback ?? ''
+  // 键缺词时 t() 回落键名本身——zh 词表覆盖 1-10，命中即用；否则用服务端原文；
+  // 两者皆缺（未知等级且服务端未带名）落到词典兜底键，读屏不再得到空等级名
+  return dict !== levelNameKey(level) ? dict : (fallback ?? translate('growth.levelFallback'))
 }
 function localLevelReward(level: number, fallback: string | undefined): string {
   const dict = translate(levelRewardKey(level))

@@ -129,6 +129,27 @@ describe('业务层：创建 → 领取 → 打卡', () => {
     expect(revived.status).toBe('in_progress')
   })
 
+  it('最后一个机会日打卡达标关闭后，当日 plan 仍保留该行（完成区撤销入口）', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    const task = await createTask(store, { name: '今日收尾', checkInCycle: 'daily', dueDate: today }, addDays(today, -2))
+    await claimTask(store, task.taskId, addDays(today, -2))
+    let done
+    for (const d of [addDays(today, -2), addDays(today, -1), today]) {
+      done = await performCheckIn(store, task.taskId, d, addDays(today, -1))
+    }
+    expect(done!.task.status).toBe('closed')
+    expect(done!.task.closedReason).toBe('achieved')
+    // 回归：此前达标关闭的任务被整体剔除出日程面——最后一个机会日打卡后行凭空
+    // 消失、今日计数反而变少；当天有打卡的保留在完成区（撤销入口），取消打卡
+    // 经新鲜化自动复活任务，语义自洽
+    const plan = planForDay(store, today)
+    expect(plan.items).toHaveLength(1)
+    expect(plan.items[0]!.checked).toBe(true)
+    expect(plan.items[0]!.canCancel).toBe(true)
+    expect(plan.items[0]!.canCheckIn).toBe(false)
+  })
+
   it('planForDay：机会日落位与打卡状态', async () => {
     const store = memoryStore()
     const a = await createTask(store, { name: 'A', checkInCycle: 'daily', dueDate: '2026-08-25' }, '2026-08-20')
@@ -249,6 +270,31 @@ describe('业务层：update_task 空串清除语义', () => {
 })
 
 describe('愿望收口：createWish/updateWish 校验同源', () => {
+  it('打卡目标日期为不存在的日历日期时拒绝（无截止日任务的任意补记也不豁免）', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    const task = await createTask(store, { name: '自由补记', checkInCycle: 'daily' }, today)
+    await claimTask(store, task.taskId, today)
+    // 无截止日非一次任务允许任意真实日期补记，但 2026-02-30 会落进 checkins 表
+    // 并把连续性重放滚动到 03-02——validateTargetDate 必须语义拒绝
+    await expect(performCheckIn(store, task.taskId, '2026-02-30', today))
+      .rejects.toMatchObject({ code: 'bad_date' })
+    // 真实日期补记不受影响（既有语义保持）
+    const ok = await performCheckIn(store, task.taskId, '2026-01-15', today)
+    expect(ok.date).toBe('2026-01-15')
+  })
+
+  it('不存在的日历日期（月长度非法）在写路径拒绝：任务截止日与愿望预计完成日', async () => {
+    const store = memoryStore()
+    // Date.parse('2027-02-30') 是合法时间戳（滚动成 03-02），仅查 NaN 放行会导致
+    // 机会日序列口径漂移；isIsoDate 往返校验必须在两条写路径同时拦截
+    await expect(createTask(store, { name: '假日期', checkInCycle: 'daily', dueDate: '2027-02-30' }, '2026-08-20'))
+      .rejects.toMatchObject({ code: 'bad_date' })
+    await expect(updateWish(store, (await createWish(store, { title: '测试愿望', categoryName: '学习' }, '2026-08-20')).wishId,
+      { estimatedCompletionDate: '2027-02-30' }, '2026-08-20'))
+      .rejects.toMatchObject({ code: 'bad_date' })
+  })
+
   it('分类长度/颜色键/预计日期过去/标题超长分别抛稳定错误', async () => {
     const store = memoryStore()
     await expect(createWish(store, { title: '学琴', categoryName: '学' }, '2026-08-01')).rejects.toMatchObject({ code: 'bad_category_name' })

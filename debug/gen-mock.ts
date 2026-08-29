@@ -80,8 +80,8 @@ const detailLegend = `
 </div>`
 
 /** 展开详情（镜像 detail.ts）：周对齐网格 + 操作区 [主操作][辅助][危险] 单行成组，无重复元信息行。 */
-const detailOps = `
-<div class="xy-detail" id="mock-detail">
+const detailOps = (id: string): string => `
+<div class="xy-detail" id="${id}">
   <div>
     <span class="xy-quick-label">打卡记录</span>
     <div class="xy-detail-grid" role="img" aria-label="${dgridSummary}">${dcells}</div>
@@ -191,7 +191,7 @@ const wishSection = `
     <div class="xy-bar"><div class="xy-bar-fill" style="transform:scaleX(.15)"></div></div>
     <div class="xy-wishtasks">
 ${taskLine('每周复盘token用量并优化调用方式', '每周 · 5/9 天 · 下次 9月28日 · 截止 10月19日', '<button class="xy-btn xy-btn-primary" type="button">提前打卡 9月28日</button><button class="xy-btn xy-btn-inline" type="button" aria-expanded="true">收起详情</button>')}
-${detailOps}
+${detailOps("mock-detail-wish")}
 ${taskLine('每天动手练习调用AI接口30分钟', '每天 · 1/31 天 · 截止 9月23日', '<button class="xy-btn xy-btn-primary" type="button">✓ 打卡</button><button class="xy-btn xy-btn-inline" type="button" aria-expanded="false">展开详情</button>')}
     </div>
   </div>
@@ -210,7 +210,7 @@ const tasksSection = `
     <div class="xy-grouplist">
     <div class="xy-grouprow xy-taskrow">
 ${taskLine('每周复盘token用量并优化调用方式', '每周 · 5/9 天 · 下次 9月28日 · 截止 10月19日', '<button class="xy-btn xy-btn-primary" type="button">提前打卡 9月28日</button><button class="xy-btn xy-btn-inline" type="button" aria-expanded="true">收起详情</button>')}
-${detailOps}
+${detailOps("mock-detail-task")}
     </div>
 ${taskLine('每天动手练习调用AI接口30分钟', '每天 · 1/31 天 · 截止 9月23日', '<button class="xy-btn xy-btn-primary" type="button">✓ 打卡</button><button class="xy-btn xy-btn-inline" type="button" aria-expanded="false">展开详情</button>')}
     </div>

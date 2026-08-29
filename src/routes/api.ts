@@ -33,7 +33,7 @@ import {
   validateCategoryName,
   validateColorKey,
 } from '../store.js'
-import { addDays, calculateOpportunityDates, findFirstUncheckedOpportunityDate, todayIso } from '../opportunity.js'
+import { addDays, calculateOpportunityDates, findFirstUncheckedOpportunityDate, isIsoDate, todayIso } from '../opportunity.js'
 import { LEVEL_CONFIGS, growthSummary } from '../growth.js'
 import { getMicroAction } from '../micro.js'
 import { mutateGlobal } from '../store.js'
@@ -82,13 +82,9 @@ function strOrUndef(value: unknown): string | undefined {
 }
 
 function isoDateOrThrow(value: string, code: 'bad_date' | 'due_past' = 'bad_date'): string {
-  // 语义校验（非仅正则）：拒绝 2026-13-01 / 2026-02-30 这类「形似合法」的日期——
-  // 此前正则放行后 addDays/Date.parse 抛无 code 的 RangeError，客户端只能看到原始英文异常
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new ActionError(code, `日期格式错误，请使用 yyyy-MM-dd：${value}`)
-  const parsed = Date.parse(`${value}T00:00:00Z`)
-  if (Number.isNaN(parsed) || new Date(parsed).toISOString().slice(0, 10) !== value) {
-    throw new ActionError(code, `日期不存在或格式错误（yyyy-MM-dd）：${value}`)
-  }
+  // 语义校验收口到 opportunity.isIsoDate（唯一口径，往返比对拒绝 2026-02-30 这类
+  // 「形似合法」日期——Date.parse 只查「月01-12/日01-31」，不查月长度）
+  if (!isIsoDate(value)) throw new ActionError(code, `日期不存在或格式错误（yyyy-MM-dd）：${value}`)
   return value
 }
 
@@ -123,7 +119,7 @@ export function getApi(deps: ApiDeps, path: string, url: URL): unknown {
   }
   if (path === '/api/task-detail') return taskDetail(deps, url.searchParams.get('taskId') ?? undefined)
   if (path === '/api/categories') return categoriesPayload(deps)
-  throw new HttpError(404, 'not found')
+  throw new HttpError(404, '未找到请求的资源', 'not_found')
 }
 
 function intParam(url: URL, name: string): number | undefined {
@@ -175,7 +171,7 @@ export async function postApi(deps: ApiDeps, path: string, body: JsonBody): Prom
     case '/api/action/category-color':
       return actionCategoryColor(deps, body)
     default:
-      throw new HttpError(404, 'not found')
+      throw new HttpError(404, '未找到请求的资源', 'not_found')
   }
 }
 

@@ -56,6 +56,10 @@ export const STYLE_TEXT = `
   --xyd-c3-soft-dot:rgba(16,185,129,.30);
   --xyd-dcell-checked:rgba(56,217,169,.42);
   --xyd-dcell-checked-dot:rgba(56,217,169,.55);
+  /* 上述成对底色的前景伙伴（同使用点收进令牌区，漂移即红） */
+  --xyd-on-c2:#7c4a03;
+  --xyd-on-c3:#065f46;
+  --xyd-on-dcell:#0b3d26;
   /* 阴影对（卡片悬停/toast/弹窗/英雄卡）：深浅各自配档，禁止正文区裸写 rgba */
   --xyd-shadow-card:0 2px 10px rgba(15,23,42,.07);
   --xyd-shadow-toast:0 8px 24px -8px rgba(15,23,42,.2),0 2px 8px -2px rgba(15,23,42,.1);
@@ -102,6 +106,9 @@ body[data-ds-dark-theme]{
   --xyd-c3-soft-dot:rgba(52,211,153,.30);
   --xyd-dcell-checked:rgba(46,160,105,.32);
   --xyd-dcell-checked-dot:rgba(46,160,105,.45);
+  --xyd-on-c2:#ffd9a8;
+  --xyd-on-c3:#a7f3c9;
+  --xyd-on-dcell:#a7f3c9;
   --xyd-shadow-card:0 2px 10px rgba(0,0,0,.32);
   --xyd-shadow-toast:0 8px 24px -8px rgba(0,0,0,.5),0 2px 8px -2px rgba(0,0,0,.35);
   --xyd-shadow-modal:0 24px 48px -16px rgba(0,0,0,.55),0 4px 12px -4px rgba(0,0,0,.4);
@@ -129,7 +136,7 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-badge-chart{background:var(--xyd-ok-badge)}
 .xy-badge-micro{background:var(--xyd-warn-soft)}
 .xy-title{min-width:0;font-weight:600;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere}
-.xy-deleted{opacity:.55}
+.xy-deleted{opacity:.65}
 .xy-deleted .xy-title{text-decoration:line-through}
 .xy-meta{color:var(--dsw-alias-label-secondary);font-size:12px;margin-top:4px;overflow-wrap:anywhere}
 /* 次级面板底上的次要文字用专用对（壳通用次要色对 layer-2 仅 ≈4.3:1，双主题同病） */
@@ -146,9 +153,12 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-microstep{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-inner);background:var(--dsw-alias-bg-layer-2)}
 .xy-microstep.xy-done{opacity:.74}
 .xy-microstep.xy-done .xy-microsteptext{text-decoration:line-through}
-.xy-microstep.xy-skipped{opacity:.58}
+.xy-microstep.xy-skipped{opacity:.65}
 .xy-microstepnum{flex:none;width:20px;height:20px;border-radius:50%;background:var(--xyd-accent);color:var(--xyd-on-accent);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;margin-top:1px}
 .xy-microsteptext{font-size:13px;display:flex;flex-direction:column;min-width:0}
+/* 卡内步骤说明/状态词的背景是 layer-2：次要文字用 label-on-2 专用对（壳通用
+   * 次要色对 layer-2 仅 ≈4.3:1，双主题同病——与 xy-preview 同一治理线） */
+.xy-microstep .xy-meta{color:var(--xyd-label-on-2)}
 .xy-microstate{margin-left:auto;flex:none}
 
 /* 图表卡 */
@@ -356,14 +366,15 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
  * （c1 底色对卡底仅 ≈1.1:1，图例点有描边而圆章没有——两侧观感不一致） */
 .xy-c1 .xy-daynum{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l2)}
 /* 部分完成 / 全部完成 = 柔和语义底，字色按主题配对保证 ≥4.5:1 */
-.xy-c2 .xy-daynum{background:var(--xyd-c2-soft);color:#7c4a03}
-.xy-c3 .xy-daynum{background:var(--xyd-c3-soft);color:#065f46}
-body[data-ds-dark-theme] .xy-c2 .xy-daynum{color:#ffd9a8}
-body[data-ds-dark-theme] .xy-c3 .xy-daynum{color:#a7f3c9}
-/* hover 晕底排除已选中格：specificity 高于 .xy-picked 单类选择器，
- * 不排除的话悬停在已选日上会用晕底盖掉选中实底（视觉上「取消选中」） */
+.xy-c2 .xy-daynum{background:var(--xyd-c2-soft);color:var(--xyd-on-c2)}
+.xy-c3 .xy-daynum{background:var(--xyd-c3-soft);color:var(--xyd-on-c3)}
+body[data-ds-dark-theme] .xy-c2 .xy-daynum{color:var(--xyd-on-c2)}
+body[data-ds-dark-theme] .xy-c3 .xy-daynum{color:var(--xyd-on-c3)}
+/* hover 晕底排除已选中格与语义状态格：specificity 高于单类选择器，不排除的话
+ * 悬停在已选日上会用晕底盖掉选中实底（视觉上「取消选中」）；c2/c3 同理——
+ * 状态底色正是用户悬停核对的那个信息，不能在悬停瞬间被晕底抹掉 */
 @media (hover:hover) and (pointer:fine){
-  .xy-cell:not(.xy-outside):not(.xy-picked):hover .xy-daynum{background:var(--xyd-accent-soft)}
+  .xy-cell:not(.xy-outside):not(.xy-picked):not(.xy-c2):not(.xy-c3):hover .xy-daynum{background:var(--xyd-accent-soft)}
 }
 /* 今日 = accent 环包圆章：不覆盖状态底色（「今天该打卡」的提示不能被吃掉） */
 .xy-today .xy-daynum{box-shadow:0 0 0 2px var(--xyd-accent)}
@@ -450,7 +461,7 @@ button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 2px var(--xyd-accent-ring)}
 .xy-compose select.xy-input{width:auto}
 .xy-editing{display:flex;align-items:center;gap:10px;margin-top:12px;padding:7px 10px;border:1px dashed var(--dsw-alias-border-l2);border-radius:var(--xyd-r-inner)}
 .xy-memactions{display:flex;gap:6px;flex:none}
-.xy-membar{display:flex;align-items:center;gap:10px;margin-top:14px}
+.xy-membar{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
 .xy-membar .xy-input-search{width:min(250px,100%)}
 .xy-memcap{margin-top:6px}
 /* 超长记忆值 3 行截断（≤1000 字符记录不再撑出数屏高行；完整值在删除确认弹窗可见） */
@@ -495,8 +506,8 @@ button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 2px var(--xyd-accent-ring)}
 .xy-dcell-blank{visibility:hidden}
 /* 今日格 = accent 环包底色：与日历页圆章的 today 环同一语法 */
 .xy-dcell.xy-dcell-today{box-shadow:0 0 0 2px var(--xyd-accent)}
-.xy-dcell-checked{background:var(--xyd-dcell-checked);color:#0b3d26}
-body[data-ds-dark-theme] .xy-dcell-checked{color:#a7f3c9}
+.xy-dcell-checked{background:var(--xyd-dcell-checked);color:var(--xyd-on-dcell)}
+body[data-ds-dark-theme] .xy-dcell-checked{color:var(--xyd-on-dcell)}
 .xy-dcell-missed{background:transparent;border:1px dashed var(--dsw-alias-border-l3);color:var(--dsw-alias-label-secondary)}
 .xy-dcell-future{background:var(--dsw-alias-bg-layer-2);color:var(--xyd-label-on-2);border:1px solid var(--dsw-alias-border-l1)}
 /* 图例复用 xy-dot 时借格子的语义底色（同色系小尺寸） */

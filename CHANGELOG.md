@@ -5,6 +5,89 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2026-08-29
+
+> **Note:** this release is the follow-up to the v0.5.5 six-perspective quality
+> pass: the same six reviews re-ran against 0.5.5 and every accepted finding is
+> fixed here — one data-safety gate, honesty fixes in the growth ladder, focus
+> management on the highest-frequency action, and a batch of contrast, copy and
+> localization closures. No data format changes; existing databases and recorded
+> sessions replay as before.
+
+### Added
+- **Write-path schema gate** (`makeXingyuanStore`): the storage domain validates
+  records only when cold-opening the medium — a write path that skipped a field
+  check (e.g. an over-long task name from the model) used to persist silently and
+  then brick the next startup (`invalid-record` refuses to open, plugin dead until
+  manual surgery). Every `put`/`update`/`global.set` is now guarded by the declared
+  zod schema at the single store assembly point and rejected at write time with a
+  stable `invalid_record` code; valid records parse as identity, reads pay nothing.
+  Locked by `test/domain-guard.test.ts`.
+- **Network-failure copy**: connection-level fetch failures (dsh restarting) no
+  longer surface the browser's raw English (`Failed to fetch` / `Load failed`) in
+  the Chinese UI; they map to a localized "network request failed, retry" message.
+- **Task rows keep keyboard focus after group-migrating actions**: a successful
+  check-in moves the row between the Today page's open/done lists and destroyed the
+  pressed button, dropping focus to `<body>`; focus now falls back to the page
+  title (the same pattern as undo). The same treatment covers a check-in that
+  closes a task anywhere task rows render, and claiming a task on the Tasks page,
+  where the row moves between status groups.
+- **Memory page**: the search empty-state no longer flashes between keystrokes
+  while the debounce is pending, a settled zero-hit search now shows the "no
+  matches" copy instead of the "no memories yet" empty-library one (the server's
+  `total` is query-filtered, so the two were indistinguishable before), and the
+  key field's server minimum (2 characters) is validated inline with its guidance
+  message instead of a generic error.
+
+### Changed
+- **Level rewards describe what exists**: the growth ladder no longer promises
+  avatar frames, task templates or style gating that the product does not have
+  (coach styles were always free in Settings); rewards are now the honorary title
+  itself, capped by the Lv.10 pinnacle. Server table and both dictionaries updated
+  together (the Chinese dictionary is locked to the server table by
+  `test/growth.test.ts`).
+- **Levels read "荣誉" not "权益"** on the Growth page hero and in `get_growth_stats`
+  output, matching the honorary rewards.
+- **Today plan keeps the achieved-closing row**: checking the last opportunity day
+  closes the task, which used to remove the row from the Today page entirely (the
+  counter shrank right after checking in). A closed-achieved task with a check-in
+  on that date stays in the done group with its undo entry; cancelling the check-in
+  revives the task through the existing freshness path.
+- **Calendar hover preserves state colors**: hovering a partially/fully-completed
+  day no longer washes the semantic amber/green chip with the accent hover tint —
+  the state color is exactly what the hover was inspecting.
+- **Contrast closures**: micro-action card secondary text and skipped steps use the
+  `label-on-2` pair and a higher muted opacity so both themes stay above the
+  4.5:1 line (the same lift applies to deleted wish cards in chat); calendar/
+  check-in-cell state foreground colors moved into the theme token region as
+  paired `--xyd-on-c2` / `--xyd-on-c3` / `--xyd-on-dcell` tokens.
+- **Date validation accepts only real calendar dates**: `2026-02-30` used to pass
+  the format check (`Date.parse` rolls it over instead of returning NaN) and then
+  silently produce a task with an empty opportunity sequence — or land in the
+  check-in table as a fake day that skews the streak replay. Task due dates, wish
+  estimated dates and check-in target dates (including the any-date back-fill on
+  no-deadline tasks) now share the opportunity calculator's semantic `isIsoDate`
+  round-trip check, and the routes' duplicate implementation converges onto it.
+- **Prompt coherence**: the check-in example moved out of the "no-confirm mode"
+  section into confirm mode (check-in is a confirm-gated write) and no longer
+  demonstrates a streak number the tool does not return; list-tool outputs tell the
+  model to use bracketed IDs only for follow-up calls, not to render them to the
+  user; `generate_chart`'s `wishId` parameter names the camelCase chart keys.
+- **Memory search bar wraps** so the saved notice is not clipped off narrow panels.
+- **Copy/wording**: the Settings preference-unavailable hint no longer hardcodes a
+  stale count; the English "clear all memories" dialog is grammatical for one item;
+  the Growth page EXP/experience units are consistent in Chinese; an unknown level
+  falls back to a localized name instead of an empty label; the 404 API error and
+  the wish-not-found tool/route error carry localizable codes; the English
+  check-in grid summary is grammatical for one cell; README wording aligned with
+  the UI ("连续加成", straight quotes in English).
+
+### Fixed
+- **sqlite backend**: a corrupted table row now reports `malformed-medium` like the
+  global slot does, instead of a raw `SyntaxError` with a split troubleshooting path.
+- **Mock generator**: the detail-panel fixture in `debug/gen-mock.ts` takes an id
+  parameter so the wish/task scenarios no longer emit duplicate DOM ids.
+
 ## [0.5.5] - 2026-08-28
 
 > **Note:** this release is a six-perspective quality pass (product, visual design,
