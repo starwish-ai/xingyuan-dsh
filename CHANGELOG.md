@@ -5,6 +5,117 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] - 2026-08-29
+
+> **Note:** this release is the third six-perspective quality pass (product,
+> design, end-user, dsh-plugin engineering, architecture, UX). It closes the
+> last honesty gap in the write paths, makes tab switching lossless for
+> in-progress input, hardens the opportunity-date calculator against a
+> process-hanging edge case, and lands the accessibility/contrast leftovers.
+> No data format changes; existing databases and recorded sessions replay as before.
+
+### Added
+- **Draft snapshots across tab switches**: typing a memory (up to 1000 chars)
+  or filling the quick-create forms used to be silently lost when switching
+  conversation view tabs (pages unmount on switch). Form drafts now survive tab
+  switches and panel collapse; successful saves clear them.
+- **Instant growth feedback on check-in**: the check-in tool reply appends the
+  current level and experience progress, closing the "check in → grow" loop at
+  the moment of the action instead of deferring it to the Growth page.
+- **Non-preset session hint on the chat-directed pages**: in "always show" mode the six tabs
+  render in every session, but wishes/tasks/memory empty states directed users
+  to a chat that has no XingYuan tools there. The Today page's "preset not
+  enabled" hint row now also renders on the other three pages.
+- **HTTP shell tests**: route dispatch (status-code mapping, the 64 KB limit,
+  JSON parsing, the `ToolError.code` passthrough that powers client-side error
+  localization) had zero coverage; locked with mocked `IncomingMessage`/
+  `ServerResponse` in `test/routes-shell.test.ts`.
+
+### Changed
+- **Claiming an overdue unclaimed task is rejected, not silently closed**
+  (`claim_expired`): the old flow claimed it and immediately expired-closed it
+  while the tool reply asserted "claimed, now in progress" and the page toast
+  said "go check in" — both false, and the task-line button kept offering an
+  action that always fails. The row shows a guidance hint instead, the chat
+  task card hides its claim button for the same state, and the detail panel's
+  revive row (extend due date) now also covers overdue-unclaimed tasks.
+- **The early check-in confirms no longer assert a falsehood**: the task-row,
+  card and detail dialogs said "today is not a check-in day" — false when today
+  was already checked in (the natural path: check in via chat, then tap the
+  button on the updated card); the calendar dialog said "{date} is not a
+  check-in day" for a day the panel only lists because it IS one. All four now
+  state only what is true: the target day is after today, and an early check-in
+  commits to finishing that day.
+- **Growth-ladder and completed rows dim by text color, not row opacity**:
+  whole-row `opacity` (0.65-0.78) blended 12 px text below the WCAG AA 4.5:1
+  line (≈2.6-3.1:1 measured in both themes); the hierarchy now comes from the
+  secondary text color (4.76/5.15:1) while transparency stays on decorative
+  elements only.
+- **Danger icon buttons share one quiet tier**: the memory-row delete joined
+  the wish-card delete at 0.78 idle opacity with hover/focus restore (long
+  lists stop glowing red; non-text contrast ≥3:1, the stale "≥4.5:1" comment
+  corrected to the non-text standard).
+- **Growth chart stops squeezing its columns on narrow panels**: below the
+  520 px breakpoint the 30 daily columns scroll horizontally at a minimum
+  width (~13 px per column, up from ~10 px) instead of being flex-crushed;
+  a deliberate trade-off against the 24 px touch-target ideal, whose full
+  width would make the chart scroll several screens.
+- **HITL confirm sorts callers by whether any confirm UI exists**: callers
+  with no confirm UI at all (`NO_PROVIDER`, `CALLER_NOT_LIVE` — both raised
+  before `NO_PROVIDER` in rc.2) are allowed, as before for headless; a
+  delegated caller (`DELEGATED_CALLER`, e.g. a session-spawned subagent) is
+  now failed closed with actionable guidance ("confirm in the main
+  conversation, then run it there") instead of the raw platform error —
+  keeping the always-on delete confirmation intact on delegated paths.
+  Recorded in the engineering doc's HITL contract section.
+- **weekly/monthly expectation management**: tool descriptions and the task
+  guide now state that opportunity days run from the claim date (every 7 days /
+  monthly by claim date) and never bind to a weekday — the model must say so
+  instead of silently accepting "every Wednesday" requests. Recorded in Known
+  Limitations.
+- **The recommendation tool states its ordering**: `get_recommended_tasks` is
+  a fixed "top 5 by historical check-in count" ranking, not curation;
+  description and reply now say so.
+- **Dedup guidance covers paraphrase**: the wish/task guides instruct the model
+  to sweep the existing list semantically when substring dedup finds no hit but
+  the request is loosely phrased.
+- **Prompt/UI drift sync**: the Tasks page has four status groups (not three)
+  and two more settings entries (confirm-card language, tab visibility) — the
+  capabilities section now matches what users see.
+- **Copy/wording**: user-facing strings unify "机会日" to "打卡日" (the check-in
+  tool guidance already used the plain term; leftover error strings swept
+  too); the bare-wish card points to the
+  chat path for task suggestions; the task-created toast explains "claim it to
+  start checking in"; five English strings polished ("To check in", "entries",
+  "Check-ins · last 30 days", "saved when you leave the field", the grid
+  summary).
+
+### Fixed
+- **Opportunity-date loops can no longer hang the process**: termination used
+  ISO string comparison, which silently assumes four-digit years — a sequence
+  crossing 9999-12-31 (only reachable via hand-edited sqlite) compared
+  `'10000-xx' <= '9999-xx'` as true forever, hanging daily/weekly/monthly in an
+  allocating loop. Termination is now numeric (UTC day numbers; the monthly
+  branch via `Date.UTC`, since `Date.parse('10000-…')` returns `NaN`). Locked
+  by termination tests including the year-boundary crossing.
+- **Toast glyph semantics & screen readers**: the info glyph was "★" — the star
+  is the high-importance memory marker (`.xy-star-hi`); info is now "i", and
+  toast glyphs are `aria-hidden` so decorative symbols are not announced inside
+  the live region.
+- **Centered header baselines**: the `.xy-meta` top margin leaked into centered
+  card/page heads, sinking secondary text by 2 px; the treatment the detail
+  area already had now covers the heads too.
+- **Focus management**: closing the category rename editor returns focus (to
+  the row's rename button, or the page title when the row was rebuilt by a
+  rename); finishing the last "load more" page moves focus to the "all shown"
+  line and announces it (`role="status"`).
+- **Docs**: reference links pointed at the nonexistent `main` branch of the
+  upstream repository (the default branch is `master`) and at a cookbook page
+  that does not exist (the conversation-node contract lives in
+  `subsystems/conversation`); a dsh upgrade checklist now records the two
+  patch-DSL hazards (schedule insert id collision, storage-domain whole-line
+  replacement).
+
 ## [0.5.6] - 2026-08-29
 
 > **Note:** this release is the follow-up to the v0.5.5 six-perspective quality

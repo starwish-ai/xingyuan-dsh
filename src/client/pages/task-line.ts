@@ -61,13 +61,17 @@ export function TaskLine(props: {
       + `${task.dueDate !== undefined ? ` · ${t('task.due', { date: formatShortDate(task.dueDate) })}` : ''}`),
     createElement('div', { style: { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' } },
       task.status === 'pending'
-        ? createElement('button', {
-            className: 'xy-btn', disabled: busy,
-            onClick: () => {
-              void act('claim', { taskId: task.taskId }, () => t('toast.claimed', { name: task.name }))
-                .then(() => { if (focusAfterClaim) focusPageTitle() }, () => {})
-            },
-          }, t('action.claim'))
+        ? (task.dueDate !== undefined && task.dueDate < today
+            // 截止日已过的待领取任务：写路径拒绝领取（claim_expired），行内给指引而非必失败按钮
+            // （复活入口在展开详情的「延长截止日」行，与详情面板同口径）
+            ? createElement('span', { className: 'xy-meta' }, t('task.claimExpiredHint'))
+            : createElement('button', {
+                className: 'xy-btn', disabled: busy,
+                onClick: () => {
+                  void act('claim', { taskId: task.taskId }, () => t('toast.claimed', { name: task.name }))
+                    .then(() => { if (focusAfterClaim) focusPageTitle() }, () => {})
+                },
+              }, t('action.claim')))
         : task.status === 'in_progress'
           ? createElement('button', { className: 'xy-btn xy-btn-primary', disabled: busy, onClick: checkIn },
               futureDate !== undefined ? t('action.checkinFuture', { date: formatShortDate(futureDate) }) : t('action.checkin'))

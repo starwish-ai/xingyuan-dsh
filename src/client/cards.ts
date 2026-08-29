@@ -109,7 +109,10 @@ function TaskView(props: CardProps<'xy-task'>): ReactElement {
     perform()
   }
   const deleted = event.op === 'deleted'
-  const showClaim = !deleted && phase === 'idle' && task.status === 'pending'
+  // 截止日已过的待领取任务写路径拒绝领取（store.claim_expired）：卡片按钮同口径隐藏，
+  // 避免点按必失败（卡片是快照，today 取渲染当时——与写路径校验同一新鲜口径）
+  const claimExpired = task.status === 'pending' && task.dueDate !== undefined && task.dueDate < localYmd(new Date())
+  const showClaim = !deleted && phase === 'idle' && task.status === 'pending' && !claimExpired
   const showCheckIn = !deleted && phase !== 'done' && (task.status === 'in_progress' || phase === 'claimed')
   const preview = event.opportunityPreview.length > 0
     ? t('task.upcoming', { dates: event.opportunityPreview.map((date) => formatShortDate(date)).join(activeLocale() === 'en' ? ', ' : '、') })

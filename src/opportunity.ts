@@ -5,7 +5,9 @@
  * 锚点日 = 领取日（claimDate），无领取日则为创建日。
  * 周期：once 仅截止日；daily 锚点日起每天；weekly 每 7 天（非自然周）；
  * monthly 逐自然月推进、日期钳制（1/31 → 2/28 → 3/31）。
- * 全部日期为本地时区 'yyyy-MM-dd' 字符串，ISO 字典序即时间序。
+ * 全部日期为本地时区 'yyyy-MM-dd' 字符串；内部换算与终止判定一律用 UTC 天数序号
+ * （数值比较）——ISO 字典序隐含「4 位年」前提，序列越过 9999-12-31 后恒假（死循环），
+ * 禁止用于终止判定（详见 calculateOpportunityDates 内注）。
  */
 
 export type CheckInCycle = 'once' | 'daily' | 'weekly' | 'monthly'
@@ -41,14 +43,19 @@ export function addDays(iso: string, days: number): string {
   return fromDayNumber(dayNumber(iso) + days)
 }
 
-/** 自然月推进 + 日期钳制：1/31 → 下月 min(31, 该月天数)。 */
-function addMonthsClamped(y: number, m0: number, dayOfMonth: number, addMonths: number): string {
+/** 自然月推进 + 日期钳制：1/31 → 下月 min(31, 该月天数)。同时返回 UTC 天数序号
+ * 供终止判定用——不能走字符串解析：年份越过 4 位后（'10000-…'）Date.parse 得 NaN，
+ * NaN 参与比较恒 false 会重新引入死循环（Date.UTC 数值计算无此问题，年份 ≥100 不映射）。 */
+function addMonthsClamped(y: number, m0: number, dayOfMonth: number, addMonths: number): { num: number; iso: string } {
   const total = y * 12 + m0 + addMonths
   const year = Math.floor(total / 12)
   const month0 = total % 12
   const lengthOfMonth = new Date(Date.UTC(year, month0 + 1, 0)).getUTCDate()
   const day = Math.min(dayOfMonth, lengthOfMonth)
-  return `${year}-${String(month0 + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  return {
+    num: Date.UTC(year, month0, day) / 86_400_000,
+    iso: `${year}-${String(month0 + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+  }
 }
 
 /**
@@ -68,23 +75,28 @@ export function calculateOpportunityDates(
   }
   if (!dueDate || !isIsoDate(dueDate)) return []
 
-  const due = dueDate
+  // 终止判定一律走 UTC 天数序号（数值比较），不用 ISO 字符串字典序——
+  // 字符串比较隐含「4 位年」前提，序列一旦越过 9999-12-31（如手改 sqlite 塞入
+  // 远期截止日的脏数据），'10000-01-31' < '9999-12-31' 恒真，daily/weekly/monthly
+  // 三条循环全部死循环挂死进程；数值比较下越界只是平凡地到达 dueNum 终点
+  const dueNum = dayNumber(dueDate)
   const dates: string[] = []
   if (checkInCycle === 'daily') {
-    for (let d = anchorDate; d <= due; d = addDays(d, 1)) dates.push(d)
+    for (let n = dayNumber(anchorDate); n <= dueNum; n++) dates.push(fromDayNumber(n))
     return dates
   }
   if (checkInCycle === 'weekly') {
-    for (let d = anchorDate; d <= due; d = addDays(d, 7)) dates.push(d)
+    for (let n = dayNumber(anchorDate); n <= dueNum; n += 7) dates.push(fromDayNumber(n))
     return dates
   }
-  // monthly：自然月推进，日期钳制
-  let months = 0
-  while (true) {
-    const candidate = addMonthsClamped(Number(anchorDate.slice(0, 4)), Number(anchorDate.slice(5, 7)) - 1, Number(anchorDate.slice(8, 10)), months)
-    if (candidate > due) break
-    dates.push(candidate)
-    months++
+  // monthly：自然月推进，日期钳制；终止判定用候选日的天数序号（单调递增，终点有保证）
+  const anchorY = Number(anchorDate.slice(0, 4))
+  const anchorM0 = Number(anchorDate.slice(5, 7)) - 1
+  const anchorD = Number(anchorDate.slice(8, 10))
+  for (let months = 0; ; months++) {
+    const candidate = addMonthsClamped(anchorY, anchorM0, anchorD, months)
+    if (candidate.num > dueNum) break
+    dates.push(candidate.iso)
   }
   return dates
 }

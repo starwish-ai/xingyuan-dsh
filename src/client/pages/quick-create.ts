@@ -11,6 +11,7 @@ import { useXyT, t as translate } from '../i18n.js'
 import { localYmd, softConfirm, useActionGuard } from '../hooks.js'
 import { toast } from '../ui.js'
 import { SwatchRow } from './color-swatch.js'
+import { getViewState, setViewState } from '../view-state.js'
 import { cycleLabel } from './format.js'
 
 const CYCLE_KEYS = ['once', 'daily', 'weekly', 'monthly'] as const
@@ -32,9 +33,14 @@ export function WishQuickForm(props: { onCreated: () => void; existingTitles?: R
   // 展开即聚焦首个字段：点「新建」后可直接打字，不再多点一跳（表单条件挂载，挂载=展开）
   const titleRef = useRef<HTMLInputElement | null>(null)
   useEffect(() => { titleRef.current?.focus() }, [])
-  const [title, setTitle] = useState('')
-  const [categoryName, setCategoryName] = useState('')
-  const [colorKey, setColorKey] = useState('')
+  // 表单草稿跨标签/收起快照：填到一半切走不丢内容（成功创建即清）
+  const wishDraft = getViewState('quick.wish', { title: '', categoryName: '', colorKey: '' })
+  const [title, setTitleRaw] = useState(() => typeof wishDraft.title === 'string' ? wishDraft.title : '')
+  const [categoryName, setCategoryNameRaw] = useState(() => typeof wishDraft.categoryName === 'string' ? wishDraft.categoryName : '')
+  const [colorKey, setColorKeyRaw] = useState(() => typeof wishDraft.colorKey === 'string' ? wishDraft.colorKey : '')
+  const setTitle = (v: string): void => { setTitleRaw(v); setViewState('quick.wish', { title: v, categoryName, colorKey }) }
+  const setCategoryName = (v: string): void => { setCategoryNameRaw(v); setViewState('quick.wish', { title, categoryName: v, colorKey }) }
+  const setColorKey = (v: string): void => { setColorKeyRaw(v); setViewState('quick.wish', { title, categoryName, colorKey: v }) }
   const [fieldError, setFieldError] = useState<string | undefined>(undefined)
   const { busy, guard } = useActionGuard()
 
@@ -64,6 +70,7 @@ export function WishQuickForm(props: { onCreated: () => void; existingTitles?: R
     }).then(() => {
       toast(translate('toast.wishCreated', { title: trimmedTitle }), 'ok')
       setTitle(''); setCategoryName(''); setColorKey('')
+      setViewState('quick.wish', undefined)
       props.onCreated()
     }))
   }
@@ -105,9 +112,14 @@ export function TaskQuickForm(props: { today: string; onCreated: () => void; exi
   // 同 WishQuickForm：展开即聚焦名称字段
   const nameRef = useRef<HTMLInputElement | null>(null)
   useEffect(() => { nameRef.current?.focus() }, [])
-  const [name, setName] = useState('')
-  const [cycle, setCycle] = useState<string>('daily')
-  const [dueDate, setDueDate] = useState('')
+  // 同 WishQuickForm：草稿跨标签/收起快照，成功创建即清
+  const taskDraft = getViewState('quick.task', { name: '', cycle: 'daily', dueDate: '' })
+  const [name, setNameRaw] = useState(() => typeof taskDraft.name === 'string' ? taskDraft.name : '')
+  const [cycle, setCycleRaw] = useState<string>(() => typeof taskDraft.cycle === 'string' ? taskDraft.cycle : 'daily')
+  const [dueDate, setDueDateRaw] = useState(() => typeof taskDraft.dueDate === 'string' ? taskDraft.dueDate : '')
+  const setName = (v: string): void => { setNameRaw(v); setViewState('quick.task', { name: v, cycle, dueDate }) }
+  const setCycle = (v: string): void => { setCycleRaw(v); setViewState('quick.task', { name, cycle: v, dueDate }) }
+  const setDueDate = (v: string): void => { setDueDateRaw(v); setViewState('quick.task', { name, cycle, dueDate: v }) }
   const [fieldError, setFieldError] = useState<string | undefined>(undefined)
   const { busy, guard } = useActionGuard()
 
@@ -135,6 +147,7 @@ export function TaskQuickForm(props: { today: string; onCreated: () => void; exi
     }).then(() => {
       toast(translate('toast.taskCreated', { name: trimmed }), 'ok')
       setName(''); setDueDate('')
+      setViewState('quick.task', undefined)
       props.onCreated()
     }))
   }

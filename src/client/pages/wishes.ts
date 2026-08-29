@@ -1,9 +1,10 @@
 /** 愿望页：进行中/已达成愿望卡 + 下属任务行（领取/打卡/详情聚合）+ 愿望删除 + 分类管理 + 快速新建。 */
-import { createElement, useState, type ReactElement } from 'react'
+import { createElement, useState, useSyncExternalStore, type ReactElement } from 'react'
 import { postAction } from '../api.js'
 import { useXyT } from '../i18n.js'
 import { softConfirmDanger, useActionGuard, usePageData, useScrollTopOnMount, useStableScrollbar } from '../hooks.js'
 import { getViewState, setViewState } from '../view-state.js'
+import { todayHintStore } from '../tab-hint.js'
 import { PageEmpty, PageError, PageSkeleton, StaleBanner, toast, IconTrash, focusPageTitle } from '../ui.js'
 import { categoryVars } from '../../category-color.js'
 import { TaskLine } from './task-line.js'
@@ -15,6 +16,8 @@ import type { ApiWish, WishesPayload } from './types.js'
 
 export function WishesPage(): ReactElement {
   const t = useXyT()
+  // 始终显示 × 非星愿会话：与今日页同一轻提示（空态里的「告诉我」引导对该会话不成立）
+  const showNoPresetHint = useSyncExternalStore(todayHintStore.subscribe, todayHintStore.getSnapshot)
   const stabilize = useStableScrollbar()
   useScrollTopOnMount()
   const page = usePageData<WishesPayload>('/xingyuan/api/wishes')
@@ -80,7 +83,7 @@ export function WishesPage(): ReactElement {
         createElement('span', { className: 'xy-title' }, wish.title),
         createElement('span', { className: 'xy-progress-num' }, t('wish.progress', { percent: wish.progress })),
         createElement('button', {
-          className: 'xy-btn xy-btn-danger xy-btn-icon xy-wishdel',
+          className: 'xy-btn xy-btn-danger xy-btn-icon',
           disabled: deleting,
           'aria-label': t('common.delete') + ' · ' + wish.title,
           title: t('common.delete'),
@@ -106,6 +109,7 @@ export function WishesPage(): ReactElement {
 
   return createElement('div', { className: 'xy-page', ref: stabilize },
     page.error !== undefined ? createElement(StaleBanner, { onRetry: () => void page.reload() }) : null,
+    showNoPresetHint ? createElement('p', { className: 'xy-hint' }, t('today.noPresetHint')) : null,
     createElement('div', { className: 'xy-page-head' },
       createElement('h2', { className: 'xy-page-title' }, t('wish.pageTitle')),
       createElement('span', { className: 'xy-meta' }, t('wish.summary', {

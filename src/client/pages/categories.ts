@@ -7,7 +7,7 @@ import { createElement, useEffect, useRef, useState, type ReactElement } from 'r
 import { getJson, postAction, describeError } from '../api.js'
 import { useXyT } from '../i18n.js'
 import { softConfirm, softConfirmDanger, useActionGuard } from '../hooks.js'
-import { toast } from '../ui.js'
+import { toast, focusPageTitle } from '../ui.js'
 import { categoryVars } from '../../category-color.js'
 import { SwatchRow } from './color-swatch.js'
 import { countKey } from './format.js'
@@ -98,6 +98,23 @@ export function CategoryManager(props: { readonly onChanged?: () => void }): Rea
   const [renaming, setRenaming] = useState<string | undefined>(undefined)
   const [coloring, setColoring] = useState<string | undefined>(undefined)
   const { busy, guard } = useActionGuard()
+  // 改名编辑器随关闭（提交/取消/Esc）整体卸载，焦点会落空：记下触发行内「改名」
+  // 按钮，关闭后焦点归还。仅在「打开→关闭」迁移时执行（面板挂载的那次 effect
+  // 不动焦点——否则每次打开面板焦点就被拽到页面标题）；改名成功后行按新名
+  // re-key、旧触发按钮随之销毁，且 effect 执行时 reload 数据未回、旧按钮还在
+  // DOM（归还焦点会在 re-key 中落空到 body）——成功路径显式清空触发引用，令
+  // effect 直接走页面标题兜底
+  const renameTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const renameOpenRef = useRef(false)
+  useEffect(() => {
+    if (renaming !== undefined) { renameOpenRef.current = true; return }
+    if (!renameOpenRef.current) return
+    renameOpenRef.current = false
+    const trigger = renameTriggerRef.current
+    renameTriggerRef.current = null
+    if (trigger !== null && document.contains(trigger)) trigger.focus()
+    else focusPageTitle()
+  }, [renaming])
 
   const load = (): void => {
     setError(undefined)
@@ -113,6 +130,7 @@ export function CategoryManager(props: { readonly onChanged?: () => void }): Rea
   const commitRename = (oldName: string, newName: string): void => {
     guard(() => postAction('category-rename', { oldName, newName }).then(() => {
       toast(t('toast.categoryRenamed', { name: newName }), 'ok')
+      renameTriggerRef.current = null
       setRenaming(undefined)
       reload()
     }))
@@ -146,7 +164,10 @@ export function CategoryManager(props: { readonly onChanged?: () => void }): Rea
               createElement('button', {
                 className: 'xy-btn',
                 disabled: busy,
-                onClick: () => { setRenaming(row.name); setColoring(undefined) },
+                onClick: (e: { currentTarget: HTMLButtonElement }) => {
+                  renameTriggerRef.current = e.currentTarget
+                  setRenaming(row.name); setColoring(undefined)
+                },
               }, t('catmgr.rename')),
               createElement('button', {
                 className: 'xy-btn',

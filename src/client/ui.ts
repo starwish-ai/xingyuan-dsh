@@ -46,9 +46,11 @@ export function disposeToasts(): void {
   toastAlertRoot = undefined
 }
 
-const TOAST_GLYPH: Record<ToastKind, string> = { ok: '✓', error: '!', info: '★' }
+const TOAST_GLYPH: Record<ToastKind, string> = { ok: '✓', error: '!', info: 'i' }
 
-/** 轻提示：成功 2.6s / 错误 4.2s 自动消退，点击立即关闭；textContent 注入天然防 XSS。 */
+/** 轻提示：成功 2.6s / 错误 4.2s 自动消退，点击立即关闭；textContent 注入天然防 XSS。
+ * 字形集合（✓/!/i）对读屏隐藏（aria-hidden）：装饰符不进 live region 播报，语义由文字承担；
+ * info 用「i」不用「★」——星标是高重要度记忆的专属标记（.xy-star-hi），语义不撞车。 */
 export function toast(message: string, kind: ToastKind = 'info'): void {
   const root = kind === 'error' ? ensureToastAlertRoot() : ensureToastRoot()
   while (root.children.length >= 4) root.firstElementChild?.remove()
@@ -56,6 +58,7 @@ export function toast(message: string, kind: ToastKind = 'info'): void {
   el.className = `xy-toast xy-toast-${kind}`
   const glyph = document.createElement('span')
   glyph.className = 'xy-toast-glyph'
+  glyph.setAttribute('aria-hidden', 'true')
   glyph.textContent = TOAST_GLYPH[kind]
   const text = document.createElement('span')
   text.className = 'xy-toast-text'

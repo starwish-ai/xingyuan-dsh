@@ -151,9 +151,9 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-micro{border-color:var(--xyd-warn-border)}
 .xy-microsteps{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
 .xy-microstep{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-inner);background:var(--dsw-alias-bg-layer-2)}
-.xy-microstep.xy-done{opacity:.74}
 .xy-microstep.xy-done .xy-microsteptext{text-decoration:line-through}
-.xy-microstep.xy-skipped{opacity:.65}
+/* 完成/跳过步的文字降权走次要色而非整行 opacity（对比度依据同上 .xy-done 注） */
+.xy-microstep.xy-done .xy-microsteptext,.xy-microstep.xy-skipped .xy-microsteptext{color:var(--dsw-alias-label-secondary)}
 .xy-microstepnum{flex:none;width:20px;height:20px;border-radius:50%;background:var(--xyd-accent);color:var(--xyd-on-accent);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;margin-top:1px}
 .xy-microsteptext{font-size:13px;display:flex;flex-direction:column;min-width:0}
 /* 卡内步骤说明/状态词的背景是 layer-2：次要文字用 label-on-2 专用对（壳通用
@@ -219,6 +219,9 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 /* 节奏锁：页 padding 18/20 · 区块间 14（section-title 上边距）· 行间距 6/10 */
 .xy-page{box-sizing:border-box;width:100%;max-width:min(780px,100%);min-width:0;margin:0 auto;padding:18px 20px 26px;color:var(--dsw-alias-label-primary);font-size:14px;overflow-x:clip}
 .xy-page-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+/* 居中行内的 .xy-meta 关闭默认 4px 上边距：flex 按含 margin 的盒子居中，顶距会让
+ * 次要文字恒定低 2px（与 .xy-detail>div>.xy-meta 同一条治理线，头部漏治点在此收口） */
+.xy-card-head .xy-meta,.xy-page-head .xy-meta{margin-top:0}
 .xy-page-title{font-size:17px;font-weight:700;margin:0;color:var(--dsw-alias-label-primary)}
 .xy-section-title{font-size:12px;color:var(--dsw-alias-label-secondary);margin:14px 0 6px;font-weight:600;letter-spacing:.02em}
 /* 页头动作组：单一 margin-left:auto 整体右置——多按钮各自 auto 会平分剩余空间 */
@@ -266,7 +269,10 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-done-glyph{color:var(--dsw-alias-state-success-primary,var(--xyd-ok));margin-right:2px}
 /* 高重要度星标：琥珀警示色（不复用完成勾的绿色，语义不撞车） */
 .xy-star-hi{color:var(--xyd-warn);margin-right:2px}
-.xy-done{opacity:.78}
+/* 完成态行：标题用次要色降权（secondary 实测浅 4.76 / 深 5.15 ≥4.5:1）——不用整行
+ * opacity：0.78 混底后文字有效对比仅 ≈3.1:1，跌破 WCAG 1.4.3 AA（opacity 只留给
+ * aria-hidden 的装饰元素，行内可读文字一律走颜色降权） */
+.xy-done .xy-rowtitle{color:var(--dsw-alias-label-secondary)}
 .xy-banner-ok{margin-top:10px;padding:10px 12px;border-radius:var(--xyd-r-inner);background:var(--xyd-ok-soft);border:1px solid var(--xyd-ok-border);font-size:13px}
 /* 刷新失败但旧数据仍在的诚实降级横幅：琥珀虚线面板（警示但不恐吓——动作已成功） */
 .xy-stalerow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;padding:8px 12px;border:1px dashed var(--xyd-warn-border);border-radius:var(--xyd-r-inner);background:var(--xyd-warn-soft)}
@@ -328,13 +334,14 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-taskname{grid-column:1;grid-row:1;font-weight:600;font-size:13px;overflow-wrap:anywhere}
 .xy-taskline>.xy-meta{grid-column:1;grid-row:2;margin-top:0}
 .xy-taskline>div:last-child{grid-column:2;grid-row:1/span 2;justify-self:end}
-/* 愿望卡删除：图标幽灵危险键（.xy-btn-icon 方形 + 线稿垃圾桶），hover/focus 才显底色——
- * 低频高危动作不抢卡头视觉（文字语义由 aria-label「删除 · 标题」承担）。
- * 基础透明度 0.78 起步：危险色描边在任何主题下都保持 ≥4.5:1 可读，不靠「看不清」做弱化。 */
-.xy-wishdel{opacity:.78}
-.xy-wishdel:focus-visible{opacity:1}
+/* 危险图标键统一静默档（长列表逐行重复的低频高危动作：愿望卡头删除 / 记忆行删除）：
+ * 基础透明度 0.78——混底后图标描边对比浅色 3.73 / 深色 5.06，满足 WCAG 1.4.11
+ * 非文字 ≥3:1（原注「≥4.5:1」仅深色成立，已按非文字口径更正），hover/focus 恢复
+ * 满强度；文字危险键（.xy-btn-danger 无 .xy-btn-icon）保持满强度不受此档。 */
+.xy-btn-danger.xy-btn-icon{opacity:.78}
+.xy-btn-danger.xy-btn-icon:focus-visible{opacity:1}
 @media (hover:hover) and (pointer:fine){
-  .xy-wishdel:hover:not(:disabled){opacity:1}
+  .xy-btn-danger.xy-btn-icon:hover:not(:disabled){opacity:1}
 }
 
 /* ===== 日历 ===== */
@@ -412,6 +419,12 @@ body[data-ds-dark-theme] .xy-c3 .xy-daynum{color:var(--xyd-on-c3)}
 .xy-statcard-hot .xy-statnum{color:var(--xyd-accent)}
 /* 缺省值（暂无/N/A）：次要色小一号，缺失信息不得比真实数据更响 */
 .xy-statcard-muted .xy-statnum{color:var(--dsw-alias-label-secondary);font-size:18px}
+/* 窄面板（会话视图页随壳收缩）下 30 根柱被 flex 挤压到 ~10px 宽，触屏难以命中：
+ * 容器横向滚动 + 最小宽兜底（≤520px 与日历断点同口径）把柱宽抬到 ~13px——
+ * 是命中体验的改善但未达 WCAG 2.5.8 的 24px（达标需 min-width ~810px，滚动成本
+ * 远超误触代价，图表 tooltip 属低风险信息查询，有意取舍）；宽面板（独立
+ * /xingyuan/growth 页）内容不超宽、滚动容器无感知 */
+.xy-growth-scroll{overflow-x:auto}
 .xy-growth{display:flex;gap:3px;align-items:stretch;height:120px;margin-top:10px}
 .xy-growth-col{flex:1;display:flex;flex-direction:column;height:100%;min-width:0;border:none;background:transparent;padding:0;cursor:default;border-radius:3px 3px 0 0}
 .xy-growth-stack{flex:1;display:flex;flex-direction:column;justify-content:flex-end;width:100%}
@@ -425,6 +438,9 @@ button.xy-growth-col{cursor:pointer}
 button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 2px var(--xyd-accent-ring)}
 @media (hover:hover) and (pointer:fine){
   button.xy-growth-col:hover{box-shadow:inset 0 0 0 2px var(--xyd-accent-ring)}
+}
+@media (max-width:520px){
+  .xy-growth-scroll .xy-growth,.xy-growth-scroll .xy-growth-axis{min-width:480px}
 }
 /* 基线贴柱底（与聊天图表卡的 SVG 基线同一语法），刻度层下移让出线的位置 */
 .xy-growth-axis{position:relative;height:20px;margin-top:0;border-top:1px solid var(--dsw-alias-border-l2)}
@@ -447,9 +463,13 @@ button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 2px var(--xyd-accent-ring)}
 .xy-bar-fill-solid{background:#fff}
 .xy-heroreward{margin-top:8px}
 .xy-levels{display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:var(--xyd-r-card);padding:4px 14px}
-.xy-levelrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--dsw-alias-border-l1);opacity:.68;font-size:13px}
+/* 等级行的「未达成」降权走文字色而非整行 opacity（0.68 混底后 label-on-2/secondary
+ * 均跌破 AA，最低 ≈2.6:1）：名称/奖励用 secondary（≥4.5:1），徽章本就是中性底 +
+ * label-on-2（校准 5.0:1）；命中行恢复主文字色 + 彩色徽章，层级感不靠透明度 */
+.xy-levelrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--dsw-alias-border-l1);font-size:13px}
 .xy-levelrow:last-child{border-bottom:none}
-.xy-levelhit{opacity:1}
+.xy-levelrow .xy-lvname{color:var(--dsw-alias-label-secondary)}
+.xy-levelhit .xy-lvname{color:var(--dsw-alias-label-primary)}
 .xy-lvnum{width:42px;height:24px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--xyd-label-on-2);display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none}
 .xy-lvname{font-weight:600;width:64px;color:var(--dsw-alias-label-primary)}
 .xy-lvreward{margin-left:auto;text-align:right}

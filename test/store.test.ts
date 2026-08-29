@@ -188,12 +188,13 @@ describe('业务层：延迟领取（锚点 = 领取日，requiredDays 同口径
     expect(claimed.requiredDays).toBe(task.requiredDays)
   })
 
-  it('截止日后才领取：立即按过期关闭，不留永远无法推进的任务', async () => {
+  it('截止日后才领取：拒绝领取（claim_expired）而非静默领成已过期（0.5.7 诚实化）', async () => {
+    // 旧行为「领取即当场过期关闭」会伴随虚假回包（「进入进行中」/「去打卡吧」），
+    // 且锚点=领取日时序列本为空、领取毫无产出的状态翻转——改为就地拒绝并引导
+    // 先延长截止日复活（与工具描述/任务行提示/详情复活行同一口径）
     const store = memoryStore()
     const task = await createTask(store, { name: '过期任务', checkInCycle: 'daily', dueDate: '2026-08-10' }, '2026-08-01')
-    const claimed = await claimTask(store, task.taskId, '2026-08-15')
-    expect(claimed.status).toBe('closed')
-    expect(claimed.closedReason).toBe('expired')
+    await expect(claimTask(store, task.taskId, '2026-08-15')).rejects.toMatchObject({ code: 'claim_expired' })
   })
 
   it('领取不存在的任务：领域错误而非底层异常', async () => {
@@ -352,5 +353,33 @@ describe('截止日地平线（远期截止会让机会日序列物化爆炸）'
     const store = memoryStore()
     const task = await createTask(store, { name: '正常任务', checkInCycle: 'daily', dueDate: addDays(todayIso(), 30) })
     await expect(updateTask(store, task.taskId, { dueDate: '9999-12-31' })).rejects.toMatchObject({ code: 'due_too_far' })
+  })
+})
+
+describe('业务层：领取诚实化与撤销缺省口径', () => {
+  it('截止日已过的待领取任务拒绝领取（claim_expired）；延长截止日后可正常领取', async () => {
+    const store = memoryStore()
+    const task = await createTask(store, { name: '错过领取', checkInCycle: 'daily', dueDate: '2026-08-10' }, '2026-08-01')
+    // 锚点=领取日（晚于截止日）时序列为空，领取即当场过期——写路径直接拒绝
+    await expect(claimTask(store, task.taskId, '2026-08-12')).rejects.toMatchObject({ code: 'claim_expired' })
+    // 页内复活路径对「已过期仍待领取」同样成立：延长截止日保持待领取，随后领取成功
+    const revived = await updateTask(store, task.taskId, { dueDate: '2026-08-30' }, '2026-08-12')
+    expect(revived.status).toBe('pending')
+    const claimed = await claimTask(store, task.taskId, '2026-08-12')
+    expect(claimed.status).toBe('in_progress')
+    expect(claimed.claimDate).toBe('2026-08-12')
+  })
+
+  it('取消打卡不传日期 = 撤最近一次；撤到空报 no_checkins（工具面缺省行为收口）', async () => {
+    const store = memoryStore()
+    const task = await createTask(store, { name: '回看', checkInCycle: 'daily', dueDate: '2026-08-30' }, '2026-08-01')
+    await claimTask(store, task.taskId, '2026-08-05')
+    await performCheckIn(store, task.taskId, '2026-08-06', '2026-08-07')
+    await performCheckIn(store, task.taskId, '2026-08-07', '2026-08-07')
+    const undone = await cancelCheckIn(store, task.taskId, undefined, '2026-08-07')
+    expect(undone.date).toBe('2026-08-07')
+    expect(undone.task.status).toBe('in_progress')
+    await cancelCheckIn(store, task.taskId, undefined, '2026-08-07')
+    await expect(cancelCheckIn(store, task.taskId, undefined, '2026-08-07')).rejects.toMatchObject({ code: 'no_checkins' })
   })
 })

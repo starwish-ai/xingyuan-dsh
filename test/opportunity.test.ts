@@ -124,3 +124,29 @@ describe('TaskCheckInCalculatorUtil 对拍：shouldRestartFromExpired / isTaskDo
     ])
   })
 })
+
+describe('机会日序列终止性（回归：ISO 字符串比较在 4 位年边界恒假导致死循环）', () => {
+  it('锚点与截止同在 9999 年内：daily/weekly/monthly 有限收敛', () => {
+    // 9999 年非闰年：365 天；weekly 每 7 天 53 个；monthly 逐月 12 个
+    expect(calculateOpportunityDates('9999-01-01', '9999-12-31', 'daily')).toHaveLength(365)
+    expect(calculateOpportunityDates('9999-01-01', '9999-12-31', 'weekly')).toHaveLength(53)
+    expect(calculateOpportunityDates('9999-01-31', '9999-12-31', 'monthly')).toHaveLength(12)
+  })
+
+  it('远期截止（9999-12-31）逐期物化有限收敛，末日恰为截止日', () => {
+    // 2026-01 至 9999-12 共 95688 个月；此前字符串比较下 '10000-xx' < '9999-xx' 恒真
+    //（'1' < '9'），monthly 分支永不终止——数值比较后平凡到达终点
+    const dates = calculateOpportunityDates('2026-01-31', '9999-12-31', 'monthly')
+    expect(dates).toHaveLength(95688)
+    expect(dates[dates.length - 1]).toBe('9999-12-31')
+  })
+
+  it('普通区间语义不变：数值比较与字典序同结果（对拍）', () => {
+    expect(calculateOpportunityDates('2026-01-01', '2026-01-05', 'daily')).toEqual([
+      '2026-01-01', '2026-01-02', '2026-01-03', '2026-01-04', '2026-01-05',
+    ])
+    expect(calculateOpportunityDates('2026-01-31', '2026-03-31', 'monthly')).toEqual([
+      '2026-01-31', '2026-02-28', '2026-03-31',
+    ])
+  })
+})

@@ -147,6 +147,13 @@ XingYuan-Dsh/
 
 两个硬约束（踩过的坑，勿改回去）：
 
+> **升级检查单**（patch DSL 无条件插入/整行替换，升级 dsh 前逐条核对官方
+> `dsh-base`/`web-app` patch 原文）：1) 本补丁以 `insert:` 插入 `id: schedule` 行，
+> 若上游默认组装新增同名行，装配器对重复 id **响亮抛错**（整个 profile 起不来）；
+> 2) `storage-domain` 裸行整行替换——上游给该行 config 新增键会被本补丁静默丢弃，
+> 且若其他 bundle 也路由 domain，后装者整值覆盖会使星愿数据落回 json 后端
+> （`~/.dsh/storages/`），备份口径随之变化。
+
 1. **主行 id 不能与 preset 目录名同名**。两者都叫 `xingyuan` 时会话挂载 preset 会死锁，
    故主行 id 用 `xy-bundle` 加以区分。
 2. **DB 路径禁止放进包安装目录**——卸载/升级均可能清掉包目录；固定在 `~/.dsh/xingyuan/`
@@ -227,14 +234,22 @@ export const xingyuanDomainSpec = defineDomain({
   requiredDays 同口径重算。
 - **周期**：`once` 仅截止日一天；`daily` 锚点日起每天；`weekly` 每 7 天（非自然周）；
   `monthly` 逐自然月推进并做日期钳制（1/31 → 2/28 → 3/31）。
-- 全部日期为本地时区 `yyyy-MM-dd` 字符串，ISO 字典序即时间序；内部换算用 UTC 天数序号，
-  规避夏令时漂移。
+- 全部日期为本地时区 `yyyy-MM-dd` 字符串；内部换算与终止判定一律用 UTC 天数序号
+  （数值比较），规避夏令时漂移——**禁止用 ISO 字典序做终止判定**：序列越过
+  9999-12-31 后 `'10000-xx' < '9999-xx'` 恒真（'1' < '9'），daily/weekly/monthly
+  三条循环全部死循环挂死进程（`calculateOpportunityDates` 的 monthly 终止还必须用
+  `Date.UTC` 数值而非字符串解析——'10000-…' 经 `Date.parse` 得 NaN，同样恒假）。
 - 无截止日的任务没有机会日约束（不限次数）。
+- **weekly/monthly 锚点语义**：机会日从领取日起每 7 天/逐自然月推进，**不绑定自然周
+  星期几**（monthly 按领取日的日期逐月推进，月末钳制）。用户要求固定星期几时，模型
+  按提示词口径如实说明（建议 daily 或在目标星期几领取），不得默认能满足。
 - **截止日 10 年地平线**（`DUE_DATE_HORIZON_DAYS = 3650`，store.ts）：序列按截止日
   逐期物化，远期截止（9999 年）会让今日页/日历/图表每次读取都重建数百万格的数组；
   createTask/updateTask 超界一律拒绝（`due_too_far`），页面日期输入同步封顶。
+  写路径闸门只挡住插件自身的写入；手改 sqlite 塞入的远期截止属脏数据——终止性已由
+  数值比较兜住（有限但重），无需进程级防护。
 
-打卡规则（`check_in_task` 工具描述与页面文案同源）：
+打卡与领取规则（`check_in_task`/`claim_task` 工具描述与页面文案同源）：
 
 1. 不传日期 = 自动勾选今天（含）起**最早未勾选**的机会日；
 2. 过去的日期不会自动补，补卡须指定日期（日历页入口）；
@@ -243,6 +258,10 @@ export const xingyuanDomainSpec = defineDomain({
    （详情页=最近一条打卡含预勾、今日页=当天），不依赖「不传日期=撤最近一次」。
 5. **过期关闭的任务不能打卡**（写路径与页面共用 syncTaskValue 同口径新鲜化校验，不得以
    库内陈旧 status 绕过）；如需补历史，先延长截止日使任务重新开始。
+6. **截止日已过的待领取任务拒绝领取**（`claim_expired`）：锚点=领取日（晚于截止日）时
+   机会日序列为空，领取即当场过期关闭——与其回包虚假的「进入进行中」/页面 toast
+   「去打卡吧」，不如就地拒绝并引导先延长截止日复活（详情面板的复活行对「已过期仍
+   待领取」同样可用；页面任务行对该状态给指引而非必失败按钮）。
 
 进度口径：愿望进度 = 应打天数完成率（**floor 而非 round**——round 曾使 249/250 显示 100%
 并触发提前归档）；任务的 requiredDays/completedDays 由机会日序列与
@@ -309,9 +328,15 @@ ctx.tools.register(defineTool({
 
 - ask() 的 `plan-review` 意图要求 `detail` 携带被审阅的计划文本，缺 detail 抛 BAD_INTENT；
   星愿的动作确认不是计划审批，**不挂意图标签**，走通用选项列表（answer 协议一致）。
-- headless 无 live agent 时直接放行（一次指令跑完的语义）；有 agent 但环境未注册 UI
-  provider（NO_PROVIDER）时同样放行——确认卡是 Web GUI 交互面，无界面场景下
-  任务文本本身即用户指令。
+- headless 无 live agent 时直接放行（一次指令跑完的语义）；调用方没有可阻塞的确认
+  UI 时同样放行——确认卡是 Web GUI 交互面，无界面场景下任务文本本身即用户指令。
+  放行/拒绝口径（rc.2 `ask()` 校验顺序：CALLER_NOT_LIVE / DELEGATED_CALLER 先于
+  NO_PROVIDER 抛出）：`NO_PROVIDER`（环境未注册 UI provider）与 `CALLER_NOT_LIVE`
+  （调用方非注册表内精确 live 实例）**放行**——该调用方没有任何可阻塞的确认 UI，
+  拒绝也无法换路径执行；`DELEGATED_CALLER`（被其他 agent 拥有的委派实例，如会话
+  派生的 subagent 调用 preset 层工具）**fail-closed 并给出指引**（回主会话确认后由
+  主会话执行）——父 agent 有完整 UI，平台口径是「把未决问题写进子 agent 最终结果」，
+  拒绝可执行，且保住「删除始终确认」不因委派被静默绕过。
 - `confirmWrites` 开关读取走 getter（设置热改后下一次 execute 立即生效，HMR 安全）。
 - **确认卡语言（confirmLang，默认 zh）**：平台事实（rc.2 实测）——宿主不向 host 侧
   插件暴露用户界面语言（locale 服务是 client 半侧浏览器专属 seam，工具执行期读不到；
@@ -721,6 +746,9 @@ npm provenance 开启）。
 - dsh schedule 仅 session-local：提醒只在承载它的会话存活期内触达，到期以
   `[SCHEDULE REMINDER]` 用户角色 follow-up 呈现，无专属 UI。
 - 设置卡是 schemastery 表单，无自定义按钮/复杂控件。
+- weekly/monthly 不绑定自然周星期几：机会日从领取日起每 7 天/逐自然月推进，
+  「每周三健身」类固定星期几需求无法直接表达（§5.2 锚点语义）；提示词层已要求模型
+  如实说明并引导用 daily 或调整领取日，属有意取舍，勿当缺陷报。
 - 领取不可逆：claim 无「退回待领取」路径（锚点日/应打天数随领取重算，回退语义复杂）；
   误领取的恢复路径是删除重建。有意取舍，勿当缺陷报。
 - 无任务的愿望没有「手动标记达成」路径：达成判定 ≡ 进度 100%（机会日序列推导），
@@ -761,7 +789,7 @@ npm provenance 开启）。
 
 **入门 / BYOK**
 
-- 快速开始：`https://github.com/deepseek-ai/deepseek-harness/blob/main/docs/user/guide/index.zh.md`
+- 快速开始：`https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/index.zh.md`
 - 配置模型（providers）：`…/docs/user/guide/providers.zh.md`
 
 **基础开发（日常迭代必读）**
@@ -789,13 +817,15 @@ npm provenance 开启）。
 **子系统（本项目用到的高频篇目，均在 `…/docs/subsystems/` 下）**
 
 tools · storage · persistence · system-prompt · user-questions · approval · schedule ·
-web-server · client-modules · settings · credentials · session · scope · invariants
+web-server · client-modules · settings · credentials · session · scope · invariants · conversation
 （对应 `<name>.zh.md`；总目录见 `subsystems/README.zh.md`）
 
 **Cookbook**（均在 `…/docs/cookbook/` 下）
 
-adding-a-package · adding-a-tool · adding-a-conversation-node · adding-a-settings-card ·
-extension-cookbook
+adding-a-package · adding-a-tool · adding-a-settings-card ·
+adding-a-vendored-package · adding-an-llm-adapter · extension-cookbook
+（会话节点/事件卡契约在 `docs/subsystems/conversation.zh.md`——官方 cookbook 无
+conversation-node 篇目，旧文档引用为失实）
 
 **生成式参考**
 
@@ -805,9 +835,9 @@ extension-cookbook
 
 **Agent Preset 格式权威出处**
 
-`https://github.com/deepseek-ai/deepseek-harness/blob/main/packages/preset/agent-presets/README.zh.md`
+`https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/preset/agent-presets/README.zh.md`
 
-（以上表格语境中 `…/` 代指 `https://github.com/deepseek-ai/deepseek-harness/blob/main/`。）
+（以上表格语境中 `…/` 代指 `https://github.com/deepseek-ai/deepseek-harness/blob/master/`。默认分支实测为 `master`，`main` 不存在——2026-08-29 经 GitHub API 核对。）
 
 ### 排障索引
 
@@ -818,7 +848,7 @@ extension-cookbook
 | 实际组合与预期不符 | `dsh --dump-config` 看最终层叠结果 |
 | 工具没出现在模型请求里 | subsystems/tools；preset 是否真的挂载（选了「星愿」吗；空白会话才能切） |
 | INVALID_ARGS / 参数被拒 | ValueSchemaSpec DSL 的 additionalProperties/enum 要求；tool-catalog |
-| 卡片不渲染 / 刷新后丢失 | cookbook/adding-a-conversation-node（start 唯一、确定性回放）；三个声明合并位是否齐全 |
+| 卡片不渲染 / 刷新后丢失 | subsystems/conversation（start 唯一、确定性回放）；三个声明合并位是否齐全 |
 | 会话事件没落盘 | exec.agent 是否存在（headless 无 agent 时 append 是 no-op） |
 | 提醒没触发 / 周期提醒做不到 | subsystems/schedule（session-local、无日历规则、只装新建 live agent） |
 | 数据库打开报版本不符 | subsystems/storage；DOMAIN_VERSION 策略 |

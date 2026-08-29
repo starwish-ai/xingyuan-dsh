@@ -12,6 +12,7 @@ export type ActionErrorCode =
   | 'already_checked'
   | 'not_opportunity_day'
   | 'already_claimed'
+  | 'claim_expired'
   | 'task_closed'
   | 'due_past'
   | 'due_too_far'
@@ -50,6 +51,7 @@ const ERROR_KEY: Record<ActionErrorCode, XyKey> = {
   already_checked: 'err.already_checked',
   not_opportunity_day: 'err.not_opportunity_day',
   already_claimed: 'err.already_claimed',
+  claim_expired: 'err.claim_expired',
   task_closed: 'err.task_closed',
   due_past: 'err.due_past',
   due_too_far: 'err.due_too_far',

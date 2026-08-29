@@ -1,8 +1,9 @@
 /** 任务页：全量清单（进行中/待领取/已完结）+ 行内详情聚合 + 快速新建。 */
-import { createElement, useState, type ReactElement } from 'react'
+import { createElement, useState, useSyncExternalStore, type ReactElement } from 'react'
 import { useXyT, type XyKey } from '../i18n.js'
 import { usePageData, useScrollTopOnMount, useStableScrollbar } from '../hooks.js'
 import { getViewState, setViewState } from '../view-state.js'
+import { todayHintStore } from '../tab-hint.js'
 import { PageEmpty, PageError, PageSkeleton, StaleBanner } from '../ui.js'
 import { TaskLine } from './task-line.js'
 import { DetailToggle, TaskDetailPanel } from './detail.js'
@@ -11,6 +12,8 @@ import type { ApiTask, TasksPayload } from './types.js'
 
 export function TasksPage(): ReactElement {
   const t = useXyT()
+  // 始终显示 × 非星愿会话：与今日页同一轻提示（空态里的「告诉我」引导对该会话不成立）
+  const showNoPresetHint = useSyncExternalStore(todayHintStore.subscribe, todayHintStore.getSnapshot)
   const stabilize = useStableScrollbar()
   useScrollTopOnMount()
   const page = usePageData<TasksPayload>('/xingyuan/api/tasks')
@@ -67,6 +70,7 @@ export function TasksPage(): ReactElement {
 
   return createElement('div', { className: 'xy-page', ref: stabilize },
     page.error !== undefined ? createElement(StaleBanner, { onRetry: () => void page.reload() }) : null,
+    showNoPresetHint ? createElement('p', { className: 'xy-hint' }, t('today.noPresetHint')) : null,
     createElement('div', { className: 'xy-page-head' },
       createElement('h2', { className: 'xy-page-title' }, t('task.pageTitle')),
       createElement('span', { className: 'xy-meta' }, t('task.totalCount', { n: data.tasks.length })),

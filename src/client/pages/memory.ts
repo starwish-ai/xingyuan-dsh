@@ -1,10 +1,11 @@
 /** 记忆页：搜索/新增/编辑/删除/清空 + 分页加载更多（offset/limit，任意条数可浏览）。 */
-import { createElement, useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
+import { createElement, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactElement } from 'react'
 import { getJson, postAction, ActionError } from '../api.js'
 import { useXyT, t as translate } from '../i18n.js'
 import { localYmd, softConfirm, softConfirmDanger, useActionGuard, usePageData, useScrollTopOnMount, useStableScrollbar } from '../hooks.js'
 import { PageEmpty, PageError, PageSkeleton, StaleBanner, toast, IconEdit, IconTrash, focusPageTitle } from '../ui.js'
 import { getViewState, setViewState } from '../view-state.js'
+import { todayHintStore } from '../tab-hint.js'
 import { formatMediumDate } from './format.js'
 import type { MemoriesPayload, MemoryItem } from './types.js'
 
@@ -40,6 +41,8 @@ function impLabel(id: string): string {
 
 export function MemoryPage(): ReactElement {
   const t = useXyT()
+  // 始终显示 × 非星愿会话：与今日页同一轻提示（空态里的「在对话里告诉我」对该会话不成立）
+  const showNoPresetHint = useSyncExternalStore(todayHintStore.subscribe, todayHintStore.getSnapshot)
   const stabilize = useStableScrollbar()
   useScrollTopOnMount()
   // 搜索词跨标签切换保留（view-state 快照）：搜到一半切走再回来不丢词
@@ -62,6 +65,10 @@ export function MemoryPage(): ReactElement {
   const [more, setMore] = useState<ReadonlyArray<MemoryItem>>([])
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
+  // 翻页翻到最后一页的瞬间：焦点还停在刚被卸载的「加载更多」按钮上——移交给
+  // 「已显示全部」行（tabIndex=-1 + role=status，读屏同时播报），键盘/读屏不丢位置
+  const [reachedEnd, setReachedEnd] = useState(false)
+  const loadedAllRef = useRef<HTMLDivElement | null>(null)
   const moreSeqRef = useRef(0)
   useEffect(() => {
     moreSeqRef.current += 1
@@ -81,7 +88,11 @@ export function MemoryPage(): ReactElement {
     setLoadingMore(true)
     setLoadError(undefined)
     getJson<MemoriesPayload>(memoryListUrl(debounced, shownCount, PAGE_SIZE))
-      .then((payload) => { if (seq === moreSeqRef.current) setMore((current) => [...current, ...payload.memories]) })
+      .then((payload) => {
+        if (seq !== moreSeqRef.current) return
+        setMore((current) => [...current, ...payload.memories])
+        if (shownCount + payload.memories.length >= payload.total) setReachedEnd(true)
+      })
       .catch((e: unknown) => { if (seq === moreSeqRef.current) setLoadError(e instanceof Error ? e.message : String(e)) })
       .finally(() => { if (seq === moreSeqRef.current) setLoadingMore(false) })
   }
@@ -97,10 +108,17 @@ export function MemoryPage(): ReactElement {
     return page.reload().then(() => undefined)
   }
 
-  const [keyDraft, setKeyDraft] = useState('')
-  const [valueDraft, setValueDraft] = useState('')
-  const [category, setCategory] = useState<string>('other')
-  const [importance, setImportance] = useState<string>('medium')
+  // 表单草稿跨标签快照：手打（或粘贴）的长内容不因切标签静默丢失（view-state 同款）。
+  // 编辑态（editingKey）不跨快照：回落后草稿仍在、以新增模式呈现，撞键走覆盖确认链路
+  const draftSnapshot = getViewState('memory.draft', { key: '', value: '', category: 'other', importance: 'medium' })
+  const [keyDraft, setKeyDraftRaw] = useState(() => typeof draftSnapshot.key === 'string' ? draftSnapshot.key : '')
+  const [valueDraft, setValueDraftRaw] = useState(() => typeof draftSnapshot.value === 'string' ? draftSnapshot.value : '')
+  const [category, setCategoryRaw] = useState<string>(() => typeof draftSnapshot.category === 'string' ? draftSnapshot.category : 'other')
+  const [importance, setImportanceRaw] = useState<string>(() => typeof draftSnapshot.importance === 'string' ? draftSnapshot.importance : 'medium')
+  const setKeyDraft = (v: string): void => { setKeyDraftRaw(v); setViewState('memory.draft', { key: v, value: valueDraft, category, importance }) }
+  const setValueDraft = (v: string): void => { setValueDraftRaw(v); setViewState('memory.draft', { key: keyDraft, value: v, category, importance }) }
+  const setCategory = (v: string): void => { setCategoryRaw(v); setViewState('memory.draft', { key: keyDraft, value: valueDraft, category: v, importance }) }
+  const setImportance = (v: string): void => { setImportanceRaw(v); setViewState('memory.draft', { key: keyDraft, value: valueDraft, category, importance: v }) }
   // 写成功短通知（搜索行尾 ✓ 文案）；表单校验错误就地显示（role=alert）——输入即清除
   const [notice, setNotice] = useState<string | undefined>(undefined)
   const [formError, setFormError] = useState<string | undefined>(undefined)
@@ -113,6 +131,9 @@ export function MemoryPage(): ReactElement {
   useEffect(() => () => {
     if (noticeTimer.current !== undefined) window.clearTimeout(noticeTimer.current)
   }, [])
+  useEffect(() => {
+    if (reachedEnd) { loadedAllRef.current?.focus(); setReachedEnd(false) }
+  }, [reachedEnd])
 
   const flash = useCallback((text: string): void => {
     setNotice(text)
@@ -137,10 +158,15 @@ export function MemoryPage(): ReactElement {
 
   const resetForm = (): void => {
     setEditingKey(undefined); setKeyDraft(''); setValueDraft(''); setCategory('other'); setImportance('medium'); setFormError(undefined)
+    setViewState('memory.draft', undefined)
   }
 
   const startEdit = (m: MemoryItem): void => {
-    setEditingKey(m.key); setKeyDraft(m.key); setValueDraft(m.value); setCategory(m.category); setImportance(m.importance); setFormError(undefined)
+    // 预填走 raw setter + 整份显式快照：包装 setter 逐个调用会以渲染闭包合成中间态，
+    // 同一事件里四次覆盖落盘的是混合值（旧草稿 × 新分类），显式整份写入消除该污染
+    setEditingKey(m.key)
+    setKeyDraftRaw(m.key); setValueDraftRaw(m.value); setCategoryRaw(m.category); setImportanceRaw(m.importance); setFormError(undefined)
+    setViewState('memory.draft', { key: m.key, value: m.value, category: m.category, importance: m.importance })
     window.setTimeout(() => valueInputRef.current?.focus(), 0)
   }
 
@@ -241,6 +267,7 @@ export function MemoryPage(): ReactElement {
 
   return createElement('div', { className: 'xy-page', ref: stabilize },
     stale ? createElement(StaleBanner, { onRetry: () => void page.reload() }) : null,
+    showNoPresetHint ? createElement('p', { className: 'xy-hint' }, t('today.noPresetHint')) : null,
     createElement('div', { className: 'xy-page-head' },
       createElement('h2', { className: 'xy-page-title' }, t('memory.pageTitle')),
       createElement('span', { className: 'xy-meta' }, t('memory.summary', { total: data.total }))),
@@ -309,7 +336,7 @@ export function MemoryPage(): ReactElement {
             loadingMore ? `${t('common.loading')}…` : t('memory.more')),
           loadError !== undefined ? createElement('span', { className: 'xy-field-err' }, loadError) : null)
       : shownCount > PAGE_SIZE
-        ? createElement('div', { className: 'xy-meta xy-memcap' }, t('memory.loadedAll', { n: shownCount }))
+        ? createElement('div', { className: 'xy-meta xy-memcap', ref: loadedAllRef, tabIndex: -1, role: 'status' }, t('memory.loadedAll', { n: shownCount }))
         : null,
     data.total > 0
       ? createElement('div', { className: 'xy-memfoot' },

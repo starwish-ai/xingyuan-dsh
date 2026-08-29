@@ -223,8 +223,11 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
   // 操作区单行成组：主操作（打卡/领取）→ 条件动作（取消打卡）→ 辅助（让 AI 总结）→ 危险（删除）。
   // 删除跟随行流并靠 danger 描边区分（确认弹窗兜底防误触）；不再 margin-left:auto 漂到卡缘——
   // 愿望卡里会与卡头的愿望级删除同侧对齐造成语义混淆，窄面板里则是一段突兀的空白。
+  // 待领取 × 截止日已过：与任务行同口径，不提供必失败的领取按钮（复活行在下方）
+  const claimable = task.status === 'pending'
+    && !(task.dueDate !== undefined && task.dueDate < today)
   const ops: ReactElement[] = []
-  if (task.status === 'pending') {
+  if (claimable) {
     ops.push(createElement('button', {
       key: 'claim', className: 'xy-btn', disabled: busy,
       onClick: () => act('claim', { taskId: task.taskId }, () => translate('toast.claimed', { name: task.name })),
@@ -300,8 +303,11 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
     createElement('div', null,
       createElement('span', { className: 'xy-quick-label' }, t('detail.micro.title')),
       microBlock),
-    // 过期任务的复活闭环：说明行 + 页内延长截止日（失败态不再是「只能删除」的死路）
-    task.status === 'closed' && task.closedReason === 'expired'
+    // 过期任务的复活闭环：说明行 + 页内延长截止日（失败态不再是「只能删除」的死路）。
+    // 「已过期仍待领取」同样接进来：截止日已过领取被拒，这里就是它唯一的页内出路
+    // （pending 任务延长截止日保持待领取，随后即可正常领取）
+    (task.status === 'closed' && task.closedReason === 'expired')
+      || (task.status === 'pending' && task.dueDate !== undefined && task.dueDate < today)
       ? createElement('div', null,
           createElement('span', { className: 'xy-meta' }, t('task.expiredHint')),
           createElement(ReviveRow, {

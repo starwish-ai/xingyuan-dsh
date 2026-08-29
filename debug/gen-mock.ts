@@ -184,7 +184,7 @@ const wishSection = `
       <span class="xy-badge xy-badge-cat" style="--cat-h:220;--cat-sbg:58;--cat-sfg:46;--cat-sbd:46">学习</span>
       <span class="xy-title">AI token 自由</span>
       <span class="xy-progress-num">进度 15%</span>
-      <button class="xy-btn xy-btn-danger xy-btn-icon xy-wishdel" type="button" aria-label="删除 · AI token 自由" title="删除">${ICON_TRASH}</button>
+      <button class="xy-btn xy-btn-danger xy-btn-icon" type="button" aria-label="删除 · AI token 自由" title="删除">${ICON_TRASH}</button>
     </div>
     <div class="xy-meta">拥有属于自己的 AI 接口额度与调用能力，想用就用，不受平台和次数限制。</div>
     <div class="xy-meta">预计完成 2026年11月24日</div>

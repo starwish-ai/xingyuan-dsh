@@ -287,6 +287,12 @@ export function freshWish(store: XingyuanStore, wish: Wish): Wish {
  *   once 无截止日 → 勾今天（打卡当天即打卡日）。
  * - 指定日期：必须可勾（once 无截止日限今天；其余限机会日内），过去日期即补卡。
  * - 未来日期由调用方先经 HITL 确认（提前打卡 = 承诺当天完成）。
+ *
+ * 原子性前提（改动前必读）：防同日重复打卡依赖「校验段（checkedDatesOf →
+ * checked.has → validateTargetDate）到 checkins.put 之间零 await」——storage-domain
+ * 写链在单进程内天然串行化并发 put，双开页签的第二个请求必然看到第一个的写入。
+ * 若未来在校验与 put 之间插入任何 await（遥测/审计/事件前置），该竞态即复活
+ * （already_checked 语义失效），必须先补互斥再插入。
  */
 export async function performCheckIn(
   store: XingyuanStore,
@@ -308,7 +314,7 @@ export async function performCheckIn(
 
   const checked = checkedDatesOf(store, taskId)
   const target = date ?? findFirstUncheckedOpportunityDate(anchorOf(task), task.dueDate, task.checkInCycle, checked, today)
-  if (!target) throw new ToolError('没有可勾选的打卡日：机会日已全部完成或截止', 'no_opportunity_left')
+  if (!target) throw new ToolError('没有可勾选的打卡日：应打卡的日期已全部完成或截止', 'no_opportunity_left')
   if (checked.has(target)) throw new ToolError(`${target} 已打卡`, 'already_checked', { date: target })
   validateTargetDate(task, target, today)
 
@@ -339,7 +345,7 @@ function validateTargetDate(task: Task, target: string, today: string): void {
   }
   const opportunities = calculateOpportunityDates(anchorOf(task), task.dueDate, task.checkInCycle)
   if (!opportunities.includes(target)) {
-    throw new ToolError(`${target} 不是该任务的打卡日，只能勾选机会日内的日期`, 'not_opportunity_day', { date: target })
+    throw new ToolError(`${target} 不是该任务的打卡日，只能勾选应打卡日期内的日期`, 'not_opportunity_day', { date: target })
   }
 }
 
@@ -434,6 +440,16 @@ export async function claimTask(store: XingyuanStore, taskId: string, today = to
   await store.domain.table('tasks').update(taskId, (task) => {
     if (task === undefined) throw new ToolError(`任务不存在：${taskId}`, 'not_found')
     if (task.status !== 'pending') throw new ToolError('只有待领取状态的任务可以领取', 'already_claimed')
+    // 截止日已过的待领取任务拒绝领取：锚点=领取日（晚于截止日）时序列为空，
+    // 领取即当场过期关闭——与其领成一个「已过期」任务再回复虚假的「进行中」，
+    // 不如就地拒绝并指向复活路径（先延长截止日再领取，与工具描述/页面提示同口径）
+    if (task.dueDate !== undefined && task.dueDate < today) {
+      throw new ToolError(
+        `任务「${task.name}」截止日（${task.dueDate}）已过，无法领取——请先延长截止日使任务重新开始`,
+        'claim_expired',
+        { date: task.dueDate },
+      )
+    }
     return {
       ...task,
       status: 'in_progress',
@@ -441,7 +457,8 @@ export async function claimTask(store: XingyuanStore, taskId: string, today = to
       requiredDays: calculateRequiredDays(today, task.dueDate, task.checkInCycle),
     }
   })
-  // 领取即过期（截止日已过）：立即落过期关闭，而非等下次读写路径新鲜化
+  // 新鲜化收口（completedDays 复核 + 愿望进度联动）；过期关闭已由上方 claim_expired
+  // 前置拒绝，syncTaskValue 的过期分支在此不会触发
   const synced = await syncTaskProgress(store, taskId, today)
   if (synced.wishId !== undefined) await syncWishProgress(store, synced.wishId)
   return synced

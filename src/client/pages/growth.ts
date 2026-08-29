@@ -195,8 +195,11 @@ export function GrowthPage(): ReactElement {
                   hoverDay !== undefined
                     ? t('growth.chart.tooltip', { date: formatShortDate(hoverDay.date), checked: hoverDay.checked, total: hoverDay.total })
                     : ''),
-                createElement('div', { className: 'xy-growth' }, chart.cols),
-                createElement('div', { className: 'xy-growth-axis' }, chart.ticks)),
+                // 柱体与刻度同收进横向滚动容器：窄面板下保持最小柱宽（触屏可命中），
+                // 刻度与柱体同步滚动，宽面板内容不超宽、容器无感知
+                createElement('div', { className: 'xy-growth-scroll' },
+                  createElement('div', { className: 'xy-growth' }, chart.cols),
+                  createElement('div', { className: 'xy-growth-axis' }, chart.ticks))),
               // 图例与柱体编码一致：蓝柱 = 已打卡，斜纹柱 = 当日未完成缺口，绿柱 = 全勤日
               createElement('div', { key: 'xy-chart-legend', className: 'xy-legend' },
                 createElement('span', null, createElement('i', { className: 'xy-dot xy-dot-checked', 'aria-hidden': 'true' }), t('growth.chart.legend.checked')),

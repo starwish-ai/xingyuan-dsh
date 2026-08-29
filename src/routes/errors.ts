@@ -10,6 +10,7 @@ export type ActionErrorCode =
   | 'already_checked'
   | 'not_opportunity_day'
   | 'already_claimed'
+  | 'claim_expired'
   | 'task_closed'
   | 'due_past'
   | 'due_too_far'

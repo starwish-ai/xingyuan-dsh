@@ -585,6 +585,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
   ctx.tools.register(defineTool({
     name: 'create_task',
     description: '创建单个任务。何时使用：用户明确要求创建一个具体任务时使用。依赖关系：创建前必须先调用check_similar_tasks查重，确认无相似项后才可创建。'
+      + '周期口径：weekly/monthly 的机会日从领取日起算（每 7 天/逐自然月推进），不绑定自然周星期几；用户要求固定星期几打卡时如实说明，不要默认能满足。'
       + `输出：创建成功返回任务信息（任务ID、名称、截止日期、打卡周期）；不指定wish_id时任务不关联任何愿望。${CREATE_NOTE}`,
     parameters: {
       wishId: { type: 'string', description: '关联愿望ID，可选。取列表返回的真实值' },
@@ -695,7 +696,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
 
   ctx.tools.register(defineTool({
     name: 'claim_task',
-    description: '领取任务。何时使用：将待领取(pending)状态的任务改为进行中。依赖关系：任务状态必须为 pending 才能领取；领取日成为机会日锚点。',
+    description: '领取任务。何时使用：将待领取(pending)状态的任务改为进行中。依赖关系：任务状态必须为 pending 才能领取；领取日成为机会日锚点。截止日已过的待领取任务无法领取，须先 update_task 延长截止日再领取。',
     parameters: { taskId: { type: 'string', required: true, description: '任务ID，取列表返回的真实值' } },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
@@ -757,13 +758,13 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       const today = todayIso()
       const target = args.checkInDate
         ?? findFirstUncheckedOpportunityDate(anchorOf(task), task.dueDate, task.checkInCycle, checkedDatesOf(store, task.taskId), today)
-      if (target === null) throw new ToolError('没有可勾选的打卡日：机会日已全部完成或截止')
+      if (target === null) throw new ToolError('没有可勾选的打卡日：应打卡的日期已全部完成或截止')
 
       // 打卡确认与创建/取消同受「写操作二次确认」开关控制（设置 → 星愿）；
       // 关闭后直接执行——提前勾的承诺语义由回复文案如实告知兜底
       if (confirmGate(config)) {
         const question = target > today
-          ? bi(`今天不是「${task.name}」的打卡日，确认提前打卡 ${target} 吗？提前打卡表示承诺当天完成。`, `“${task.name}” is not due today. Check in early for ${target}? This commits you to finish it that day.`)
+          ? bi(`「${task.name}」的打卡日 ${target} 在今天之后，确认提前打卡吗？提前打卡表示承诺当天完成。`, `The check-in day ${target} for “${task.name}” is after today. Check in early? This commits you to finish it that day.`)
           : bi(`确认完成「${task.name}」在 ${target} 的打卡吗？`, `Check in “${task.name}” for ${target}?`)
         const approved = await confirmAction(ctx, exec, question)
         if (!approved) return '已取消打卡。需要时随时告诉我。'
@@ -782,7 +783,12 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         requiredDays: result.task.requiredDays,
       })
       const achieved = result.task.status === 'closed' && result.task.closedReason === 'achieved'
-      return `已为「${result.task.name}」勾选 ${result.date} 的打卡 ✓（${result.task.completedDays}/${result.task.requiredDays > 0 ? result.task.requiredDays : '不限'} 天）。${achieved ? '🎉 任务达标完结！继续保持！' : ''}`
+      // 即时成长反馈：升级/经验变化在打卡瞬间触达（此前只落在成长页，激励回路延迟）
+      const level = growthSummary(store, today).level
+      const expTail = level.nextLevelExperience !== null
+        ? `（距下一级还差 ${level.nextLevelExperience - level.totalExperience} 经验）`
+        : '（已满级）'
+      return `已为「${result.task.name}」勾选 ${result.date} 的打卡 ✓（${result.task.completedDays}/${result.task.requiredDays > 0 ? result.task.requiredDays : '不限'} 天）。${achieved ? '🎉 任务达标完结！继续保持！' : ''}成长：Lv.${level.level} ${level.levelName}，累计经验 ${level.totalExperience}${expTail}。`
     },
   }))
 
@@ -960,7 +966,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
 
   ctx.tools.register(defineTool({
     name: 'get_recommended_tasks',
-    description: '获取AI推荐任务。何时使用：想基于历史数据获取个性化任务推荐时使用。返回最值得继续坚持的任务。',
+    description: '获取推荐任务。何时使用：想基于历史打卡数据获取继续坚持的任务建议时使用。排序口径是固定的：进行中任务按历史打卡次数从多到少取前 5（并非智能挑选），向用户转述时如实说明。',
     parameters: {},
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
@@ -972,7 +978,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       }
       if (scored.length === 0) return '暂无可推荐的任务。可以先创建一个任务。'
       scored.sort((a, b) => b.count - a.count)
-      return `为你推荐继续坚持这些任务：\n${scored.slice(0, 5).map((item, index) => `${index + 1}. [${item.task.taskId}] ${taskLine(item.task)}（已打 ${item.count} 次）`).join('\n')}`
+      return `推荐继续坚持这些任务（按历史打卡次数从多到少）：\n${scored.slice(0, 5).map((item, index) => `${index + 1}. [${item.task.taskId}] ${taskLine(item.task)}（已打 ${item.count} 次）`).join('\n')}`
     },
   }))
 
