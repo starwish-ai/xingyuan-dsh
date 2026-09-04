@@ -5,6 +5,53 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] - 2026-09-04
+
+> **Note:** this release is the fourth six-perspective quality pass. It finishes
+> the promised-vs-planned caliber split across every surface: the Today tab and
+> the calendar day panel now show only claimed obligations (the unclaimed pool
+> lives on the Tasks tab and in chat), the growth 30-day range chart no longer
+> counts unclaimed tasks as failure gaps, and every surface labels expired
+> tasks honestly instead of mislabeling them as unclaimed. No data format
+> changes; existing databases and recorded sessions replay as before.
+
+### Changed
+- **Today tab shows claimed obligations only** (user decision): the unclaimed
+  candidate group and its claim buttons were removed from the Today tab; the
+  claim entry point now lives on the Tasks tab's unclaimed group and in chat
+  (the opening overview and `get_today_unchecked_tasks` still list them
+  separately, with the "never claim on the model's own" constraint). The
+  standalone `/xingyuan/today` page follows the same rule.
+- **Calendar day panel shows claimed tasks on every date** (user decision):
+  previously only non-today panels filtered out unclaimed rows; today's panel
+  kept them with a claim button. The panel is now claimed-only for today as
+  well. Expired tasks still appear on their deadline day as honest "expired"
+  failure records (not checkable; revived via the task detail panel), matching
+  the chat tool labeling.
+- **Growth 30-day range chart counts only claimed tasks**: unclaimed
+  opportunity days no longer render as failure gaps (same caliber as the month
+  calendar and the Today progress). The underlying plan API for future-schedule
+  tools keeps the planned caliber and labels unclaimed counts explicitly.
+- **Honest completion ratio on the Today page**: the progress now floors —
+  249/250 displays 99% instead of 100% without the "all done" banner (same
+  rule as wish progress).
+- **Wish progress keeps its plan-caliber denominator, now labeled**: wish cards
+  and the wish-progress chart subtitle append "includes unclaimed tasks"
+  whenever any shown wish has unclaimed tasks; the future-arrangement query
+  tools split their counts into "to check in N, unclaimed M".
+- **Expired tasks are labeled "expired" on every surface**: the chat date query
+  and the standalone calendar detail previously mislabeled them "unclaimed";
+  the React calendar panel now renders the state word as well.
+- **Single-source claimed predicate**: all host-side filtering goes through
+  `store.ts` `isClaimed` (charts included), the day API exposes the `claimed`
+  boolean for the client, and the client no longer duplicates status predicates
+  on the day surface.
+
+### Added
+- Route-level test locks for the promised-caliber semantics: overview totals,
+  month-calendar cells, day rows, the growth range (unclaimed ≠ failure gap),
+  and expired-task retention on the schedule surface.
+
 ## [0.5.7] - 2026-08-29
 
 > **Note:** this release is the third six-perspective quality pass (product,
