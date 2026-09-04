@@ -1,6 +1,6 @@
 /** 日历页：月历（机会日语义着色）+ 日期详情面板（补卡/取消打卡）。 */
 import { createElement, useEffect, useRef, useState, type ReactElement } from 'react'
-import { getJson, postAction } from '../api.js'
+import { calendarUrl, dayUrl, getJson, postAction } from '../api.js'
 import { t } from '../i18n.js'
 import { softConfirm, useActionGuard, usePageData, useScrollTopOnMount, useStableScrollbar, localYmd } from '../hooks.js'
 import { PageError, PageSkeleton, StaleBanner, toast } from '../ui.js'
@@ -26,7 +26,7 @@ export function CalendarPage(): ReactElement {
   const pickSeqRef = useRef(0)
   const stabilize = useStableScrollbar()
   const { busy, guard } = useActionGuard()
-  const page = usePageData<CalendarPayload>(() => `/xingyuan/api/calendar?month=${monthOf(offset)}`, [offset])
+  const page = usePageData<CalendarPayload>(() => calendarUrl(monthOf(offset)), [offset])
   const [detail, setDetail] = useState<DayPayload | undefined>(undefined)
   const [pickedDate, setPickedDate] = useState<string | undefined>(undefined)
   // 拾取三态：loading（面板骨架行）/ error（错误 + 重试）/ idle——交互闭环不静默吞错
@@ -39,6 +39,8 @@ export function CalendarPage(): ReactElement {
     // pickedDateRef 一并失效：动作完成链凭它决定是否回填详情，
     // 不清则「打卡在途时切月」会让旧月份详情复活到新月视图
     pickedDateRef.current = undefined
+    // 翻月/回本月重置自动拾取许可：回到本月时允许再自动 pick 今天
+    autoPickRef.current = false
     setDetail(undefined)
     setPickedDate(undefined)
     setPickState('idle')
@@ -46,13 +48,18 @@ export function CalendarPage(): ReactElement {
 
   // 动作后重取详情需要知道「当前选中日」；用 ref 避免 act 闭包读到过期 state
   const pickedDateRef = useRef<string | undefined>(undefined)
+  // 自动拾取许可：首载/回本月置空后允许自动 pick 今天一次；任何 pick（含自动）置位。
+  // 守卫必须走 ref 而非 pickedDate state——清除 effect 的 setState 不回写闭包，
+  // 「点过历史日期后回本月」时旧闭包值会把自动拾取挡死（回归：面板滞留提示态）
+  const autoPickRef = useRef(false)
 
-  const pick = (date: string): void => {
+  const pick = (date: string, scroll = true): void => {
+    autoPickRef.current = true
     pickedDateRef.current = date
     setPickedDate(date)
     setPickState('loading')
     const seq = ++pickSeqRef.current
-    getJson<DayPayload>(`/xingyuan/api/day?date=${date}`)
+    getJson<DayPayload>(dayUrl(date))
       .then((payload) => {
         if (seq !== pickSeqRef.current) return
         setDetail(payload)
@@ -60,12 +67,23 @@ export function CalendarPage(): ReactElement {
       })
       .catch(() => { if (seq === pickSeqRef.current) setPickState('error') })
     // 窄视口下详情面板可能落在折叠线下方：拾取后滚到面板近处，选中反馈不止是格子高亮
-    window.requestAnimationFrame(() => {
-      document.getElementById('xy-daypanel')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    })
+    if (scroll) {
+      window.requestAnimationFrame(() => {
+        document.getElementById('xy-daypanel')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      })
+    }
   }
 
   const data = page.data
+  // 默认加载今天（口径决策）：首次进入/「回到本月」落在当月视图即自动展开今天详情，
+  // 无需用户先点一下；自动拾取不滚动页面（进入时维持顶部锚定，面板在折叠线下方属预期）
+  useEffect(() => {
+    if (offset !== 0 || data === undefined || autoPickRef.current) return
+    pick(data.today, false)
+    // pick 随渲染重建，但本效果只关心 offset/data 变迁，无需跟随
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offset, data])
+
   const act = (action: string, taskId: string, taskName: string, date: string): void => {
     // 需要确认的动作先弹应用内确认，通过后才进入写路径；无需确认的动作直接执行
     const confirmMessage =
@@ -87,7 +105,7 @@ export function CalendarPage(): ReactElement {
         return page.reload().then(() => {
           if (pickedDateRef.current !== date) return undefined
           const seq = ++pickSeqRef.current
-          return getJson<DayPayload>(`/xingyuan/api/day?date=${date}`)
+          return getJson<DayPayload>(dayUrl(date))
             .then((dayAfter) => { if (seq === pickSeqRef.current) { setDetail(dayAfter); setPickState('idle') } })
             // 动作已成功、仅详情回取失败：转面板错误态（重试即重新拾取），不静默吞掉也不误报动作失败
             .catch(() => { if (seq === pickSeqRef.current) setPickState('error') })
@@ -152,6 +170,16 @@ export function CalendarPage(): ReactElement {
       })
     })
   }
+
+  // 月历隐藏未领取任务（承诺口径，服务端 cell 已过滤）；详情面板同口径——
+  // 唯一例外：今天的面板保留未领取行 + 领取入口（与今日页的行动面语义对齐）。
+  // 非今日面板按 claimed 保留已领取行（撤销/补卡入口），未领取行隐身——
+  // 判定消费服务端 claimed 布尔（§5.2 规则 7 单一判定，client 不重复写 status 谓词）
+  const visibleTasks = detail === undefined
+    ? []
+    : detail.date === data.today
+      ? detail.tasks
+      : detail.tasks.filter((task) => task.claimed)
 
   return createElement('div', { className: 'xy-page', ref: stabilize },
     // 月份导航居中（日历惯例）：‹ 标题 › 成组居中，「回到本月」绝对定位贴右缘不挤占中轴
@@ -221,14 +249,17 @@ export function CalendarPage(): ReactElement {
                 : createElement('div', { className: 'xy-daydetail' },
                     // 面板头 = 本地化友好日期（含星期），与今日页标题同一语法；不再裸奔 ISO
                     createElement('h3', { className: 'xy-section-title' }, formatFriendlyDate(detail.date)),
-                detail.tasks.length === 0
+                visibleTasks.length === 0
                   ? createElement('div', { className: 'xy-meta' }, t('cal.dayEmpty'))
-                  : createElement('ul', { className: 'xy-grouplist' }, detail.tasks.map((task) => {
+                  : createElement('ul', { className: 'xy-grouplist' }, visibleTasks.map((task) => {
                       // 元信息分段拼接：空段不产悬挂分隔符（如已完结任务无状态词）
                       const stateText = task.checked
                         ? t('cal.state.checked')
                         : task.canCheckIn ? t('cal.state.todo')
-                          : task.status === 'pending' ? t('cal.state.unclaimed') : ''
+                          : !task.claimed ? t('cal.state.unclaimed')
+                            // 已领取且不可勾且未勾 = 过期关闭（达标关闭在计划面已剔除，
+                            // 读到即失败记录——与工具面「— 已过期」同口径，2026-08 评审 F8 React 面补完）
+                            : t('task.status.expired')
                       const segments = [
                         cycleLabel(task.cycle),
                         ...(task.wishName !== undefined ? [task.wishName] : []),
@@ -240,10 +271,13 @@ export function CalendarPage(): ReactElement {
                           createElement('span', { className: 'xy-meta' }, segments.join(' · '))),
                         // 领取仅限今日：claim 无日期语义，claimDate 恒为领取当天——
                         // 过去/未来选中日的「领取」按钮会造出锚点与所见不符的任务
-                        task.status === 'pending' && !task.checked && detail.date === data.today
+                        !task.claimed && !task.checked && detail.date === data.today
                           ? createElement('button', { className: 'xy-btn', disabled: busy, onClick: () => act('claim', task.taskId, task.name, detail.date) }, t('action.claim'))
-                          : !task.checked && task.status === 'in_progress'
-                            ? createElement('button', { className: 'xy-btn xy-btn-primary', disabled: busy || !task.canCheckIn, onClick: () => act('checkin', task.taskId, task.name, detail.date) }, t('action.checkinThisDay'))
+                          // 打卡按钮消费 host 单一真值 canCheckIn（=未勾选且进行中）：
+                          // 「已领取」不等于「可打卡」——过期关闭等已完结任务不渲染按钮，
+                          // 避免「打卡此日」disabled 死分支（评审回归 C1）
+                          : task.canCheckIn
+                            ? createElement('button', { className: 'xy-btn xy-btn-primary', disabled: busy, onClick: () => act('checkin', task.taskId, task.name, detail.date) }, t('action.checkinThisDay'))
                             : task.checked && task.canCancel
                               ? createElement('button', { className: 'xy-btn', disabled: busy, onClick: () => act('cancel-checkin', task.taskId, task.name, detail.date) }, t('action.cancelCheckin'))
                               : null)

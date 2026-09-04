@@ -61,6 +61,14 @@ export function anchorOf(task: Task): string {
   return task.claimDate ?? task.createdAt.slice(0, 10)
 }
 
+/**
+ * 承诺口径判定：任务是否已领取。未领取（pending）任务处于「候选池」而非行动承诺，
+ * 不进入今日待打卡/今日完成率/日历完成判定的统计（2026-08 口径修正，见 AGENTS.md §10）。
+ */
+export function isClaimed(task: Task): boolean {
+  return task.status !== 'pending'
+}
+
 /** 打卡计数索引：读侧新鲜化（计划/图表）共用，一次全表扫描得全部任务计数。 */
 export function checkinCountIndex(store: XingyuanStore): Map<string, number> {
   const index = new Map<string, number>()
@@ -555,13 +563,15 @@ function planFromPrepared(store: XingyuanStore, date: string, prepared: readonly
   const items: DayItem[] = []
   for (const { task, wish, opportunities, resident } of prepared) {
     const checked = store.domain.table('checkins').get(store.checkinKey(task.taskId, date)) !== undefined
-    // 达标关闭的任务不再出现在日程面；两类例外保留撤销/回看入口：
-    // 1) once 无截止日任务的今天（常驻语义，撤销无路可走的场景）
-    // 2) 当天有打卡记录的——最后一个机会日打卡即达标关闭，行若凭空消失，
-    //    用户会看到「打完卡今日计数反而变少」；完成区保留撤销入口，取消该打卡
-    //    本就会经新鲜化自动复活任务，语义自洽
-    if (task.status === 'closed' && task.closedReason === 'achieved' && !checked
-      && !(resident && date === today)) continue
+    // 达标关闭的任务不再出现在日程面；唯一例外保留撤销/回看入口：
+    // 当天有打卡记录的——最后一个机会日打卡即达标关闭，行若凭空消失，
+    // 用户会看到「打完卡今日计数反而变少」；完成区保留撤销入口，取消该打卡
+    // 本就会经新鲜化自动复活任务，语义自洽。
+    // once 无截止日任务无此例外：打卡当天以 checked 行留在完成区可撤销，
+    // 次日起（closed+achieved 且未勾当天）一律退出日程面——否则会以「待打卡」
+    // 僵尸行混入今日承诺尺度：禁用按钮、占进度分母、永久挡住「今天全部完成」
+    // （撤销入口仍在任务详情页与打卡当天日历面板，不依赖今日页常驻）。
+    if (task.status === 'closed' && task.closedReason === 'achieved' && !checked) continue
     // 落位判定：有机会日序列按序列；常驻任务只在今天出现（它的打卡语义只有今天合法）
     if (!opportunities.has(date) && !(resident && date === today)) continue
     items.push({
@@ -615,11 +625,6 @@ export function allMemories(store: XingyuanStore): MemoryRecord[] {
   const list: MemoryRecord[] = []
   for (const [, memory] of store.domain.table('memories').entries()) list.push(memory)
   return list.sort((a, b) => b.createdAt - a.createdAt)
-}
-
-/** 今日待打卡（未勾选且今天有机会日）的任务。 */
-export function todayUnchecked(store: XingyuanStore, today = todayIso()): DayItem[] {
-  return planForDay(store, today).items.filter((item) => !item.checked)
 }
 
 /** 记忆存取。 */

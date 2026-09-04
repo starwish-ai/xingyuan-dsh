@@ -18,6 +18,7 @@ import { CATEGORY_COLOR_KEYS } from '../category-color.js'
 import { addDays, calculateOpportunityDates, findFirstUncheckedOpportunityDate, todayIso } from '../opportunity.js'
 import type { XingyuanCheckinEventData, XingyuanMicroEventData, XingyuanTaskEventData, XingyuanWishEventData } from '../events.js'
 import { confirmAction } from './hitl.js'
+import { unclaimedNoteLine } from './prompts.js'
 import type { ConfirmLang } from '../pref-policy.js'
 import { buildChart, CHART_KEYS, type ChartKey, type ChartParams } from './charts.js'
 import { growthSummary } from '../growth.js'
@@ -37,6 +38,7 @@ import {
   deleteMemory,
   freshTask,
   freshWishes,
+  isClaimed,
   mutateGlobal,
   performCheckIn,
   planForDay,
@@ -696,7 +698,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
 
   ctx.tools.register(defineTool({
     name: 'claim_task',
-    description: '领取任务。何时使用：将待领取(pending)状态的任务改为进行中。依赖关系：任务状态必须为 pending 才能领取；领取日成为机会日锚点。截止日已过的待领取任务无法领取，须先 update_task 延长截止日再领取。',
+    description: '领取任务。何时使用：用户明确要求领取时，将待领取(pending)状态的任务改为进行中。注意：仅在用户明确要求时调用，不得主动领取。依赖关系：任务状态必须为 pending 才能领取；领取日成为机会日锚点。截止日已过的待领取任务无法领取，须先 update_task 延长截止日再领取。',
     parameters: { taskId: { type: 'string', required: true, description: '任务ID，取列表返回的真实值' } },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
@@ -881,15 +883,25 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
 
   ctx.tools.register(defineTool({
     name: 'get_today_unchecked_tasks',
-    description: '获取今日待打卡任务。何时使用：用户想查看今天需要完成但尚未打卡的任务时使用。',
+    description: '获取今日待打卡任务。何时使用：用户想查看今天需要完成但尚未打卡的任务时使用。口径：未领取（待领取状态）的任务不计入待打卡，但会单列提示可领取。',
     parameters: {},
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
     async execute() {
       const plan = planForDay(store, todayIso())
-      const due = plan.items.filter((item) => !item.checked)
-      if (due.length === 0) return '今天没有待打卡的任务，太棒了！'
-      return `今天有 ${due.length} 个任务待打卡：\n${due.map((item) => `- [${item.task.taskId}] ${item.task.name}（${cycleLabel(item.task.checkInCycle)}）`).join('\n')}`
+      const due = plan.items.filter((item) => !item.checked && isClaimed(item.task))
+      const pending = plan.items.filter((item) => !isClaimed(item.task))
+      if (due.length === 0 && pending.length === 0) return '今天没有待打卡的任务，太棒了！'
+      const lines: string[] = []
+      if (due.length > 0) {
+        lines.push(`今天有 ${due.length} 个任务待打卡：`)
+        for (const item of due) lines.push(`- [${item.task.taskId}] ${item.task.name}（${cycleLabel(item.task.checkInCycle)}）`)
+      }
+      if (pending.length > 0) {
+        lines.push(unclaimedNoteLine(pending.length))
+        for (const item of pending) lines.push(`- [${item.task.taskId}] ${item.task.name}（${cycleLabel(item.task.checkInCycle)}，待领取）`)
+      }
+      return lines.join('\n')
     },
   }))
 
@@ -917,13 +929,13 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       if (!/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new ToolError('日期格式错误，请使用yyyy-MM-dd')
       const plan = planForDay(store, args.date)
       if (plan.items.length === 0) return `${args.date} 没有任务安排。`
-      return `${args.date} 共 ${plan.items.length} 项：\n${plan.items.map((item) => `- [${item.task.taskId}] ${item.task.name}（${cycleLabel(item.task.checkInCycle)}）${item.checked ? '✓ 已打卡' : item.canCheckIn ? '○ 待打卡' : '— 未领取'}`).join('\n')}`
+      return `${args.date} 共 ${plan.items.length} 项：\n${plan.items.map((item) => `- [${item.task.taskId}] ${item.task.name}（${cycleLabel(item.task.checkInCycle)}）${item.checked ? '✓ 已打卡' : item.canCheckIn ? '○ 待打卡' : item.task.status === 'pending' ? '— 未领取' : '— 已过期'}`).join('\n')}`
     },
   }))
 
   ctx.tools.register(defineTool({
     name: 'get_tasks_for_next_days',
-    description: '获取未来N天的任务安排。何时使用：查看近期任务计划时使用。限制：默认7天，最多31天。',
+    description: '获取未来N天的任务安排。何时使用：查看近期任务计划时使用。口径：计划口径——未领取任务单列「未领取」计数并在行内标注（未领取），不计入待打卡数。限制：默认7天，最多31天。',
     parameters: { days: { type: 'integer', description: '天数 1-31，默认7' } },
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
@@ -932,9 +944,12 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       const today = todayIso()
       const plans = planForRange(store, today, addDays(today, n - 1))
       const sections = plans.map((plan) => {
-        const pending = plan.items.filter((item) => !item.checked)
-        if (pending.length === 0) return `${plan.date}：无待打卡任务`
-        return `${plan.date}：${pending.length} 项待打卡\n${pending.map((item) => `  - [${item.task.taskId}] ${item.task.name}${item.task.status === 'pending' ? '（未领取）' : ''}`).join('\n')}`
+        const unchecked = plan.items.filter((item) => !item.checked)
+        if (unchecked.length === 0) return `${plan.date}：无待打卡任务`
+        const dueCount = unchecked.filter((item) => isClaimed(item.task)).length
+        const unclaimedCount = unchecked.length - dueCount
+        const rows = unchecked.map((item) => `  - [${item.task.taskId}] ${item.task.name}${item.task.status === 'pending' ? '（未领取）' : ''}`).join('\n')
+        return `${plan.date}：待打卡 ${dueCount} 项${unclaimedCount > 0 ? `，未领取 ${unclaimedCount} 项` : ''}\n${rows}`
       })
       return `未来 ${n} 天安排：\n${sections.join('\n')}`
     },
@@ -942,7 +957,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
 
   ctx.tools.register(defineTool({
     name: 'get_tasks_for_date_range',
-    description: '获取日期范围内的任务安排。限制：最多31天（超出自动截断）。',
+    description: '获取日期范围内的任务安排。口径：计划口径——未领取任务单列「未领取」计数，不计入待打卡数。限制：最多31天（超出自动截断）。',
     parameters: {
       startDate: { type: 'string', required: true, description: '开始日期 yyyy-MM-dd' },
       endDate: { type: 'string', required: true, description: '结束日期 yyyy-MM-dd，不早于开始日期' },
@@ -957,8 +972,10 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       const cappedEnd = args.endDate > addDays(args.startDate, 30) ? addDays(args.startDate, 30) : args.endDate
       const plans = planForRange(store, args.startDate, cappedEnd)
       const sections = plans.map((plan) => {
-        const pending = plan.items.filter((item) => !item.checked).length
-        return `${plan.date}：共 ${plan.items.length} 项${pending > 0 ? `，待打卡 ${pending} 项` : ''}`
+        const unchecked = plan.items.filter((item) => !item.checked)
+        const dueCount = unchecked.filter((item) => isClaimed(item.task)).length
+        const unclaimedCount = unchecked.length - dueCount
+        return `${plan.date}：共 ${plan.items.length} 项${unchecked.length > 0 ? `，待打卡 ${dueCount} 项${unclaimedCount > 0 ? `，未领取 ${unclaimedCount} 项` : ''}` : ''}`
       })
       return `${args.startDate} 至 ${cappedEnd}：\n${sections.join('\n')}`
     },

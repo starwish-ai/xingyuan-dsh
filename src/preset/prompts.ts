@@ -5,11 +5,19 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { XingyuanStore } from '../domain.js'
-import { CYCLE_LABELS, planForDay, type DayItem } from '../store.js'
+import { CYCLE_LABELS, isClaimed, planForDay, type DayItem } from '../store.js'
 import { todayIso } from '../opportunity.js'
 export interface PromptConfig {
   /** 记忆注入上限（≤40 条，超量摘要化）。 */
   memoryInjectLimit: number
+}
+
+/** 未领取任务单列的用户可见文案：提示词上下文与工具输出共用同一份，防口径漂移（§5.2 规则 7）。 */
+export const UNCLAIMED_NOTE = '可领取后打卡；是否领取由用户决定，不得主动领取'
+
+/** 「另有 N 个任务尚未领取（…）：」句子模板——prompts 与 tools 共用（tools.ts 反向导入），防句子级漂移。 */
+export function unclaimedNoteLine(count: number): string {
+  return `另有 ${count} 个任务尚未领取（${UNCLAIMED_NOTE}）：`
 }
 
 const IDENTITY = `# 角色定义
@@ -491,18 +499,22 @@ export function registerPrompts(ctx: Context & { xingyuan: XingyuanStore }, conf
   })
 
   // 动态上下文：开场「今日应打卡」概览（Q9 全局兜底）
+  // 承诺口径：打卡进度/待打卡只统计已领取任务——未领取处于候选池，未承诺不算义务；
+  // 未领取任务单列「可领取」，并约束模型不得主动领取（领取是用户决定，误领取同误打卡）
   ctx.systemPrompt.context({
     name: 'xingyuan:today',
     order: 22,
     text: () => {
       const today = todayIso()
       const plan = planForDay(store, today)
-      const due = plan.items.filter((item) => !item.checked)
-      const done = plan.items.length - due.length
+      const claimed = plan.items.filter((item) => isClaimed(item.task))
+      const due = claimed.filter((item) => !item.checked)
+      const done = claimed.length - due.length
+      const pending = plan.items.filter((item) => !isClaimed(item.task))
       const openWishes = [...store.domain.table('wishes').entries()].map(([, w]) => w).filter((w) => !w.archived)
       const parts = [`<today_context>`, `今天是 ${today}。`]
-      if (plan.items.length > 0) {
-        parts.push(`今日打卡进度：${done}/${plan.items.length}。`)
+      if (claimed.length > 0) {
+        parts.push(`今日打卡进度：${done}/${claimed.length}。`)
         if (due.length > 0) {
           parts.push('今日待打卡：')
           for (const item of due.slice(0, 10)) {
@@ -510,6 +522,12 @@ export function registerPrompts(ctx: Context & { xingyuan: XingyuanStore }, conf
           }
         } else {
           parts.push('今天的打卡已全部完成，可以给用户一句真诚的表扬。')
+        }
+      }
+      if (pending.length > 0) {
+        parts.push(unclaimedNoteLine(pending.length))
+        for (const item of pending.slice(0, 10)) {
+          parts.push(`- 「${item.task.name}」（${CYCLE_LABELS[item.task.checkInCycle]}，ID:${item.task.taskId}）`)
         }
       }
       if (openWishes.length > 0) parts.push(`进行中的愿望 ${openWishes.length} 个。`)

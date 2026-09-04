@@ -3,7 +3,7 @@
  * 数据全部由 storageDomain 现算（打卡明细 + 任务 + 愿望），卡片走 xingyuan/chart 事件。
  */
 import type { XingyuanChartDatum } from '../events.js'
-import { anchorOf, checkinCountIndex, freshTask, freshWishes, type Task, type Wish } from '../store.js'
+import { anchorOf, checkinCountIndex, freshTask, freshWishes, isClaimed, type Task, type Wish } from '../store.js'
 import { computeCheckInStats } from '../growth.js'
 import type { XingyuanStore } from '../domain.js'
 import { calculateOpportunityDates, todayIso } from '../opportunity.js'
@@ -187,7 +187,7 @@ export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanSt
       for (const task of tasksOf(store, params.wishId)) {
         required += task.requiredDays
         completed += task.completedDays
-        if (task.status === 'pending') hasPending = true
+        if (!isClaimed(task)) hasPending = true
       }
       if (required <= 0) return undefined
       const ratio = completed / required
@@ -207,8 +207,9 @@ export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanSt
         byDate.set(fact.date, (byDate.get(fact.date) ?? 0) + 1)
       }
       // 每任务的机会日集合只算一次（此前逐日全量重算，O(天数×任务×机会日) 热路径）
+      // 已领取过滤（承诺口径，与 isClaimed 单一判定同源）：未领取任务的机会日不产 0% 缺口
       const dueSets = tasksOf(store)
-        .filter((task) => task.status !== 'pending')
+        .filter((task) => isClaimed(task))
         .map((task) => new Set(calculateOpportunityDates(anchorOf(task), task.dueDate, task.checkInCycle)))
       const data: XingyuanChartDatum[] = []
       let totalDue = 0
@@ -345,12 +346,16 @@ function buildTailChart(
     // 新鲜进度（读侧口径，单遍任务索引）：跨日陈旧的库存值不参与排行与筛选
     const wishes = freshWishes(store).filter((wish) => !wish.archived)
     if (!wishes.length) return undefined
-    const data = wishes
-      .slice()
-      .sort((a, b) => b.progress - a.progress)
-      .slice(0, limit)
-      .map((wish) => ({ label: wish.title, value: wish.progress }))
-    return { chartKey: key, title: params.title ?? '愿望进度', subtitle: '%（应打天数完成率）', chartType: 'bar', data }
+    const shown = wishes.slice().sort((a, b) => b.progress - a.progress).slice(0, limit)
+    const data = shown.map((wish) => ({ label: wish.title, value: wish.progress }))
+    // 长期尺度 = 计划口径（§5.2 规则 7）：分母含未领取任务的应打天数——愿望着含
+    // 未领取任务时副标题动态标注，与 taskCompletionRate 同款诚实口径
+    const pendingWishIds = new Set(
+      tasksOf(store).filter((task) => !isClaimed(task))
+        .map((task) => task.wishId).filter((id): id is string => id !== undefined),
+    )
+    const hasPending = shown.some((wish) => pendingWishIds.has(wish.wishId))
+    return { chartKey: key, title: params.title ?? '愿望进度', subtitle: hasPending ? '%（应打天数完成率，含未领取任务）' : '%（应打天数完成率）', chartType: 'bar', data }
   }
   if (key === 'wishAchievement') {
     const wishes = freshWishes(store)

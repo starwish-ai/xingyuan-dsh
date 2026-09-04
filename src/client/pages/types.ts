@@ -38,6 +38,8 @@ export interface DayTask {
   readonly wishName?: string
   readonly hint?: string
   readonly status: ApiTask['status']
+  /** 承诺口径布尔（host 单一判定）：已领取方计入待打卡/完成率。 */
+  readonly claimed: boolean
   readonly checked: boolean
   readonly canCheckIn: boolean
   readonly canCancel: boolean

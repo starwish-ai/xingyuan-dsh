@@ -81,7 +81,13 @@ export function WishesPage(): ReactElement {
           style: categoryVars(wish.colorKey, wish.categoryName),
         }, wish.categoryName),
         createElement('span', { className: 'xy-title' }, wish.title),
-        createElement('span', { className: 'xy-progress-num' }, t('wish.progress', { percent: wish.progress })),
+        // 长期尺度 = 计划口径（分母含未领取任务的应打天数，§5.2 规则 7）：愿望含未领取
+        // 任务时必须呈现「含未领取任务」标注，避免把计划分母误读为承诺分母
+        createElement('span', { className: 'xy-progress-num' },
+          t('wish.progress', { percent: wish.progress }),
+          wish.tasks.some((task) => task.status === 'pending')
+            ? createElement('span', { className: 'xy-meta' }, ` · ${t('wish.progressHasPending')}`)
+            : null),
         createElement('button', {
           className: 'xy-btn xy-btn-danger xy-btn-icon',
           disabled: deleting,
@@ -100,7 +106,8 @@ export function WishesPage(): ReactElement {
         'aria-valuemin': 0,
         'aria-valuemax': 100,
         'aria-valuenow': wish.progress,
-        'aria-label': t('wish.progress', { percent: wish.progress }),
+        'aria-label': t('wish.progress', { percent: wish.progress })
+          + (wish.tasks.some((task) => task.status === 'pending') ? ` · ${t('wish.progressHasPending')}` : ''),
       },
         createElement('div', { className: 'xy-bar-fill', style: { transform: `scaleX(${Math.min(wish.progress, 100) / 100})` } })),
       wish.tasks.length > 0

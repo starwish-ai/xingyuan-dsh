@@ -89,6 +89,7 @@ export const CHART_SUBTITLE_KEYS: Record<string, XyKey> = {
   '按愿望 TopN': 'chart.subtitle.byWishTopN',
   '按实际打卡时刻分桶；过滤范围为打卡日区间': 'chart.subtitle.byHourBucket',
   '%（应打天数完成率）': 'chart.subtitle.progressPercent',
+  '%（应打天数完成率，含未领取任务）': 'chart.subtitle.progressPercentPending',
 }
 
 /**

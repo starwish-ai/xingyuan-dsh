@@ -7,12 +7,15 @@
  * 以及「客户端构造的搜索 URL 交给服务端必须能命中」的往返闭环。
  */
 import { describe, expect, it } from 'vitest'
+import { calendarUrl, dayUrl } from '../src/client/api.js'
 import { memoryListUrl } from '../src/client/pages/memory.js'
 import { latestCheckedDate } from '../src/client/pages/detail.js'
 import { getApi, postApi } from '../src/routes/api.js'
 import type { ApiDeps } from '../src/routes/api.js'
 import type { RoutesConfig } from '../src/routes/config.js'
 import type { XingyuanStore } from '../src/domain.js'
+import { todayIso } from '../src/opportunity.js'
+import { claimTask, createTask, performCheckIn } from '../src/store.js'
 import { memoryStore } from './memory-store.js'
 
 function makeDeps(store: XingyuanStore): ApiDeps {
@@ -42,6 +45,43 @@ describe('memoryListUrl（记忆搜索 URL 构造）', () => {
     }
     expect(payload.total).toBe(1)
     expect(payload.memories[0]?.key).toBe('经济状况')
+  })
+})
+
+describe('dayUrl / calendarUrl（日内/月历数据 URL 构造）', () => {
+  it('query 参数经 URLSearchParams 构造，整条 URL 只有一个 ?', () => {
+    expect(dayUrl('2026-08-28')).toBe('/xingyuan/api/day?date=2026-08-28')
+    expect(dayUrl('2026-08-28').split('?')).toHaveLength(2)
+    expect(calendarUrl('2026-08')).toBe('/xingyuan/api/calendar?month=2026-08')
+    expect(calendarUrl('2026-08').split('?')).toHaveLength(2)
+  })
+
+  it('客户端构造的 day URL 交给服务端能命中（今日页/日历面板取数闭环）', async () => {
+    const deps = makeDeps(memoryStore())
+    const today = todayIso()
+    const claimed = await createTask(deps.store, { name: '已领取', checkInCycle: 'once', dueDate: today }, today)
+    await claimTask(deps.store, claimed.taskId, today)
+    const payload = getApi(deps, '/api/day', new URL(`http://x.test${dayUrl(today)}`)) as {
+      date: string
+      tasks: Array<{ taskId: string; claimed: boolean }>
+    }
+    expect(payload.date).toBe(today)
+    expect(payload.tasks[0]?.taskId).toBe(claimed.taskId)
+    expect(payload.tasks[0]?.claimed).toBe(true) // 承诺口径布尔随 day API 落到取数面
+  })
+
+  it('客户端构造的 calendar URL 交给服务端能命中月历格子（承诺口径同源）', async () => {
+    const deps = makeDeps(memoryStore())
+    const today = todayIso()
+    const claimed = await createTask(deps.store, { name: '月历项', checkInCycle: 'once', dueDate: today }, today)
+    await claimTask(deps.store, claimed.taskId, today)
+    await performCheckIn(deps.store, claimed.taskId, today, today)
+    const payload = getApi(deps, '/api/calendar', new URL(`http://x.test${calendarUrl(today.slice(0, 7))}`)) as {
+      weeks: Array<Array<{ date: string | null; due: number; checked: number }>>
+    }
+    const cell = payload.weeks.flat().find((c) => c.date === today)
+    expect(cell?.due).toBe(1)
+    expect(cell?.checked).toBe(1)
   })
 })
 

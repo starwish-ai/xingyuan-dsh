@@ -262,12 +262,36 @@ export const xingyuanDomainSpec = defineDomain({
    机会日序列为空，领取即当场过期关闭——与其回包虚假的「进入进行中」/页面 toast
    「去打卡吧」，不如就地拒绝并引导先延长截止日复活（详情面板的复活行对「已过期仍
    待领取」同样可用；页面任务行对该状态给指引而非必失败按钮）。
+7. **承诺口径（2026-08，见 §10 决策 11）**：未领取（pending）任务处于候选池——未承诺
+   不算义务。**「今日」尺度只统计已领取任务**：今日页进度条/全部完成表扬、日历格子
+   due/checked 与完成判定、成长页近 30 天区间图（未领取不构成缺口，与月历同口径）、
+   开场「今日待打卡」概览、`get_today_unchecked_tasks` 输出
+   一律过滤 pending（共享 `isClaimed` 判定，勿各自写不等价过滤；client 展示层消费
+   day API 的 `claimed` 布尔，禁止重复写 status 谓词）；「今日」尺度的统计对象是
+   **已领取且未完结**的义务——已完结（closed，达标关闭 achieved）任务不进入日程面
+   （once 无截止日任务打卡次日即退出，打卡当天保留完成区撤销行；撤销另可走任务详情页与
+   当天日历面板）；**过期关闭（closedReason=expired）是失败记录，不在此列**——它留在其
+   截止日所在日程面如实呈现错过（月历格 c1/c2 与区间图缺口正是该记录），但已不可打卡，
+   复活走任务详情页延长截止日（2026-08 补充：规则 7 的「已完结」字面只指达标关闭）；
+   未领取任务单列
+   「可领取」区（今日页待领取组、开场概览、工具附带行、今天的日历详情面板保留领取
+   入口），并约束模型**不得主动领取**——领取是用户决定，误领取同误打卡。
+   **「长期」尺度维持计划口径**：愿望进度（页面卡片、愿望进度图副标题）与
+   taskCompletionRate 分母仍含未领取任务的应打天数并如实标注（「含未领取任务」，
+   有未领取任务时动态标注）；未来安排查询工具（`get_tasks_for_next_days` /
+   `get_tasks_for_date_range`）同为计划口径并在描述/计数中标注未领取。
+   月历图例 c0 文案为「无打卡安排」以对齐该
+   口径（未领取机会日隐身是承诺面的有意取舍，预览由任务详情 ≤5 个未来机会日兜底）。
+   改这两处口径必须先改 §10 决策 11 与本条，再同步单测对拍（test/routes.test.ts）。
 
 进度口径：愿望进度 = 应打天数完成率（**floor 而非 round**——round 曾使 249/250 显示 100%
-并触发提前归档）；任务的 requiredDays/completedDays 由机会日序列与
+并触发提前归档）；**今日页进度条/完成率同用 floor**（round 会显示「249/250 · 100%」却
+无「全部完成」横幅，构成可见矛盾）；任务的 requiredDays/completedDays 由机会日序列与
 checkins 表推导，跨天恒为最新（不冗余存储历史状态）。
-once 且无截止日的任务没有机会日序列，只在**今天**常驻于今日页/日历（打卡即完成、完成后
-保留在完成区可撤销）——它计入完成率分母，故必须始终有打卡触点。
+once 且无截止日的任务没有机会日序列：进行中阶段只在**今天**常驻于今日页/日历（唯一
+打卡触点，计入完成率分母，故必须始终有打卡按钮）；打卡即完成，完成当天保留在完成区
+可撤销，**次日起退出日程面**——已完结不是待打卡义务，不占今日进度分母/日历格（撤销
+入口=任务详情页与打卡当天日历面板）。
 
 ### 5.3 成长体系（growth.ts）
 
@@ -413,7 +437,7 @@ wish-guide/task-guide/memory-guide/config-guide/chart-guide/reminder-guide(110�
 |---|---|---|
 | xingyuan:coach-tone | 20 | 按当前教练风格切换语气模板 |
 | xingyuan:memories | 21 | `<user_profile>` 块：画像 + 高/中重要性记忆（按 memoryInjectLimit 截断，超量标注可用 search_memory 检索） |
-| xingyuan:today | 22 | 开场「今日应打卡 N 条」概览 |
+| xingyuan:today | 22 | 开场「今日应打卡 N 条」概览（承诺口径：只统计已领取任务；未领取单列「可领取」并约束不得主动领取，见 §5.2 规则 7） |
 
 关键行为准则已写入 identity/constraints：执行操作类工具后必须一句话明确告知结果；
 预工具叙述在工具回合结束丢弃属于 dsh 轮次流程天然行为，无需额外处理。
@@ -489,7 +513,10 @@ zh——升级 dsh 后若发现「英文正文配中文日期」即此处前提�
 禁止手工字符串拼接；同资源的多条取数路径（首屏 / 加载更多）必须共用同一个
 URL 构造函数。背景：记忆页搜索曾把 URL 拼成 `?q=词?offset=0`（第二个分隔符
 误用 `?`），服务端把「词?offset=0」整体当关键词，用户症状是「搜索永远为空」；
-现由 `memoryListUrl()` 收口 + `test/client-pages.test.ts` 回归锁死。
+现由 `memoryListUrl()` / `dayUrl(日期)` / `calendarUrl(月份)`（client 侧
+`src/client/api.ts`）收口同资源多路径取数 + `test/client-pages.test.ts` 回归锁死；
+单路径取数（task-detail / range 等）一律内联 `URLSearchParams` 构造；备用页
+`pages-html.ts` 内联页各自持一份 `apiUrl(path, params)` 等价构造。
 
 **任务详情操作区**（`detail.ts`，愿望页/任务页共用）：按钮单行成组，顺序 =
 主操作（打卡/领取）→ 条件动作（取消打卡）→ 辅助（让 AI 总结）→ 危险（删除）；
@@ -551,6 +578,10 @@ today=圆章蓝环（不覆盖状态底色，「今天该打卡」的提示不�
 `view-state.ts` 快照；弹窗打开锁 body 滚动、错误 toast 走独立 assertive 容器；
 删除/撤销成功后行 DOM 随列表刷新销毁——焦点交给 `focusPageTitle()` 兜底；
 「动作成功但刷新失败」降级为 `StaleBanner`（旧数据 + 就地重试），不整页翻错屏。
+**日历页默认展开今天**（2026-08 登记）：首载/「回到本月」（offset=0）时自动
+`pick(today, false)` 展开今天详情（不滚动）；任何手动拾取后置位 autoPickRef，
+同一次挂载内不再自动覆写；跨标签切换的视图状态只保留月份偏移（选中日不保留），
+回来时仍默认展开今天——属既定交互行为，勿当缺陷报。
 
 **CSS 兼容铁律**：客户端样式禁用 `color-mix()` 等新式取色函数——dsh 壳的浏览器
 矩阵里存在不支持的环境，整条声明按无效处理（空态 SVG 线稿曾因此整体隐形、只剩
@@ -619,7 +650,7 @@ accent 点缀孤点，形似渲染事故）。半透明衍生色一律在 styles
 |---|---|
 | check_similar_tasks | 相似任务查重 |
 | create_task / batch_create_tasks | 创建；批量联动愿望进度 |
-| get_task_list / get_today_unchecked_tasks / get_today_checked_tasks / get_tasks_for_date / get_tasks_for_next_days / get_tasks_for_date_range / get_recommended_tasks | 各时间窗查询与推荐 |
+| get_task_list / get_today_unchecked_tasks / get_today_checked_tasks / get_tasks_for_date / get_tasks_for_next_days / get_tasks_for_date_range / get_recommended_tasks | 各时间窗查询与推荐；get_today_unchecked_tasks 为承诺口径（只列已领取待打卡，未领取单列可领取，见 §5.2 规则 7） |
 | claim_task | 领取（锚点日变为领取日，联动愿望进度） |
 | update_task | 部分更新 |
 | check_in_task / cancel_check_in_task | 打卡/撤卡（§5.2 语义） |
@@ -740,6 +771,20 @@ npm provenance 开启）。
     层——preset 挂载懒加载，会导致「重启后未开过星愿会话时偏好不可改且写入静默失败」。
     判定口径：作用域属「单次会话的能力」→ preset 层；属「用户的全局偏好」→ bundle 层
     （见 §5.8）。preset 层按需经服务（如 `ctx.xingyuan.prefs()`）读取常驻偏好。
+11. **今日承诺口径 × 长期计划口径分层（2026-08）**：未领取（pending）任务处于候选池，
+    未承诺不算行动义务——「今日」尺度的完成率/待打卡被未承诺任务稀释会让「今天全部
+    完成」的正反馈永不触发、且制造无谓负罪感，更会让模型把未领取任务当今天义务去打卡
+    而撞 `not_claimed`。故：**今日尺度（今日页进度/全部完成判定、日历格子与完成判定、
+    成长页近 30 天区间图、开场概览、get_today_unchecked_tasks）只统计已领取且未完结的
+    任务（已完结=达标关闭 achieved，不进入
+    日程面——once 无截止日任务打卡次日即退出，防「今天全部完成」被已完成任务永久
+    挡住；过期关闭属失败记录，留在截止日日程面如实呈现，见 §5.2 规则 7），未领取单列「可领取」并以
+    约束词防模型主动领取；长期尺度（愿望进度——页面卡片与愿望进度图、taskCompletionRate）
+    维持含未领取的计划
+    口径并如实标注。**实现约束：过滤统一走 `store.ts` 的 `isClaimed` 判定；机会日序列
+    与写路径不随口径分层（未领取任务仍按创建日锚点产序列，日历只在其消费侧隐身）；
+    已完结排除在计划层（`planFromPrepared`）单一实现，消费侧不重复判定。
+    两处口径的完整范围见 §5.2 规则 7。
 
 ## 11. 已知限制
 

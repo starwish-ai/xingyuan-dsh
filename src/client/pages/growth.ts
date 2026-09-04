@@ -52,7 +52,7 @@ export function GrowthPage(): ReactElement {
   const growth = usePageData<GrowthPayload>('/xingyuan/api/growth')
   const range = usePageData<RangePayload>(() => {
     const { start, end } = recentRangeDays(30)
-    return `/xingyuan/api/range?start=${start}&end=${end}`
+    return `/xingyuan/api/range?${new URLSearchParams({ start, end }).toString()}`
   }, [])
   // 悬停列数据源（null = 未悬停）
   const [hoverIdx, setHoverIdx] = useState<number | null>(null)

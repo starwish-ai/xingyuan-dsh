@@ -122,7 +122,7 @@ export function TaskDetailPanel(props: { taskId: string; today?: string; onChang
   /** 取详情的 Promise 形态：act 里用于把 busy 窗口延伸到刷新完成。 */
   const fetchDetail = (): Promise<void> => {
     setError(undefined)
-    return getJson<TaskDetailPayload>(`/xingyuan/api/task-detail?taskId=${encodeURIComponent(props.taskId)}`)
+    return getJson<TaskDetailPayload>(`/xingyuan/api/task-detail?${new URLSearchParams({ taskId: props.taskId }).toString()}`)
       .then((payload) => setDetail(payload))
       .catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)) })
   }

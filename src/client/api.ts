@@ -90,6 +90,17 @@ export async function postAction(path: string, body: Record<string, unknown>): P
   return postJson(`/xingyuan/api/action/${path}`, body)
 }
 
+/** 当日数据 URL：今日页/日历页多条取数路径共用同一构造（§5.10 URL 纪律——
+ * 带 query 请求统一 URLSearchParams、同资源共用构造函数，防分隔符/编码口径漂移）。 */
+export function dayUrl(date: string): string {
+  return `/xingyuan/api/day?${new URLSearchParams({ date }).toString()}`
+}
+
+/** 月历数据 URL：日历页取数路径同规构造（月份参数由 URLSearchParams 编码）。 */
+export function calendarUrl(month: string): string {
+  return `/xingyuan/api/calendar?${new URLSearchParams({ month }).toString()}`
+}
+
 /** 请求超时：手动 AbortController——AbortSignal.timeout 为 Baseline 2024 "Newly available"，
  * 不满足 dsh 壳的保守浏览器矩阵（同 color-mix 禁令的判断口径），不用。 */
 const REQUEST_TIMEOUT_MS = 15_000

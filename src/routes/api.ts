@@ -21,6 +21,7 @@ import {
   freshTask,
   freshWish,
   freshWishes,
+  isClaimed,
   monthRange,
   performCheckIn,
   planForDay,
@@ -208,6 +209,8 @@ function dayTasks(plan: DayPlan): Array<Record<string, unknown>> {
     wishName: item.wish?.title,
     hint: item.task.hint,
     status: item.task.status,
+    // 承诺口径布尔：client 展示层只消费该字段，不重复写 status 谓词（§5.2 规则 7 单一判定）
+    claimed: isClaimed(item.task),
     checked: item.checked,
     canCheckIn: item.canCheckIn,
     canCancel: item.canCancel,
@@ -220,11 +223,13 @@ function overview(deps: ApiDeps): Record<string, unknown> {
   const { store } = deps
   const today = todayIso()
   const plan = planForDay(store, today)
-  const due = plan.items.filter((item) => !item.checked)
+  // 承诺口径：今日进度/待打卡只统计已领取任务——未领取处于候选池，未承诺不算义务
+  const claimed = plan.items.filter((item) => isClaimed(item.task))
+  const due = claimed.filter((item) => !item.checked)
   return {
     today,
-    total: plan.items.length,
-    checked: plan.items.length - due.length,
+    total: claimed.length,
+    checked: claimed.length - due.length,
     uncheckedCount: due.length,
     unchecked: due.map((item) => ({
       taskId: item.task.taskId,
@@ -246,12 +251,18 @@ function day(deps: ApiDeps, date?: string): Record<string, unknown> {
 }
 
 function rangePlans(deps: ApiDeps, start: string, end: string): Array<Record<string, unknown>> {
-  return planForRange(deps.store, start < end ? start : end, end > start ? end : start).map((plan) => ({
-    date: plan.date,
-    total: plan.items.length,
-    checked: plan.items.filter((item) => item.checked).length,
-    tasks: dayTasks(plan),
-  }))
+  // 承诺口径（§5.2 规则 7 / 决策 11）：区间图是「我的执行记录」——未领取任务的机会日
+  // 不是失败缺口，与月历/今日页同口径按已领取过滤（未领取不构成斜纹缺口）。
+  // store.planForRange 保持计划口径不变（工具面未来安排查询仍含未领取并标注）。
+  return planForRange(deps.store, start < end ? start : end, end > start ? end : start).map((plan) => {
+    const claimed = plan.items.filter((item) => isClaimed(item.task))
+    return {
+      date: plan.date,
+      total: claimed.length,
+      checked: claimed.filter((item) => item.checked).length,
+      tasks: dayTasks({ date: plan.date, items: claimed }),
+    }
+  })
 }
 
 function calendarMonth(deps: ApiDeps, month?: string): Record<string, unknown> {
@@ -268,8 +279,10 @@ function calendarMonth(deps: ApiDeps, month?: string): Record<string, unknown> {
   const firstDow = new Date(`${start}T00:00:00Z`).getUTCDay()
   for (let pad = 0; pad < (firstDow + 6) % 7; pad++) week.push({ date: null, checked: 0, due: 0 })
   for (const plan of plans) {
-    const checked = plan.items.filter((item) => item.checked).length
-    week.push({ date: plan.date, checked, due: plan.items.length })
+    // 月历完成判定同承诺口径：未领取任务的机会日不占格子色调、不拖完成率
+    const claimed = plan.items.filter((item) => isClaimed(item.task))
+    const checked = claimed.filter((item) => item.checked).length
+    week.push({ date: plan.date, checked, due: claimed.length })
     if (week.length === 7) {
       weeks.push(week)
       week = []

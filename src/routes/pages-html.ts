@@ -77,23 +77,35 @@ async function claim(btn,taskId){
   try{ await post('/xingyuan/api/action/claim',{taskId}); load(); }
   catch(e){ btn.disabled=false; alert(e.message); }
 }
+function apiUrl(path,params){var q=new URLSearchParams(params||{});var s=q.toString();return '/xingyuan/api'+path+(s?'?'+s:'')}
 async function load(){
   try{
-  const r = await fetch('/xingyuan/api/overview'); if(!r.ok) throw new Error('HTTP '+r.status); const o = await r.json();
+  const r = await fetch(apiUrl('/overview')); if(!r.ok) throw new Error('HTTP '+r.status); const o = await r.json();
+  const rd = await fetch(apiUrl('/day',{date:o.today})); if(!rd.ok) throw new Error('HTTP '+rd.status); const d = await rd.json();
   const el = document.getElementById('app');
-  if(!o.total){ el.innerHTML = '<p class="muted">今天没有安排打卡任务。</p>'; return }
   var CZ={once:'仅一次',daily:'每日',weekly:'每周',monthly:'每月'};
-  el.innerHTML = '<p class="summary">今日打卡进度：<b>' + o.checked + '</b> / ' + o.total +
-    (o.uncheckedCount===0 ? ' · 全部完成' : '') + '</p>' +
-    (o.uncheckedCount===0 ? '' :
-    '<ul class="list">' + o.unchecked.map(t =>
-      '<li><div class="t">' + esc(t.name) + '</div><div class="m muted">' + esc(CZ[t.cycle]||t.cycle||'') + (t.wishName? ' · '+esc(t.wishName):'') +
-      (t.status==='pending' ? ' · 待领取' : '') + '</div>' +
-      (t.status==='pending'
-        ? '<button onclick="claim(this,\\''+t.taskId+'\\')">领取任务</button>'
-        : '<button onclick="act(this,\\''+t.taskId+'\\')">✓ 打卡</button>') +
-      '</li>'
-    ).join('') + '</ul>');
+  // 承诺口径：今日进度只统计已领取（overview 已过滤）；未领取任务单列候选组（今天面板全量，
+  // claimed 布尔来自服务端单一判定）
+  const pending = d.tasks.filter(t=>!t.claimed&&!t.checked);
+  if(!o.total && pending.length===0){ el.innerHTML = '<p class="muted">今天没有打卡安排。</p>'; return }
+  let html = '<p class="summary">今日打卡进度：<b>' + o.checked + '</b> / ' + o.total +
+    (o.total>0 && o.uncheckedCount===0 ? ' · 全部完成' : '') + '</p>';
+  if(o.uncheckedCount>0){
+    html += '<ul class="list">' + o.unchecked.map(t =>
+      '<li><div class="t">' + esc(t.name) + '</div><div class="m muted">' + esc(CZ[t.cycle]||t.cycle||'') + (t.wishName? ' · '+esc(t.wishName):'') + '</div>' +
+      '<button onclick="act(this,\''+t.taskId+'\')">✓ 打卡</button>' + '</li>'
+    ).join('') + '</ul>';
+  }
+  if(pending.length>0){
+    // 组标题与 React 今日页分组词（task.group.pending「待领取」）对齐，不再重复
+    // UNCLAIMED_NOTE 措辞（避免第二份文案源漂移，见 AGENTS.md §5.10）
+    html += '<p class="muted">待领取：</p>' +
+      '<ul class="list">' + pending.map(t =>
+        '<li><div class="t">' + esc(t.name) + '</div><div class="m muted">' + esc(CZ[t.cycle]||t.cycle||'') + (t.wishName? ' · '+esc(t.wishName):'') + '</div>' +
+        '<button onclick="claim(this,\''+t.taskId+'\')">领取任务</button>' + '</li>'
+      ).join('') + '</ul>';
+  }
+  el.innerHTML = html;
   }catch(e){ document.getElementById('app').innerHTML = '<p class="muted">加载失败：'+esc(e instanceof Error ? e.message : e)+'（<button class="linkbtn" onclick="location.reload()">重试</button>）</p>'; }
 }
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
@@ -108,14 +120,15 @@ export function pageCalendar(res: ServerResponse, acceptEncoding?: string): void
 <title>打卡日历 · 星愿</title>${STYLE}
 </head><body><header><h1>打卡日历</h1><nav><a href="/xingyuan/today">今日</a><a href="/xingyuan/growth">成长</a></nav></header>
 <main><p class="calbar" id="label">…</p><div id="grid" class="cal"></div>
-<p class="legend"><span class="dot c0"></span>无安排<span class="dot c1"></span>待打卡<span class="dot c2"></span>部分完成<span class="dot c3"></span>全部完成</p>
+<p class="legend"><span class="dot c0"></span>无打卡安排<span class="dot c1"></span>待打卡<span class="dot c2"></span>部分完成<span class="dot c3"></span>全部完成</p>
 <p class="muted" id="detail"></p></main>
 <script>
 let offset=0;
 function monthStr(off){const d=new Date();d.setDate(1);d.setMonth(d.getMonth()+off);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')}
+function apiUrl(path,params){var q=new URLSearchParams(params||{});var s=q.toString();return '/xingyuan/api'+path+(s?'?'+s:'')}
 async function load(){
   const m = monthStr(offset);
-  const r = await fetch('/xingyuan/api/calendar?month='+m);
+  const r = await fetch(apiUrl('/calendar',{month:m}));
   if(!r.ok){ document.getElementById('label').textContent='加载失败'; return }
   const c = await r.json();
   document.getElementById('label').innerHTML =
@@ -124,17 +137,17 @@ async function load(){
     w.map(cell=>{
       if(!cell.date)return'<span class="cell empty"></span>';
       const cls=!cell.due?'c0':(cell.checked>=cell.due?'c3':(cell.checked>0?'c2':'c1'));
-      return '<button type="button" class="cell '+cls+(cell.date===c.today?' today':'')+'" title="'+cell.date+'" aria-label="'+cell.date+'，'+(cell.due===0?'无安排':'打卡 '+cell.checked+'/'+cell.due)+'" onclick="pick(this)" data-date="'+cell.date+'">'+Number(cell.date.slice(8))+'</button>';
+      return '<button type="button" class="cell '+cls+(cell.date===c.today?' today':'')+'" title="'+cell.date+'" aria-label="'+cell.date+'，'+(cell.due===0?'无打卡安排':'打卡 '+cell.checked+'/'+cell.due)+'" onclick="pick(this)" data-date="'+cell.date+'">'+Number(cell.date.slice(8))+'</button>';
     }).join('')+'</div>').join('');
   document.getElementById('detail').textContent='';
 }
 async function pick(el){
   const date=el.getAttribute('data-date');
   try{
-  const r=await fetch('/xingyuan/api/day?date='+date); if(!r.ok) throw new Error('HTTP '+r.status); const d=await r.json();
+  const r=await fetch(apiUrl('/day',{date})); if(!r.ok) throw new Error('HTTP '+r.status); const d=await r.json();
   document.getElementById('detail').innerHTML = d.tasks.length===0
     ? date+'：无任务安排'
-    : date+'：'+d.tasks.map(t=>esc(t.name)+'（'+esc(t.cycle)+'）'+(t.checked?'✓ 已打卡':(t.canCheckIn?'○ 待打卡':'— 未领取'))).join('；');
+    : date+'：'+d.tasks.map(t=>esc(t.name)+'（'+esc(t.cycle)+'）'+(t.checked?'✓ 已打卡':(t.canCheckIn?'○ 待打卡':(t.status==='pending'?'— 未领取':'— 已过期')))).join('；');
   }catch(e){ document.getElementById('detail').textContent='加载失败：'+(e instanceof Error ? e.message : e); }
 }
 load()

@@ -246,7 +246,7 @@ const calSection = `
 ${calBody}
     </div>
     <div class="xy-legend">
-      <span><i class="xy-dot xy-c0" aria-hidden="true"></i>无安排</span>
+      <span><i class="xy-dot xy-c0" aria-hidden="true"></i>无打卡安排</span>
       <span><i class="xy-dot xy-c1" aria-hidden="true"></i>待打卡</span>
       <span><i class="xy-dot xy-c2" aria-hidden="true"></i>部分完成</span>
       <span><i class="xy-dot xy-c3" aria-hidden="true"></i>全部完成</span>
