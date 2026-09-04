@@ -5,6 +5,39 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.9] - 2026-09-04
+
+> **Note:** this release migrates the plugin to DeepSeek Harness `0.1.2-rc.1`
+> (the host is still a technical preview and broke APIs on this bump). No data
+> format changes: existing databases, settings and recorded sessions replay as
+> before. On older hosts (`0.1.1-rc.2`) this version no longer loads — pin
+> `0.5.8` if you must stay on the previous harness.
+
+### Changed
+- **Settings namespaces now install through the service face**
+  (`ctx.inject(['settings'], (inv) => inv.settings.installSection(...))`):
+  `dsh-settings` removed the standalone `installSettingsSection` /
+  `settingsNamespace` helpers, so `xingyuan-pref` and `xingyuan-ui` register
+  via the new API and are no longer imported at runtime. The persistence
+  guarantee is unchanged — namespaces stay on the bundle-resident layer.
+- **Client half re-wired to the reshaped browser packages**:
+  `@deepseek-ai/dsh-client-runtime` is gone; `ClientContext` is now plain
+  Cordis `Context`. The `ChatNodeDataMap` declaration merge moved to
+  `@deepseek-ai/dsh-client-ui-chat/client`, `ConversationStepDataMap` stays in
+  `dsh-client-ui-conversation/client`, event-card definitions register through
+  `ctx.uiConversation.events`, and the slot service is provided by
+  `dsh-client-ui-renderer`. `dsh.client.inject` was rewritten to the new
+  package-row semantics (baseline modules are seeded by the shell and need no
+  declaration).
+- **Session-preset detection for tab visibility** now reads
+  `projectionValues.agentPreset` from the sessions list row — the
+  `SessionSummary.agentPreset` field was removed upstream in
+  `0.1.2-rc.1` (this was silently hiding all Xingyuan view tabs after the
+  host bump; same data source the official preset label uses).
+- **Peer dependency ranges** bumped to `^0.1.2-rc.1` (Cordis `^4.0.2`);
+  AGENTS.md records the migration facts and the new troubleshooting rows
+  (`cannot get property without inject`, missing view tabs).
+
 ## [0.5.8] - 2026-09-04
 
 > **Note:** this release is the fourth six-perspective quality pass. It finishes

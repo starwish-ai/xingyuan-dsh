@@ -1,6 +1,6 @@
 {
   "name": "@starwish-ai/xingyuan-dsh",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "description": "星愿 XingYuan for DeepSeek Harness: 对话创建愿望/任务、机会日打卡、微行动、记忆与图表的 Agent Preset 组合包",
   "type": "module",
   "license": "MIT",
