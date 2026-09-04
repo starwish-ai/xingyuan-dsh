@@ -93,13 +93,11 @@ export function CalendarPage(): ReactElement {
           ? t('confirm.undoAt', { name: taskName, date })
           : undefined
     const run = (): void => {
-      // claim 服务端只读 taskId；checkin/cancel-checkin 的 date 是必读参数
-      guard(() => postAction(action, action === 'claim' ? { taskId } : { taskId, date }).then(() => {
-        toast(action === 'claim'
-          ? t('toast.claimed', { name: taskName })
-          : action === 'checkin'
-            ? t('toast.checkinOk') + dateSuffix(date)
-            : t('toast.undoneAt', { date: formatShortDate(date) }), 'ok')
+      // checkin/cancel-checkin 的 date 是必读参数（claim 已随候选池移出日历面板）
+      guard(() => postAction(action, { taskId, date }).then(() => {
+        toast(action === 'checkin'
+          ? t('toast.checkinOk') + dateSuffix(date)
+          : t('toast.undoneAt', { date: formatShortDate(date) }), 'ok')
         // busy 窗口覆盖月历重取；之后仅当操作日仍是当前选中日才回填详情——
         // 动作与快速连点另一日期竞争时，慢的旧响应不得覆盖新选中日的面板
         return page.reload().then(() => {
@@ -171,15 +169,13 @@ export function CalendarPage(): ReactElement {
     })
   }
 
-  // 月历隐藏未领取任务（承诺口径，服务端 cell 已过滤）；详情面板同口径——
-  // 唯一例外：今天的面板保留未领取行 + 领取入口（与今日页的行动面语义对齐）。
-  // 非今日面板按 claimed 保留已领取行（撤销/补卡入口），未领取行隐身——
-  // 判定消费服务端 claimed 布尔（§5.2 规则 7 单一判定，client 不重复写 status 谓词）
+  // 月历隐藏未领取任务（承诺口径，服务端 cell 已过滤）；详情面板全日期同口径——
+  // 含今天：候选池不进日历（2026-08 用户裁决两轮：今日页 → 日历面板），
+  // 领取入口收归任务页待领取组与对话。判定消费服务端 claimed 布尔
+  // （§5.2 规则 7 单一判定，client 不重复写 status 谓词）
   const visibleTasks = detail === undefined
     ? []
-    : detail.date === data.today
-      ? detail.tasks
-      : detail.tasks.filter((task) => task.claimed)
+    : detail.tasks.filter((task) => task.claimed)
 
   return createElement('div', { className: 'xy-page', ref: stabilize },
     // 月份导航居中（日历惯例）：‹ 标题 › 成组居中，「回到本月」绝对定位贴右缘不挤占中轴
@@ -253,13 +249,12 @@ export function CalendarPage(): ReactElement {
                   ? createElement('div', { className: 'xy-meta' }, t('cal.dayEmpty'))
                   : createElement('ul', { className: 'xy-grouplist' }, visibleTasks.map((task) => {
                       // 元信息分段拼接：空段不产悬挂分隔符（如已完结任务无状态词）
+                      // 面板行已按 claimed 过滤（未领取不达此处）；已领取且不可勾且未勾
+                      // = 过期关闭（达标关闭在计划面已剔除——失败记录，与工具面「— 已过期」同口径）
                       const stateText = task.checked
                         ? t('cal.state.checked')
                         : task.canCheckIn ? t('cal.state.todo')
-                          : !task.claimed ? t('cal.state.unclaimed')
-                            // 已领取且不可勾且未勾 = 过期关闭（达标关闭在计划面已剔除，
-                            // 读到即失败记录——与工具面「— 已过期」同口径，2026-08 评审 F8 React 面补完）
-                            : t('task.status.expired')
+                          : t('task.status.expired')
                       const segments = [
                         cycleLabel(task.cycle),
                         ...(task.wishName !== undefined ? [task.wishName] : []),
@@ -269,17 +264,13 @@ export function CalendarPage(): ReactElement {
                         createElement('div', { className: 'xy-rowmain' },
                           createElement('span', { className: 'xy-rowtitle' }, task.name),
                           createElement('span', { className: 'xy-meta' }, segments.join(' · '))),
-                        // 领取仅限今日：claim 无日期语义，claimDate 恒为领取当天——
-                        // 过去/未来选中日的「领取」按钮会造出锚点与所见不符的任务
-                        !task.claimed && !task.checked && detail.date === data.today
-                          ? createElement('button', { className: 'xy-btn', disabled: busy, onClick: () => act('claim', task.taskId, task.name, detail.date) }, t('action.claim'))
-                          // 打卡按钮消费 host 单一真值 canCheckIn（=未勾选且进行中）：
-                          // 「已领取」不等于「可打卡」——过期关闭等已完结任务不渲染按钮，
-                          // 避免「打卡此日」disabled 死分支（评审回归 C1）
-                          : task.canCheckIn
-                            ? createElement('button', { className: 'xy-btn xy-btn-primary', disabled: busy, onClick: () => act('checkin', task.taskId, task.name, detail.date) }, t('action.checkinThisDay'))
-                            : task.checked && task.canCancel
-                              ? createElement('button', { className: 'xy-btn', disabled: busy, onClick: () => act('cancel-checkin', task.taskId, task.name, detail.date) }, t('action.cancelCheckin'))
-                              : null)
+                        // 打卡按钮消费 host 单一真值 canCheckIn（=未勾选且进行中）：
+                        // 「已领取」不等于「可打卡」——过期关闭等已完结任务不渲染按钮，
+                        // 避免「打卡此日」disabled 死分支（评审回归 C1）；未领取行已过滤
+                        task.canCheckIn
+                          ? createElement('button', { className: 'xy-btn xy-btn-primary', disabled: busy, onClick: () => act('checkin', task.taskId, task.name, detail.date) }, t('action.checkinThisDay'))
+                          : task.checked && task.canCancel
+                            ? createElement('button', { className: 'xy-btn', disabled: busy, onClick: () => act('cancel-checkin', task.taskId, task.name, detail.date) }, t('action.cancelCheckin'))
+                            : null)
                     })))))
 }

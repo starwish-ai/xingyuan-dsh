@@ -129,9 +129,11 @@ async function pick(el){
   const date=el.getAttribute('data-date');
   try{
   const r=await fetch(apiUrl('/day',{date})); if(!r.ok) throw new Error('HTTP '+r.status); const d=await r.json();
-  document.getElementById('detail').innerHTML = d.tasks.length===0
+  // 面板同 React 日历口径（2026-08 用户裁决）：只显示已领取任务，未领取候选池不进日历
+  const rows=d.tasks.filter(t=>t.claimed).map(t=>esc(t.name)+'（'+esc(t.cycle)+'）'+(t.checked?'✓ 已打卡':(t.canCheckIn?'○ 待打卡':'— 已过期')));
+  document.getElementById('detail').innerHTML = rows.length===0
     ? date+'：无任务安排'
-    : date+'：'+d.tasks.map(t=>esc(t.name)+'（'+esc(t.cycle)+'）'+(t.checked?'✓ 已打卡':(t.canCheckIn?'○ 待打卡':(t.status==='pending'?'— 未领取':'— 已过期')))).join('；');
+    : date+'：'+rows.join('；');
   }catch(e){ document.getElementById('detail').textContent='加载失败：'+(e instanceof Error ? e.message : e); }
 }
 load()

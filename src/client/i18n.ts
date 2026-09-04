@@ -185,7 +185,6 @@ export const ZH_DICT = {
   'cal.dayEmpty': '这一天没有任务安排。',
   'cal.state.checked': '✓ 已打卡',
   'cal.state.todo': '○ 待打卡',
-  'cal.state.unclaimed': '未领取',
 
   // --- 成长页 ---
   'growth.levelLabel': '当前等级',
@@ -630,7 +629,6 @@ const EN_DICT: Record<XyKey, string> = {
   'cal.dayEmpty': 'Nothing scheduled on this day.',
   'cal.state.checked': '✓ Checked in',
   'cal.state.todo': '○ To check in',
-  'cal.state.unclaimed': 'Unclaimed',
 
   'growth.levelLabel': 'Current level',
   'growth.levelFallback': 'Beginner',
