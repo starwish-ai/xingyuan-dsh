@@ -1,8 +1,14 @@
 # 星愿 Dsh 插件开发文档
 
 > 本文档描述独立项目 `@starwish-ai/xingyuan-dsh` 的架构、核心机制与开发规范，面向后续在本仓库上迭代的开发者。
-> 接口基线：DeepSeek Harness（下称 dsh）`0.1.1-rc.2`。dsh 处于技术预览期，API 可能变动；
+> 接口基线：DeepSeek Harness（下称 dsh）`0.1.2-rc.1`。dsh 处于技术预览期，API 可能变动；
 > 升级依赖版本前先核对官方 release notes 与 §12 参考文档。
+> （0.1.2-rc.1 迁移要点：settings 子系统重排——独立函数 `installSettingsSection`/
+> `settingsNamespace` 删除，收进 `ctx.settings.installSection` 服务方法；client 半侧
+> `dsh-client-runtime` 包消失——`ClientContext` 即 cordis `Context`，`ChatNodeDataMap`
+> 合并位移到 ui-chat、`ctx.conversationEvents` 服务改为 `ctx.uiConversation.events`；
+> `dsh.client` 声明的 `inject` 语义为「依赖包行先到」，基座模块（react/cordis/ui-slots/
+> ui-primitives/dsh-client-store）由壳 staticModules 播种、无需声明。）
 
 ---
 
@@ -25,7 +31,7 @@ agent 选择器出现「星愿」即安装成功。
 | 数据持久化 | 自带 sqlite 后端，`~/.dsh/xingyuan/xingyuan.sqlite` |
 
 技术栈：TypeScript（Node ≥22.5）+ Cordis 插件框架 + React 18（client 半侧）
-+ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/dsh-*` 锁定 `^0.1.1-rc.2`；
++ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/dsh-*` 锁定 `^0.1.2-rc.1`；
   `@deepseek-ai/cordis` 跟随宿主 4.x（独立版本线）；`@deepseek-ai/schemastery`
   为 `*`，跟随宿主。
 
@@ -389,28 +395,42 @@ ctx.tools.register(defineTool({
 | `xingyuan/chart` | chartKey + title + chartType(line/column/bar/pie/arcbars/heatmap/radar) + 数据点 + generatedAt（快照时点，回放标注「生成于」） |
 | `xingyuan/micro` | started/stepped/restarted/finished + 步骤数组 + currentStepNumber |
 
-client 半侧注册三处声明合并位 + 一个 Definition 工厂：
+client 半侧注册三处声明合并位 + 一个 Definition 工厂（0.1.2-rc.1 起重排：`dsh-client-runtime`
+包消失，`ClientContext` 即 cordis `Context`；`ctx.slots` 由 ui-renderer、`ctx.settingsScope`
+由 ui-settings、`ctx.sessions` 由 api-session-controller、`ctx.locale` 由 dsh-client-locale 的
+类型声明合并位提供，client 源码以纯类型 import 引入）：
 
 ```ts
 // src/client/index.ts —— 三个官方类型合并点缺一不可
-declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
+declare module '@deepseek-ai/dsh-client-ui-chat/client' {        // 0.1.2 起 ChatNodeDataMap 归 ui-chat
   interface ChatNodeDataMap { 'xy-wish': XyState; /* …共 5 个 */ }
 }
-declare module '@deepseek-ai/dsh-client-runtime/client' {
+declare module '@deepseek-ai/dsh-client-ui-conversation/client' { // ConversationStepDataMap 留在 ui-conversation
   interface ConversationStepDataMap { 'xy-wish': XyState; /* …共 5 个 */ }
 }
+// 第三处：LocaleNamespaceMap（i18n.ts 并入 '@deepseek-ai/dsh-client-ui-slots'，位置不变）
 ```
 
-Definition 按 `KIND_BY_EVENT` 把 `xingyuan/*` 映射到 `xy-*` kind，
-`match/start/update` 渲染器只读 `node.data`（whole-value），不扫描事件窗口。
+事件 Definition 注册面同步改名：旧 `ctx.conversationEvents.register(def)` →
+`ctx.uiConversation.events.register(def)`（`uiConversation` 服务由 ui-conversation 提供，
+`conversationEvents` 服务名已不存在）。Definition 按 `KIND_BY_EVENT` 把 `xingyuan/*` 映射到
+`xy-*` kind，`match/start/update` 渲染器只读 `node.data`（whole-value），不扫描事件窗口。
 
 注意：dsh 工具内建的 UI 卡片是固定五词汇（generic/terminal/diff/search/web），
 不支持任意自定义 React 卡——业务卡片一律走 ConversationNode，人机确认走 userQuestions，
 这是官方分工，不要试图扩展前者。
 
-**冷读拒绝与会话日志自愈（session-log-repair.ts，必读）**：dsh（0.1.1-rc.2）
+**client 行的声明语义（0.1.2-rc.1 迁移）**：`dsh.client.inject` 现为「依赖包行先到 +
+条目组成边」（不再充当模块解析清单）；基座模块（react / react-dom / cordis / ui-slots /
+ui-primitives / dsh-client-store）由壳 staticModules 表播种，client 源码里的**纯类型**
+import 会被 tsdown 擦除、不产生模块请求，无需声明 `external`——只有运行时 value import
+非基座包才需要 `dsh.client.external`。业务插件行无需 `immediately`（entry compose 会
+import 全部行、apply 正常执行）；官方 ui-schedule 同款形态可作对照。
+
+**冷读拒绝与会话日志自愈（session-log-repair.ts，必读）**：dsh（0.1.1-rc.2 起，0.1.2-rc.1 复核仍成立）
 会话持久化读取端按「本仓库生成的官方事件类型白名单」拒绝未知事件，仓库外插件事件
-按构造不在名单内；写入端 `Session.append` 又没有 ignorable 标记通道——因此包含
+按构造不在名单内；写入端 `Session.append` 又没有 ignorable 标记通道（rc.1 的读端已实现
+「带 ignorable 标记的外部事件保留放行」，但 append 签名仍无处设置该标记）——因此包含
 `xingyuan/*` 事件的会话一旦冷加载（进程重启后刷新/重开）会被
 `SessionFormatUnsupportedError` 整体拒绝。bundle 层激活期执行**会话日志自愈**：
 扫描 `$DSH_HOME/sessions` 工件，给历史日志里的 `xingyuan/*` 事件行补
@@ -602,15 +622,22 @@ accent 点缀孤点，形似渲染事故）。半透明衍生色一律在 styles
 
 ### 5.11 标签页显隐（设置 × 会话预设动态注册）
 
-六个会话视图标签不再无条件常驻：默认**跟随会话预设**（仅 `agentPreset ===
-'xingyuan'` 的会话显示），设置可切「始终显示 / 始终隐藏」并按标签勾选。
+六个会话视图标签不再无条件常驻：默认**跟随会话预设**（仅星愿预设的会话显示；
+0.1.2-rc.1 起读取口径 = sessions 列表行 `byId[current].projectionValues.agentPreset
+=== 'xingyuan'`——旧 `SessionSummary.agentPreset` 顶层字段已被移除，官方
+AgentPresetLabel 组件同口径），设置可切「始终显示 / 始终隐藏」并按标签勾选。
 
 - **判定唯一口径**：`src/tab-policy.ts` 的 `visibleTabIds(mode, hiddenTabs,
   isXingyuanSession)` 纯函数——注册控制器、设置页回显、单测三方共用，禁止另写判定。
   三态语义：`follow` 星愿会话才显示 / `show` 任何会话都显示 / `hide` 任何会话不显示；
   `hiddenTabs` 在上述「显示」前提下剔除单标签（默认 `[]` = 全显示；脏值容错忽略）。
 - **设置宿主**：bundle 层命名空间 `xingyuan-ui`（`src/ui-settings.ts`，
-  `installSettingsSection` 经 `ctx.inject(['settings'])` 等待服务挂载，缺席自动不跑）。
+  `ctx.inject(['settings'], (inv) => inv.settings.installSection(ctx, NS, schema, defaults, hooks))`
+  等待 settings 服务挂载后注册，缺席自动不跑；0.1.2-rc.1 起旧独立函数
+  `installSettingsSection`/`settingsNamespace` 已删除，命名空间改为字面量字符串并由
+  新 API 的泛型文法校验。**注意服务属性守卫**：cordis 4.0.2 起，未在本 fiber 声明的
+  服务不得以 `ctx.<name>` 访问（抛 `cannot get property without inject`），故必须在
+  inject 回调形参 `inv` 上读 `inv.settings`，owner 位置才传插件自身的 `ctx`。）
   字段 `tabVisibilityMode` + `hiddenTabs`，默认值写进 schema 与 `tab-policy` 常量同源。
   挂在常驻层而非 preset 层：未选星愿也能调，且「全部隐藏」状态下开关仍可达。
   > 更正（原注「preset 命名空间随星愿会话卸载而消失」不准确）：按官方 agent-presets
@@ -829,7 +856,7 @@ npm provenance 开启）。
 - 非回环连接（浏览器地址不是 `localhost` / `127.0.0.0/8` / `::1`）下，settings RPC 被
   宿主降级为 memory 模式：所有偏好命名空间 `mode==='memory'`、不可写。这是 dsh 的安全
   约束（settings RPCs are loopback-only），设置页只能提示，无法绕过。
-- dsh 技术预览期升级锁版本 `0.1.1-rc.2`；跨版本升级前核对 release notes 与排障索引。
+- dsh 技术预览期升级锁版本 `0.1.2-rc.1`；跨版本升级前核对 release notes 与排障索引。
 
 ## 12. 官方参考文档
 
@@ -903,6 +930,7 @@ conversation-node 篇目，旧文档引用为失实）
 | 数据库打开报版本不符 | subsystems/storage；DOMAIN_VERSION 策略 |
 | preset 不出现 / mount 拒绝 | packages/preset/agent-presets/README.zh.md（realm 规则、roots 扫描时机） |
 | HMR 后状态丢失 / 注册残留 | lifecycle effect 清理；是否存在跨重载模块级单例 |
-| client 卡片/标签页没加载 | subsystems/client-modules（manifest/export/inject 三要素）+ files 清单 |
+| client 卡片/标签页没加载 | subsystems/client-modules（dsh.client 声明：inject 组成边 / external 非基座请求）+ 星愿行在 `window.__DSH_BOOT__` 的 entries 里有则 factory 已注册；设置页可见但视图标签缺席 → tab-visibility 的 `projectionValues.agentPreset` 判据（0.1.2 口径，见 §5.11） |
+| `cannot get property "X" without inject` | cordis 4.0.2 服务属性守卫：只能在声明过 X 的 fiber 上以 `ctx.X` 访问——经 `ctx.inject(['X'], (inv) => inv.X...)` 的回调形参读（见 §5.11 设置宿主） |
 | 设置卡不显示 | cookbook/adding-a-settings-card（namespace 配对、双半侧导出） |
 | Key/模型问题 | user/guide/providers；subsystems/credentials |

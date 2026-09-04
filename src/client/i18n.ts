@@ -13,6 +13,8 @@
  * EN_DICT 显式声明为 Record<keyof typeof ZH_DICT, string>，缺键/多键即编译错误。
  */
 import { useSyncExternalStore } from 'react'
+// locale 服务的声明合并位（ctx.locale）：0.1.2 起归 dsh-client-locale/client
+import type {} from '@deepseek-ai/dsh-client-locale/client'
 
 /** locale 命名空间（插件私有；与壳 common 词汇互不干扰）。 */
 export const XY_NS = 'xingyuan'

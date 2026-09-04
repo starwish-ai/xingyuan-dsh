@@ -8,16 +8,18 @@
  * bundle 层命名空间常驻：未选过星愿预设也能调整，且与 dsh host-backed
  * settings 惯例一致（跟随 $DSH_HOME/settings.yaml 跨 Web 端口）。
  *
- * installSettingsSection 经 ctx.inject(['settings']) 等待 settings 服务挂载，
+ * dsh 0.1.2-rc.1 起命名空间安装收进服务面 ctx.settings.installSection；
+ * 本模块经 ctx.inject(['settings']) 等待 settings 服务挂载，
  * 服务缺席（headless 等）时整段不运行，bundle 激活不依赖它。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+// 纯类型导入：只取 dsh-settings 对 Context.settings 的声明合并，不留运行时 import
+import type {} from '@deepseek-ai/dsh-settings'
 import { TAB_IDS, TAB_VISIBILITY_DEFAULTS, type TabId, type TabVisibilityMode } from './tab-policy.js'
 
-/** 界面偏好命名空间（client 半侧 settingsScope 同名配对，勿改）。 */
-export const UI_NS = settingsNamespace('xingyuan-ui')
+/** 界面偏好命名空间（client 半侧 settingsScope 同名配对，勿改；小写连字符文法由新 API 类型校验）。 */
+export const UI_NS = 'xingyuan-ui'
 
 /** 命名空间解析值（schema 默认 → base 层 → 用户层）。 */
 export interface UiSettings {
@@ -37,9 +39,11 @@ export const UiSettingsSchema: z<UiSettings> = z.object({
 
 /** bundle 层安装界面偏好命名空间（幂等：注册随插件 fiber 生命周期自动清理）。 */
 export function installUiSettings(ctx: Context): void {
-  installSettingsSection(ctx, UI_NS, UiSettingsSchema, TAB_VISIBILITY_DEFAULTS, {
-    // 本命名空间只有 client 半侧消费（经 wire 读快照），host 侧无派生事实
-    setSource: () => {},
-    onChange: () => {},
+  ctx.inject(['settings'], (inv) => {
+    inv.settings.installSection(ctx, UI_NS, UiSettingsSchema, TAB_VISIBILITY_DEFAULTS as UiSettings, {
+      // 本命名空间只有 client 半侧消费（经 wire 读快照），host 侧无派生事实
+      setSource: () => {},
+      onChange: () => {},
+    })
   })
 }

@@ -5,7 +5,7 @@
  * 文案经 useXyT()：语言切换由 locale revision 订阅驱动重渲（见 i18n.ts §方案）。
  */
 import { createElement, useRef, useState, type ReactElement } from 'react'
-import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import {
   type XingyuanChartEventData,
   type XingyuanCheckinEventData,

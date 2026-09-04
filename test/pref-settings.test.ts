@@ -9,9 +9,9 @@
  *    按 AGENTS.md §5.8 的判定口径，会话级能力仍可挂 preset 层，但凡出现在
  *    常驻设置页里的必须是 bundle 层常驻命名空间。
  *
- * 说明：本文件只测宿主半侧。服务桩仅实现 `installSettingsSection` 真正用到的一面
- * （`register` → scope 的 `get`/`watch`），不继承 `SettingsProvider`，避免把测试
- * 绑死在 dsh 的 Service 生命周期上。
+ * 说明：本文件只测宿主半侧。服务桩仅实现 `ctx.settings.installSection`（0.1.2 起的
+ * 服务面安装法）真正被调用的一面（记录注册 + 经 setSource 暴露解析值），不继承
+ * `SettingsProvider`，避免把测试绑死在 dsh 的 Service 生命周期上。
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -28,12 +28,14 @@ function settingsStub(initial: Record<string, unknown> = {}) {
     registered,
     /** 模拟用户在设置页改值（Host 层解析后的结果）。 */
     setResolved(next: Record<string, unknown>): void { value = next },
-    register(ns: unknown, _schema: unknown, _opts?: { base?: Record<string, unknown> }) {
+    /** 新服务面桩：installSection 真实行为 = register + setSource(scope.get)。 */
+    installSection(_owner: unknown, ns: unknown, _schema: unknown, _entry: unknown, hooks: {
+      setSource: (current: () => Record<string, unknown>) => void
+      onChange: () => void
+    }): void {
       registered.push(String(ns))
-      return {
-        get: () => value,
-        watch: () => () => {},
-      }
+      hooks.setSource(() => value)
+      hooks.onChange()
     },
   }
 }
@@ -106,15 +108,33 @@ describe('设置命名空间的分层不变量', () => {
     })
   }
 
-  /** 收集源码里所有 `settingsNamespace('x')` 与 `bind({ namespace: 'x' })` 的名字。 */
-  function collect(rel: string, patterns: readonly RegExp[]): string[] {
+  /**
+   * 收集一个文件里所有「注册到 settings 的命名空间名」：
+   * `ctx.settings.installSection(owner, ns, ...)`（ns 为字面量或同文件的字符串常量）。
+   * 0.1.2 起旧 `settingsNamespace('x')` 独立函数已删除，注册面收进服务方法。
+   */
+  function collectRegistered(rel: string): string[] {
     const text = readFileSync(srcRoot + rel, 'utf8')
-    return patterns.flatMap((re) =>
-      [...text.matchAll(re)].map((m) => m[1]).filter((ns): ns is string => ns !== undefined))
+    const out: string[] = []
+    for (const m of text.matchAll(/installSection\(\s*[^,]+,\s*(?:'([^']+)'|([A-Za-z_]\w*))/g)) {
+      if (m[1] !== undefined) {
+        out.push(m[1])
+        continue
+      }
+      const def = new RegExp(`const ${m[2]}\\s*(?::[^=]+)?=\\s*'([^']+)'`).exec(text)
+      const name = def?.[1]
+      if (name !== undefined) out.push(name)
+    }
+    return out
   }
 
-  const REGISTERED = /settingsNamespace\(\s*'([^']+)'\s*\)/g
   const BOUND = /settingsScope\.bind\(\s*\{\s*namespace:\s*'([^']+)'/g
+
+  /** 收集源码里 `bind({ namespace: 'x' })` 的绑定名。 */
+  function collectBound(rel: string): string[] {
+    const text = readFileSync(srcRoot + rel, 'utf8')
+    return [...text.matchAll(BOUND)].map((m) => m[1]).filter((ns): ns is string => ns !== undefined)
+  }
 
   it('设置页绑定的命名空间无一由 preset 层注册', () => {
     const presetFiles = listTs('preset/')
@@ -123,11 +143,11 @@ describe('设置命名空间的分层不变量', () => {
     expect(clientFiles.length).toBeGreaterThan(0)
 
     // 设置页（常驻可见）实际绑定的命名空间
-    const bound = new Set(clientFiles.flatMap((rel) => collect(rel, [BOUND])))
+    const bound = new Set(clientFiles.flatMap((rel) => collectBound(rel)))
     expect(bound.size, '未从 client 层解析到任何绑定，正则可能已失效').toBeGreaterThan(0)
 
     // preset 层注册的命名空间——懒加载，首次开星愿会话才存在
-    const byPreset = new Set(presetFiles.flatMap((rel) => collect(rel, [REGISTERED])))
+    const byPreset = new Set(presetFiles.flatMap((rel) => collectRegistered(rel)))
 
     // 交集必须为空：设置页常驻可见，其数据若来自 preset 层就会「整页可见而数据缺席」
     expect([...bound].filter((ns) => byPreset.has(ns))).toEqual([])
@@ -135,7 +155,7 @@ describe('设置命名空间的分层不变量', () => {
 
   it('两个偏好命名空间都在 bundle 层注册', () => {
     const bundleFiles = ['index.ts', 'ui-settings.ts', 'pref-settings.ts']
-    const registered = new Set(bundleFiles.flatMap((rel) => collect(rel, [REGISTERED])))
+    const registered = new Set(bundleFiles.flatMap((rel) => collectRegistered(rel)))
     for (const ns of ['xingyuan-pref', 'xingyuan-ui']) {
       expect(registered, `bundle 层未注册 ${ns}`).toContain(ns)
     }

@@ -3,8 +3,13 @@
  * 6 个会话视图标签页（今日/愿望/任务/日历/成长/记忆）+ 设置整页。
  * 文案与渲染细节分别在 i18n.ts / cards.ts / pages/*；本文件只做注册与接线。
  */
-import type { ClientContext, ConversationNodeDefinition } from '@deepseek-ai/dsh-client-runtime/client'
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { ConversationNodeDefinition } from '@deepseek-ai/dsh-client-ui-conversation/client'
+// settingsScope 服务与 settings.section 槽的类型声明合并位（dsh 0.1.2 起归 ui-settings 包持有）
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
+// ctx.slots 服务声明位（SlotRegistry，0.1.2 起归 ui-renderer 持有）
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { t, XY_NS, setupLocale } from './i18n.js'
 import { disposeConfirms, disposeToasts } from './ui.js'
 import { STYLE_TEXT } from './styles.js'
@@ -13,9 +18,11 @@ import type { XyState } from './types.js'
 import { installTabVisibility } from './tab-visibility.js'
 import { SettingsSection, type PrefScopeLike, type UiScopeLike } from './pages/settings.js'
 
-export const inject = ['slots', 'settingsScope', 'conversationEvents']
+export const inject = ['slots', 'settingsScope', 'uiConversation']
 
-declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
+// dsh 0.1.2 起三个声明合并位重新归口：ChatNodeDataMap 在 ui-chat，
+// ConversationStepDataMap 在 ui-conversation（client 子路径），runtime 包消失。
+declare module '@deepseek-ai/dsh-client-ui-chat/client' {
   interface ChatNodeDataMap {
     'xy-wish': XyState
     'xy-task': XyState
@@ -25,7 +32,7 @@ declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
   }
 }
 
-declare module '@deepseek-ai/dsh-client-runtime/client' {
+declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
   interface ConversationStepDataMap {
     'xy-wish': XyState
     'xy-task': XyState
@@ -91,11 +98,12 @@ export function apply(ctx: ClientContext): void {
     disposeConfirms()
   })
 
-  ctx.conversationEvents.register(definition('xy-wish'))
-  ctx.conversationEvents.register(definition('xy-task'))
-  ctx.conversationEvents.register(definition('xy-checkin'))
-  ctx.conversationEvents.register(definition('xy-chart'))
-  ctx.conversationEvents.register(definition('xy-micro'))
+  // dsh 0.1.2：事件 Definition 注册收进 uiConversation 服务的 events 子注册表。
+  ctx.uiConversation.events.register(definition('xy-wish'))
+  ctx.uiConversation.events.register(definition('xy-task'))
+  ctx.uiConversation.events.register(definition('xy-checkin'))
+  ctx.uiConversation.events.register(definition('xy-chart'))
+  ctx.uiConversation.events.register(definition('xy-micro'))
 
   // 卡片注册不声明 locale：t 席位由组件内 useXyT() 取代（键受查 + 订阅刷新），
   // 避免 'conversation' 窄域 t 与本插件命名空间的类型冲突。

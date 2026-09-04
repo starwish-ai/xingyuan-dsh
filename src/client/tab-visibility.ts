@@ -11,7 +11,9 @@
  * 判据：settingsScope('xingyuan-ui').tabVisibilityMode × hiddenTabs ×
  * 当前（staged）会话 SessionSummary.agentPreset === 'xingyuan'。
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+// 0.1.2 起 sessions 列表快照归 api-session-controller 的 ctx.sessions 服务（client 子路径声明合并位）
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type { ReactElement } from 'react'
 import { XY_NS, t, type XyKey } from './i18n.js'
 import { TAB_IDS, TAB_VISIBILITY_DEFAULTS, visibleTabIds, type TabId, type TabVisibilityMode } from '../tab-policy.js'
@@ -33,11 +35,12 @@ interface UiScopeLike {
   subscribe(listener: () => void): () => void
 }
 
-/** dsh-client-runtime sessions 服务的最小结构面：服务本体是 SessionRuntime，列表快照在 `.list` 上（createSnapshotStore，getSnapshot/subscribe 契约）。 */
+/** api-session-controller sessions 服务的最小结构面（列表快照 store）。0.1.2 起会话预设不再挂
+ * SessionSummary 顶层，而是投影值 `projectionValues.agentPreset`（官方 AgentPresetLabel 同口径）。 */
 interface SessionsListLike {
   getSnapshot(): {
     readonly current?: string
-    readonly byId: Record<string, { readonly agentPreset?: string } | undefined>
+    readonly byId: Record<string, { readonly projectionValues?: { readonly agentPreset?: unknown } } | undefined>
   }
   subscribe(fn: () => void): () => void
 }
@@ -83,7 +86,7 @@ export function installTabVisibility(ctx: ClientContext): () => void {
     const hidden: readonly TabId[] = value?.hiddenTabs ?? TAB_VISIBILITY_DEFAULTS.hiddenTabs
     const list = sessions?.list?.getSnapshot()
     const row = list?.current !== undefined ? list.byId[list.current] : undefined
-    const isXingyuan = row?.agentPreset === 'xingyuan'
+    const isXingyuan = row?.projectionValues?.agentPreset === 'xingyuan'
     // 「始终显示 × 非星愿会话」的今日页轻提示（Q4=b 结论），其余模式不提示
     setTodayHint(mode === 'show' && !isXingyuan)
     const visible = new Set(visibleTabIds(mode, hidden, isXingyuan))
