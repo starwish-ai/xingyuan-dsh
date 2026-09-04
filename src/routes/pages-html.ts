@@ -72,22 +72,15 @@ async function act(btn,taskId,date){
   try{ await post('/xingyuan/api/action/checkin',{taskId,date}); load(); }
   catch(e){ btn.disabled=false; alert(e.message); }
 }
-async function claim(btn,taskId){
-  btn.disabled=true;
-  try{ await post('/xingyuan/api/action/claim',{taskId}); load(); }
-  catch(e){ btn.disabled=false; alert(e.message); }
-}
 function apiUrl(path,params){var q=new URLSearchParams(params||{});var s=q.toString();return '/xingyuan/api'+path+(s?'?'+s:'')}
 async function load(){
   try{
   const r = await fetch(apiUrl('/overview')); if(!r.ok) throw new Error('HTTP '+r.status); const o = await r.json();
-  const rd = await fetch(apiUrl('/day',{date:o.today})); if(!rd.ok) throw new Error('HTTP '+rd.status); const d = await rd.json();
   const el = document.getElementById('app');
   var CZ={once:'仅一次',daily:'每日',weekly:'每周',monthly:'每月'};
-  // 承诺口径：今日进度只统计已领取（overview 已过滤）；未领取任务单列候选组（今天面板全量，
-  // claimed 布尔来自服务端单一判定）
-  const pending = d.tasks.filter(t=>!t.claimed&&!t.checked);
-  if(!o.total && pending.length===0){ el.innerHTML = '<p class="muted">今天没有打卡安排。</p>'; return }
+  // 今日页只呈现已领取义务（与 React 今日页同口径，2026-08 用户裁决）：
+  // 候选池（未领取）不进今日页，领取入口=任务页待领取组/日历今天面板/对话
+  if(!o.total){ el.innerHTML = '<p class="muted">今天没有安排打卡任务。</p>'; return }
   let html = '<p class="summary">今日打卡进度：<b>' + o.checked + '</b> / ' + o.total +
     (o.total>0 && o.uncheckedCount===0 ? ' · 全部完成' : '') + '</p>';
   if(o.uncheckedCount>0){
@@ -95,15 +88,6 @@ async function load(){
       '<li><div class="t">' + esc(t.name) + '</div><div class="m muted">' + esc(CZ[t.cycle]||t.cycle||'') + (t.wishName? ' · '+esc(t.wishName):'') + '</div>' +
       '<button onclick="act(this,\''+t.taskId+'\')">✓ 打卡</button>' + '</li>'
     ).join('') + '</ul>';
-  }
-  if(pending.length>0){
-    // 组标题与 React 今日页分组词（task.group.pending「待领取」）对齐，不再重复
-    // UNCLAIMED_NOTE 措辞（避免第二份文案源漂移，见 AGENTS.md §5.10）
-    html += '<p class="muted">待领取：</p>' +
-      '<ul class="list">' + pending.map(t =>
-        '<li><div class="t">' + esc(t.name) + '</div><div class="m muted">' + esc(CZ[t.cycle]||t.cycle||'') + (t.wishName? ' · '+esc(t.wishName):'') + '</div>' +
-        '<button onclick="claim(this,\''+t.taskId+'\')">领取任务</button>' + '</li>'
-      ).join('') + '</ul>';
   }
   el.innerHTML = html;
   }catch(e){ document.getElementById('app').innerHTML = '<p class="muted">加载失败：'+esc(e instanceof Error ? e.message : e)+'（<button class="linkbtn" onclick="location.reload()">重试</button>）</p>'; }

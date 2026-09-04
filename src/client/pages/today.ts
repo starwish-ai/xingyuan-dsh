@@ -7,7 +7,7 @@ import { softConfirm, useActionGuard, usePageData, useScrollTopOnMount, useStabl
 import { PageEmpty, PageError, PageSkeleton, StaleBanner, focusPageTitle } from '../ui.js'
 import { cycleLabel, dateSuffix, formatFriendlyDate, formatShortDate } from './format.js'
 import { todayHintStore } from '../tab-hint.js'
-import type { DayPayload, DayTask, OverviewPayload } from './types.js'
+import type { DayPayload, OverviewPayload } from './types.js'
 
 export function TodayPage(): ReactElement {
   const t = useXyT()
@@ -51,22 +51,16 @@ export function TodayPage(): ReactElement {
   // 「全部完成」横幅（AGENTS.md §5.2 进度口径）；floor 只在真正全完成时到 100。
   const ratio = data.total > 0 ? Math.floor((data.checked / data.total) * 100) : 0
   const doneItems = dayData.tasks.filter((task) => task.checked)
-  // 承诺口径分组：claimed 布尔来自服务端单一判定（§5.2 规则 7），client 不重复写 status 谓词
-  // canCheckIn 显式并入（与日历面板同为 host 真值门控）：防计划层未来改动时静默复造
-  // 「可点但服务端拒绝」——不变量（claimed 且未勾 ⇒ in_progress）失效即自动隐身该行
+  // 今日只呈现已领取义务（2026-08 用户裁决：候选池不进今日页，领取入口=任务页待领取组、
+  // 日历今天面板/对话）：claimed 布尔来自服务端单一判定（§5.2 规则 7），client 不重复写
+  // status 谓词；canCheckIn 显式并入（与日历面板同为 host 真值门控）——防计划层未来改动
+  // 时静默复造「可点但服务端拒绝」，不变量（claimed 且未勾 ⇒ in_progress）失效即隐身该行
   const openItems = dayData.tasks.filter((task) => !task.checked && task.claimed && task.canCheckIn)
-  const pendingItems = dayData.tasks.filter((task) => !task.checked && !task.claimed)
-  // 待打卡 = 已领取的行动义务；待领取 = 候选池（未承诺，不算义务，
-  // 用「领取」动作加入承诺）。两组独立计数，不与进度条（承诺口径）混算。
-  // 行外壳（li+rowmain+meta）共享，仅动作按钮不同（评审收口：此前两段完整复制）
-  const renderRow = (task: DayTask, actionNode: ReactElement): ReactElement =>
-    createElement('li', { key: task.taskId, className: 'xy-grouprow' },
-      createElement('div', { className: 'xy-rowmain' },
-        createElement('span', { className: 'xy-rowtitle' }, task.name),
-        createElement('span', { className: 'xy-meta' },
-          `${cycleLabel(task.cycle)}${task.wishName !== undefined ? ` · ${task.wishName}` : ''}${task.hint !== undefined ? ` · ${task.hint}` : ''}`)),
-      actionNode)
-  const openRows = openItems.map((task) => renderRow(task,
+  const openRows = openItems.map((task) => createElement('li', { key: task.taskId, className: 'xy-grouprow' },
+    createElement('div', { className: 'xy-rowmain' },
+      createElement('span', { className: 'xy-rowtitle' }, task.name),
+      createElement('span', { className: 'xy-meta' },
+        `${cycleLabel(task.cycle)}${task.wishName !== undefined ? ` · ${task.wishName}` : ''}${task.hint !== undefined ? ` · ${task.hint}` : ''}`)),
     createElement('button', {
       className: 'xy-btn xy-btn-primary',
       // 展示行已按 canCheckIn 显式过滤（上方 openItems），按钮无需再判——
@@ -75,16 +69,10 @@ export function TodayPage(): ReactElement {
       onClick: () => {
         void act('checkin', { taskId: task.taskId }, (p) =>
           t('toast.checkinOk') + dateSuffix(typeof p.date === 'string' ? String(p.date) : undefined))
-          // 行随刷新从「待打卡」组迁入「已完成」组、原按钮销毁，焦点交给页面
-          // 标题兜底（与下方撤销路径同款；领取行留在同一列表内不迁移，无需兜底）
+          // 行随刷新从「待打卡」组迁入「已完成」组、原按钮销毁，焦点交给页面标题兜底
           .then(focusPageTitle, () => {})
       },
     }, t('action.checkin'))))
-  const pendingRows = pendingItems.map((task) => renderRow(task,
-    createElement('button', {
-      className: 'xy-btn', disabled: busy,
-      onClick: () => act('claim', { taskId: task.taskId }, () => t('toast.claimed', { name: task.name })),
-    }, t('action.claim'))))
   const doneRows = doneItems.map((task) => createElement('li', { key: task.taskId, className: 'xy-grouprow xy-done' },
     createElement('div', { className: 'xy-rowmain' },
       createElement('span', { className: 'xy-rowtitle' },
@@ -144,22 +132,14 @@ export function TodayPage(): ReactElement {
         createElement('span', null, t('today.sectionOpen')),
         createElement('span', { className: 'xy-group-count' }, String(openRows.length))),
       createElement('ul', { className: 'xy-grouplist' }, openRows)) : null,
-    pendingRows.length > 0 ? createElement('section', { className: 'xy-group' },
-      createElement('h3', { className: 'xy-group-head' },
-        // 待领取 = 候选池（未承诺，不算义务）：中性 dot，与「待打卡」的琥珀承诺态区分
-        createElement('span', { className: 'xy-group-dot', 'aria-hidden': 'true' }),
-        createElement('span', null, t('task.group.pending')),
-        createElement('span', { className: 'xy-group-count' }, String(pendingRows.length))),
-      createElement('ul', { className: 'xy-grouplist' }, pendingRows)) : null,
     doneRows.length > 0 ? createElement('section', { className: 'xy-group' },
       createElement('h3', { className: 'xy-group-head' },
         createElement('span', { className: 'xy-group-dot xy-group-dot-ok', 'aria-hidden': 'true' }),
         createElement('span', null, t('today.sectionDone')),
         createElement('span', { className: 'xy-group-count' }, String(doneRows.length))),
       createElement('ul', { className: 'xy-grouplist' }, doneRows)) : null,
-    // 空态仅当真的无事可做（无承诺打卡且无待领取候选）；「全待领取」场景
-    // 由上方待领取组承载行动入口，不与空态文案互斥（与备用页同口径）
-    data.total === 0 && pendingRows.length === 0
+    // 空态 = 今天没有已领取义务（候选池不走今日页；领取入口在任务页/日历今天面板/对话）
+    data.total === 0
       ? createElement(PageEmpty, { title: t('today.empty.title'), hint: t('today.empty.hint') })
       : null)
 }
