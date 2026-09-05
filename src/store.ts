@@ -63,7 +63,8 @@ export function anchorOf(task: Task): string {
 
 /**
  * 承诺口径判定：任务是否已领取。未领取（pending）任务处于「候选池」而非行动承诺，
- * 不进入今日待打卡/今日完成率/日历完成判定的统计（2026-08 口径修正，见 AGENTS.md §10）。
+ * 不进入今日待打卡/今日完成率/日历完成判定的统计，也不进愿望进度分母、不拖累完成率，
+ * 但会拦住愿望达成（见 wishProgressFromAgg；2026-08/09 口径，见 AGENTS.md §10 决策 11）。
  */
 export function isClaimed(task: Task): boolean {
   return task.status !== 'pending'
@@ -233,22 +234,73 @@ export async function updateWish(
   })
 }
 
-/** 愿望进度重算：全部任务的应打/已打汇总，progress = 完成率百分比。 */
-export async function syncWishProgress(store: XingyuanStore, wishId: string): Promise<void> {
-  let required = 0
-  let completed = 0
-  for (const [, task] of store.domain.table('tasks').entries()) {
-    if (task.wishId !== wishId) continue
-    required += task.requiredDays
-    completed += task.completedDays
+/** 愿望进度聚合槽：required/completed 只累计已领取任务；pendingCount 候选数；claimedCount 已领取数。 */
+interface WishProgressAgg {
+  required: number
+  completed: number
+  pendingCount: number
+  claimedCount: number
+}
+
+function emptyWishProgressAgg(): WishProgressAgg {
+  return { required: 0, completed: 0, pendingCount: 0, claimedCount: 0 }
+}
+
+/**
+ * 承诺口径分区折叠（isClaimed 单一谓词的唯一折叠处，§10 决策 11）：
+ * 写路径 syncWishProgress、读侧 freshWishes 分桶与 claimedDaysSum 共用，禁各处再写分区判断。
+ */
+function foldTaskIntoAgg(agg: WishProgressAgg, task: Task): void {
+  if (isClaimed(task)) {
+    agg.required += task.requiredDays
+    agg.completed += task.completedDays
+    agg.claimedCount += 1
+  } else {
+    agg.pendingCount += 1
   }
-  const progress = required > 0 ? Math.min(100, Math.floor((completed / required) * 100)) : 0
+}
+
+/** 承诺口径分区聚合（单槽求和版）。 */
+function aggregateWishProgress(tasks: Iterable<Task>): WishProgressAgg {
+  const agg = emptyWishProgressAgg()
+  for (const task of tasks) foldTaskIntoAgg(agg, task)
+  return agg
+}
+
+/**
+ * 愿望进度与达成判定（唯一公式，写路径 syncWishProgress 与读侧 freshWishes 共用）：
+ * - 进度 = 已领取任务应打天数完成率，floor 而非 round——round 曾使 249/250 显示 100% 并提前归档；
+ * - 未领取候选不进比率（承诺口径，§5.2 规则 7）：领取前不拖累进度，删除候选也不抬高进度；
+ * - 达成 = 进度 100% 且无未处理候选：满进度而有候选时愿望停在「待结算」（settled），
+ *   收尾（领取继续或删除收尾）是用户的决定，不得由系统代结；
+ * - 计划中（planning）= 无任何已领取任务：三态展示位与闸门同公式产出，消费侧不重建。
+ */
+function wishProgressFromAgg(agg: WishProgressAgg): { progress: number; archived: boolean; settled: boolean; planning: boolean } {
+  const progress = agg.required > 0 ? Math.min(100, Math.floor((agg.completed / agg.required) * 100)) : 0
+  const archived = progress >= 100 && agg.pendingCount === 0
+  return { progress, archived, settled: progress >= 100 && agg.pendingCount > 0, planning: agg.claimedCount === 0 }
+}
+
+/** 已领取任务的应打/已打天数汇总（承诺口径求和，taskCompletionRate 图与进度公式同族）。 */
+export function claimedDaysSum(tasks: Iterable<Task>): { required: number; completed: number } {
+  const { required, completed } = aggregateWishProgress(tasks)
+  return { required, completed }
+}
+
+/** 愿望进度重算（承诺口径）：分母只计已领取任务的应打/已打汇总，progress = 完成率百分比。 */
+export async function syncWishProgress(store: XingyuanStore, wishId: string): Promise<void> {
+  const wishTasks: Task[] = []
+  for (const [, task] of store.domain.table('tasks').entries()) {
+    if (task.wishId === wishId) wishTasks.push(task)
+  }
+  const agg = aggregateWishProgress(wishTasks)
+  const { progress, archived } = wishProgressFromAgg(agg)
   await store.domain.table('wishes').update(wishId, (wish) => ({
     ...wish,
-    totalRequiredDays: required,
-    totalCompletedDays: completed,
+    totalRequiredDays: agg.required,
+    totalCompletedDays: agg.completed,
     progress,
-    archived: progress >= 100,
+    archived,
   }))
 }
 
@@ -262,31 +314,66 @@ export function freshTask(store: XingyuanStore, task: Task, today = todayIso(), 
 }
 
 /**
- * 单遍任务索引的批量新鲜化（O(W+T)）：freshWish 逐个调用是 O(W×T) 嵌套全表扫描，
- * 愿望列表/图表/成长汇总等批量读场景一律走本函数。公式与 freshWish 逐字段一致
- * （进度 floor 而非 round——round 会让 249/250 变 100% 提前归档）。
+ * 新鲜化愿望视图：库存记录 + 派生的承诺口径展示字段。
+ * pendingCount/settled/planning 与 progress/archived 同源（aggregateWishProgress +
+ * wishProgressFromAgg 唯一公式族），展示面（API/事件/工具回包）直接消费，
+ * 禁止各自用 `progress>=100 && 有候选` 或任务状态谓词重建闸门与三态。
  */
-export function freshWishes(store: XingyuanStore, wishes?: Wish[]): Wish[] {
+export type WishProgressView = Wish & {
+  readonly pendingCount: number
+  readonly settled: boolean
+  /** 无任何已领取任务（计划中三态位，与页面/工具同一判定源） */
+  readonly planning: boolean
+}
+
+/**
+ * 单遍任务索引的批量新鲜化（O(W+T)）：freshWish 逐个调用是 O(W×T) 嵌套全表扫描，
+ * 愿望列表/图表/成长汇总等批量读场景一律走本函数。公式与 syncWishProgress 共用
+ * wishProgressFromAgg（承诺口径 + 达成/待结算/计划中谓词单一实现，消费侧不重复判定）。
+ */
+export function freshWishes(store: XingyuanStore, wishes?: Wish[]): WishProgressView[] {
   const source = wishes ?? [...store.domain.table('wishes').entries()].map(([, wish]) => wish)
-  const agg = new Map<string, { required: number; completed: number }>()
+  const agg = new Map<string, WishProgressAgg>()
   for (const [, task] of store.domain.table('tasks').entries()) {
     if (task.wishId === undefined) continue
-    const entry = agg.get(task.wishId) ?? { required: 0, completed: 0 }
-    entry.required += task.requiredDays
-    entry.completed += task.completedDays
+    const entry = agg.get(task.wishId) ?? emptyWishProgressAgg()
+    foldTaskIntoAgg(entry, task)
     agg.set(task.wishId, entry)
   }
   return source.map((wish) => {
-    const required = agg.get(wish.wishId)?.required ?? 0
-    const completed = agg.get(wish.wishId)?.completed ?? 0
-    const progress = required > 0 ? Math.min(100, Math.floor((completed / required) * 100)) : 0
-    return { ...wish, totalRequiredDays: required, totalCompletedDays: completed, progress, archived: progress >= 100 }
+    const entry = agg.get(wish.wishId) ?? emptyWishProgressAgg()
+    const { progress, archived, settled, planning } = wishProgressFromAgg(entry)
+    return { ...wish, totalRequiredDays: entry.required, totalCompletedDays: entry.completed, progress, archived, pendingCount: entry.pendingCount, settled, planning }
   })
 }
 
-/** 愿望进度快照（只读新鲜计算，不落库）：下属任务应打/已打汇总 → 完成率（floor 口径）。 */
-export function freshWish(store: XingyuanStore, wish: Wish): Wish {
+/** 愿望进度快照（只读新鲜计算，不落库）：已领取任务应打/已打汇总 → 完成率（floor 口径）+ 候选/待结算派生位。 */
+export function freshWish(store: XingyuanStore, wish: Wish): WishProgressView {
   return freshWishes(store, [wish])[0]!
+}
+
+/**
+ * 愿望新鲜视图 + 按愿望分桶的新鲜任务（打卡计数经 checkinCountIndex 预聚合）。
+ * 愿望详情类场景单一收口：一次调用同得派生位与任务清单，禁消费侧各扫各的。
+ * 任务表扫两遍（分桶一遍、freshWishes 折叠一遍）：折叠走 freshWishes 唯一公式路线，
+ * 不为省一遍扫描复制聚合逻辑；两遍折叠结果恒等（fold 只读 requiredDays/completedDays/
+ * isClaimed 三字段，写路径 syncTaskProgress 已使其与 fresh 态一致）。
+ */
+export function freshWishesWithTasks(store: XingyuanStore, wishes?: Wish[], today = todayIso()): {
+  wishes: WishProgressView[]
+  tasksByWish: Map<string, Task[]>
+} {
+  const counts = checkinCountIndex(store)
+  const source = wishes ?? [...store.domain.table('wishes').entries()].map(([, wish]) => wish)
+  const ids = new Set(source.map((wish) => wish.wishId))
+  const tasksByWish = new Map<string, Task[]>()
+  for (const [, task] of store.domain.table('tasks').entries()) {
+    if (task.wishId === undefined || !ids.has(task.wishId)) continue
+    const bucket = tasksByWish.get(task.wishId) ?? []
+    bucket.push(syncTaskValue(store, task, today, counts))
+    tasksByWish.set(task.wishId, bucket)
+  }
+  return { wishes: freshWishes(store, source), tasksByWish }
 }
 
 /**

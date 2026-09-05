@@ -58,6 +58,10 @@ export interface ApiWish {
   readonly description?: string
   readonly progress: number
   readonly archived: boolean
+  /** 待结算（满进度而有候选）/计划中（无已领取任务）与候选计数：服务端 wishProgressFromAgg 派生，展示层禁止重建谓词（§5.2 规则 7）。 */
+  readonly settled: boolean
+  readonly pendingCount: number
+  readonly planning: boolean
   readonly estimatedCompletionDate?: string
   readonly tasks: ReadonlyArray<ApiTask>
 }

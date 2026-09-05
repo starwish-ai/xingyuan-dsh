@@ -3,7 +3,7 @@
  * 数据全部由 storageDomain 现算（打卡明细 + 任务 + 愿望），卡片走 xingyuan/chart 事件。
  */
 import type { XingyuanChartDatum } from '../events.js'
-import { anchorOf, checkinCountIndex, freshTask, freshWishes, isClaimed, type Task, type Wish } from '../store.js'
+import { anchorOf, checkinCountIndex, claimedDaysSum, freshTask, freshWishes, isClaimed, type Task, type Wish } from '../store.js'
 import { computeCheckInStats } from '../growth.js'
 import type { XingyuanStore } from '../domain.js'
 import { calculateOpportunityDates, todayIso } from '../opportunity.js'
@@ -181,21 +181,16 @@ export function buildChart(key: ChartKey, params: ChartParams, store: XingyuanSt
       }
     }
     case 'taskCompletionRate': {
-      let required = 0
-      let completed = 0
-      let hasPending = false
-      for (const task of tasksOf(store, params.wishId)) {
-        required += task.requiredDays
-        completed += task.completedDays
-        if (!isClaimed(task)) hasPending = true
-      }
+      // 承诺口径（§5.2 规则 7）：分母只计已领取任务的应打天数——候选不进比率、不拖累完成率，
+      // 求和走 store.claimedDaysSum（与愿望进度公式族单一收口，消费侧不重复 isClaimed 聚合）
+      const { required, completed } = claimedDaysSum(tasksOf(store, params.wishId))
       if (required <= 0) return undefined
       const ratio = completed / required
       return {
         chartKey: key,
         title: params.title ?? '任务完成率',
-        // 口径透明（诚实标注惯例）：分母含未领取任务的应打天数，与愿望进度同一公式
-        subtitle: `${completed}/${required} 天${hasPending ? '（含未领取任务）' : ''}`,
+        // 口径自述：副标题恒标注分母范围，读图无需区分有无候选（候选可见性由愿望卡与任务页承担）
+        subtitle: `${completed}/${required} 天（已领取任务）`,
         chartType: 'arcbars',
         data: [{ label: '完成率', value: completed, ratio }],
       }
@@ -348,19 +343,15 @@ function buildTailChart(
     if (!wishes.length) return undefined
     const shown = wishes.slice().sort((a, b) => b.progress - a.progress).slice(0, limit)
     const data = shown.map((wish) => ({ label: wish.title, value: wish.progress }))
-    // 长期尺度 = 计划口径（§5.2 规则 7）：分母含未领取任务的应打天数——愿望着含
-    // 未领取任务时副标题动态标注，与 taskCompletionRate 同款诚实口径
-    const pendingWishIds = new Set(
-      tasksOf(store).filter((task) => !isClaimed(task))
-        .map((task) => task.wishId).filter((id): id is string => id !== undefined),
-    )
-    const hasPending = shown.some((wish) => pendingWishIds.has(wish.wishId))
-    return { chartKey: key, title: params.title ?? '愿望进度', subtitle: hasPending ? '%（应打天数完成率，含未领取任务）' : '%（应打天数完成率）', chartType: 'bar', data }
+    // 承诺口径（§5.2 规则 7）：分母只计已领取任务，候选不进比率、不拖累进度；
+    // 副标题恒标注口径，候选的可见性由愿望卡候选行与任务页待领取组承担
+    return { chartKey: key, title: params.title ?? '愿望进度', subtitle: '%（已领取任务完成率）', chartType: 'bar', data }
   }
   if (key === 'wishAchievement') {
     const wishes = freshWishes(store)
     if (!wishes.length) return undefined
-    const achieved = wishes.filter((wish) => wish.progress >= 100).length
+    // 达成口径与愿望卡一致（freshWishes 派生的 archived 谓词）：承诺全部完成且无未处理候选
+    const achieved = wishes.filter((wish) => wish.archived).length
     return {
       chartKey: key,
       title: params.title ?? '愿望达成率',

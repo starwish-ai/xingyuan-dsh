@@ -5,7 +5,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { XingyuanStore } from '../domain.js'
-import { CYCLE_LABELS, isClaimed, planForDay, type DayItem } from '../store.js'
+import { CYCLE_LABELS, freshWishes, isClaimed, planForDay, type DayItem } from '../store.js'
 import { todayIso } from '../opportunity.js'
 export interface PromptConfig {
   /** 记忆注入上限（≤40 条，超量摘要化）。 */
@@ -323,6 +323,13 @@ const WISH_GUIDE = `# 愿望操作指南
 - 用户未提供预计完成日期时：按主题推算合理期限（语言/乐器/学习类 3-6 个月，健身/健康类 2-3 个月，工作类 3 个月，具体事项类 1 个月），格式 yyyy-MM-dd
 - 用户已明确提供的信息（日期、描述）必须优先使用，不得覆盖；只在缺失时补全
 
+## 进度与达成规则（转述数字时如实说明）
+- 愿望进度 = 已领取任务的应打天数完成率；待领取的任务不算进进度——不拖累完成率，删除待领取的任务也不抬高进度
+- 愿望达成 = 进度 100% 且没有待领取任务：都做完但还有待领取的任务时，愿望停在「待收尾」（进度条满了，先不归档）——向用户说明并让其决定：领了继续，或删掉就达成
+- 不得为促成达成主动领取或删除任务（领取不可逆，删除是计划修订，都是用户的决定）
+- 还没开始的愿望显示「计划中」；进度只反映已承诺的部分，待领取的任务在任务页「待领取」组可见
+- 对用户说话用日常用语：统一说「待领取的任务」，不说「候选」「待结算」「口径」「锚点」这类内部词
+
 ## 注意事项
 - 分类名称优先2-3个中文字符（如：学习、健康、工作）`
 
@@ -345,6 +352,8 @@ const TASK_GUIDE = `# 任务操作指南
 ## 状态流转
 pending（待领取）→ claim_task → in_progress（进行中）→ check_in 达标 → closed（完结）
 截止日过期未达标也会关闭（closed/expired）；对已过期任务延长截止日即触发重新开始。
+- 领取即扩大承诺范围：任务的应打天数计入所属愿望进度（进度只统计已领取任务），进度可能因此回落——回包会注明，如实转述
+- 待领取的任务不计入愿望进度、不拖累完成率，但进度满了而还有待领取的任务时愿望不达成（停在「待收尾」，等用户决定领取或删除收尾）
 
 ## 字段自动补全
 - 用户未指定截止日期时：按周期推算合理日期（daily→约30天后、weekly→8周后、monthly→3个月后、once→2周内），格式 yyyy-MM-dd 且不早于今天
@@ -404,7 +413,7 @@ const CHART_GUIDE = `# 图表展示指南（均为内部能力，通过 generate
 - 「一般几点打卡/打卡时间规律」→ chartKey=checkinTimeDistribution（雷达，按时段）
 - 「周几打卡最多/周活跃规律」→ chartKey=weeklyActivity（雷达，按星期）
 
-## 数据口径与相互区别（易混淆图表，按维度选）
+## 数据规则与相互区别（易混淆图表，按维度选）
 - checkinTrend vs checkinRateTrend：前者每日打卡次数，后者每日完成率（已打卡/应打卡）
 - checkinTrend vs checkinCalendar：前者近N天逐日折线，后者自然日网格热力图
 - checkinByCategory vs wishCategory：前者打卡次数按分类，后者愿望数量按分类
@@ -413,9 +422,9 @@ const CHART_GUIDE = `# 图表展示指南（均为内部能力，通过 generate
 - wishProgress vs wishAchievement：前者逐愿望进度排行（条形），后者整体达成率（环状）
 - checkinTimeDistribution vs weeklyActivity：前者一天内时段分布，后者星期几分布
 
-## 统计口径（回复涉及数字时按此措辞，不臆测）
+## 统计规则（回复涉及数字时按此措辞，不臆测）
 - 统计类图表只统计今天（含）以前的打卡；提前勾选的未来日期不计入统计，只体现在打卡日历热力图上
-- taskCompletionRate 分母含未领取任务的应打天数（与愿望进度同一公式），副标题会标注口径——解读时如实转述
+- taskCompletionRate 与 wishProgress 都只算已领取任务的应打天数（与愿望进度同一规则），待领取的不算进也不拖累完成率，副标题恒标注「已领取任务」——转述时说「只算已领取的任务」
 - checkinRateTrend 的无安排日（当日没有应打卡任务）不产出比率点，不代表完成率为 0%
 - checkinTrend/checkinCalendar 的取消打卡会即时反映（记录已撤销）；但已生成的图表卡是生成时刻的快照，回放时以卡片标注的「生成于」为准，需要最新数据应重新生成
 
@@ -511,7 +520,11 @@ export function registerPrompts(ctx: Context & { xingyuan: XingyuanStore }, conf
       const due = claimed.filter((item) => !item.checked)
       const done = claimed.length - due.length
       const pending = plan.items.filter((item) => !isClaimed(item.task))
-      const openWishes = [...store.domain.table('wishes').entries()].map(([, w]) => w).filter((w) => !w.archived)
+      // 承诺口径读侧统一走 freshWishes：库存 progress/archived 只在写路径刷新，
+      // 达成闸门（候选拦达成）变更后库存位可与派生面分叉——上下文与列表/页面必须同源
+      const wishViews = freshWishes(store)
+      const openWishes = wishViews.filter((w) => !w.archived)
+      const settledWishes = wishViews.filter((w) => w.settled)
       const parts = [`<today_context>`, `今天是 ${today}。`]
       if (claimed.length > 0) {
         parts.push(`今日打卡进度：${done}/${claimed.length}。`)
@@ -530,7 +543,10 @@ export function registerPrompts(ctx: Context & { xingyuan: XingyuanStore }, conf
           parts.push(`- 「${item.task.name}」（${CYCLE_LABELS[item.task.checkInCycle]}，ID:${item.task.taskId}）`)
         }
       }
-      if (openWishes.length > 0) parts.push(`进行中的愿望 ${openWishes.length} 个。`)
+      if (openWishes.length > 0) parts.push(`进行中的愿望 ${openWishes.length} 个${settledWishes.length > 0 ? `（其中 ${settledWishes.length} 个待收尾：答应自己的都做完了，还有任务待领取，等用户决定领了继续还是删掉达成）` : ''}。`)
+      // 全达成与从零两态分开：曾一律说「还没有任何愿望」，完成全部愿望的老用户
+      // 被模型当新客介绍产品、被引导说「第一个愿望」，如实说成就再谈下一步
+      else if (wishViews.length > 0) parts.push(`用户的 ${wishViews.length} 个愿望均已达成：先肯定这份坚持，再自然地邀请许下一个新愿望。`)
       else parts.push('用户还没有任何愿望：新会话请友好自我介绍（你是星愿AI助手，帮用户拆解愿望、制定计划、坚持打卡），引导说出第一个愿望；已有会话则自然衔接。')
       parts.push('</today_context>')
       return parts.join('\n')

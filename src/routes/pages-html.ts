@@ -167,14 +167,14 @@ async function load(){
      '<p class="muted on-hero">'+esc(expText)+'</p></div></div>'+
    '<div class="cards">'+
    stat(g.totalCheckinDays,'累计打卡天数')+stat(g.currentStreak,'连续坚持')+stat(g.maxStreak,'最长连续坚持')+
-   stat(g.wishTotal,'累计愿望')+stat(g.wishAchieved,'已实现愿望')+
+   stat(g.wishTotal,'累计愿望')+stat(g.wishAchieved,'已达成愿望')+
    stat(g.taskTotal,'累计任务')+stat(g.taskAchieved==null?'—':g.taskAchieved,'已达成任务')+
    '</div>'+
    '<div class="lvcard"><h3>等级说明</h3>'+(g.levels||[]).map(l=>
      '<div class="lv'+(g.level>=l.level?' hit':'')+'"><span class="lvnum" style="'+(g.level>=l.level?'background:'+levelTint(l.level):'')+'">Lv.'+l.level+'</span>'+
      '<span class="lvname">'+esc(l.levelName)+'</span><span class="lvreq muted">需要 '+l.requiredExperience+' 经验</span>'+
      '<span class="lvreward muted">'+esc(l.rewardDescription)+'</span></div>').join('')+'</div>'+
-   '<p class="muted">口径：当前连续从最后一条 ≤ 今天的记录倒推（未来预勾不参与）；最长连续包含未来预勾段——承诺账本语义。</p>';
+   '<p class="muted">说明：当前连续只从今天往前数实际打卡的天数；提前勾选未来的日子会让最长连续更长，但不算进当前连续。</p>';
   document.getElementById('app').innerHTML = html;
   }catch(e){ document.getElementById('app').innerHTML = '<p class="muted">加载失败：'+esc(e instanceof Error ? e.message : e)+'（<button class="linkbtn" onclick="location.reload()">重试</button>）</p>'; }
 }

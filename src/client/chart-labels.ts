@@ -88,21 +88,20 @@ export const CHART_SUBTITLE_KEYS: Record<string, XyKey> = {
   '按任务 TopN': 'chart.subtitle.byTaskTopN',
   '按愿望 TopN': 'chart.subtitle.byWishTopN',
   '按实际打卡时刻分桶；过滤范围为打卡日区间': 'chart.subtitle.byHourBucket',
-  '%（应打天数完成率）': 'chart.subtitle.progressPercent',
-  '%（应打天数完成率，含未领取任务）': 'chart.subtitle.progressPercentPending',
+  '%（已领取任务完成率）': 'chart.subtitle.claimedPercent',
 }
 
 /**
  * 副标题本地化：固定短语查表；含数字的模板（近 N 天 / A/B 天 / 当前 A 天 / 最长 B 天 /
- * 含未领取任务）按正则重排——服务端模板变化时未知副标题原样回显（诚实降级）。
+ * 已领取任务口径）按正则重排——服务端模板变化时未知副标题原样回显（诚实降级）。
  */
 export function localizeChartSubtitle(subtitle: string): string {
   const fixed = CHART_SUBTITLE_KEYS[subtitle]
   if (fixed !== undefined) return t(fixed)
   let m = /^近 (\d+) 天$/.exec(subtitle)
   if (m !== null) return t('chart.subtitle.lastDays', { n: m[1] })
-  m = /^(\d+)\/(\d+) 天（含未领取任务）$/.exec(subtitle)
-  if (m !== null) return t('chart.subtitle.daysInclPending', { done: m[1], due: m[2] })
+  m = /^(\d+)\/(\d+) 天（已领取任务）$/.exec(subtitle)
+  if (m !== null) return t('chart.subtitle.daysClaimed', { done: m[1], due: m[2] })
   m = /^(\d+)\/(\d+) 天$/.exec(subtitle)
   if (m !== null) return t('chart.subtitle.daysRatio', { done: m[1], due: m[2] })
   m = /^当前 (\d+) 天 \/ 最长 (\d+) 天$/.exec(subtitle)

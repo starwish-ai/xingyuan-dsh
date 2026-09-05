@@ -37,8 +37,11 @@ import {
   CYCLE_LABELS_EN,
   deleteMemory,
   freshTask,
+  freshWish,
   freshWishes,
+  freshWishesWithTasks,
   isClaimed,
+  type WishProgressView,
   mutateGlobal,
   performCheckIn,
   planForDay,
@@ -107,7 +110,7 @@ function taskLine(task: TaskRecord): string {
   return `${task.name}（${cycleLabel(task.checkInCycle)}${due}，${days}）`
 }
 
-function wishSnapshot(wish: WishRecord): XingyuanWishEventData['wish'] {
+function wishSnapshot(wish: WishProgressView | WishRecord): XingyuanWishEventData['wish'] {
   return {
     wishId: wish.wishId,
     title: wish.title,
@@ -119,6 +122,8 @@ function wishSnapshot(wish: WishRecord): XingyuanWishEventData['wish'] {
     totalRequiredDays: wish.totalRequiredDays,
     totalCompletedDays: wish.totalCompletedDays,
     createdAt: wish.createdAt,
+    // 新鲜视图携带待领取数/待收尾/计划中/达成派生位（删除定格等只有库存记录——optional 字段，回放如实降级）
+    ...('pendingCount' in wish ? { pendingCount: wish.pendingCount, settled: wish.settled, planning: wish.planning, achieved: wish.archived } : {}),
   }
 }
 
@@ -148,7 +153,7 @@ function taskSnapshot(store: XingyuanStore, task: TaskRecord): XingyuanTaskEvent
   }
 }
 
-function emitWish(agent: Agent | undefined, op: XingyuanWishEventData['op'], wish: WishRecord): void {
+function emitWish(agent: Agent | undefined, op: XingyuanWishEventData['op'], wish: WishProgressView | WishRecord): void {
   agent?.session.append('xingyuan/wish', { op, wish: wishSnapshot(wish) })
 }
 
@@ -194,6 +199,112 @@ function requireTask(store: XingyuanStore, taskId: string): TaskRecord {
 /** 任务所属愿望标题（卡片/回包共用；无关联或愿望已删返回 undefined）。 */
 function wishNameOf(store: XingyuanStore, task: TaskRecord): string | undefined {
   return task.wishId !== undefined ? store.domain.table('wishes').get(task.wishId)?.title : undefined
+}
+
+/**
+ * 愿望进度行的状态后缀（列表/搜索/最新共用，判定单一出处）：
+ * 达成 🎉 / 待收尾（满进度而有待领取任务，如实说收尾路径）/ 待领取数。
+ * 措辞面向用户转述：不用「候选/口径」等内部词，复用产品既有「待领取/收尾」语。
+ * settled/pendingCount 取 freshWishes 派生位（wishProgressFromAgg 唯一闸门），此处只转述。
+ */
+/**
+ * 收尾句固定句式（§5.2 用语规范）：单点定义，三处消费（列表行/翻转行/详情行）
+ * 不得再手抄——措辞漂移会静默破坏用语规范锁定。
+ */
+const SETTLE_PHRASE = '领了继续，或删掉就达成'
+
+function wishStatusNote(wish: WishProgressView): string {
+  if (wish.archived) return '，已达成 🎉'
+  // 计划中（无任何已领取任务，planning 位与愿望页/详情同一判定源）：防「进度 0%」被误读为受挫
+  if (wish.planning) return wish.pendingCount > 0 ? `，还没开始（计划中，${wish.pendingCount} 个任务待领取）` : '，还没有安排任务（计划中）'
+  if (wish.pendingCount <= 0) return ''
+  return wish.settled
+    ? `，答应自己的都做到了，还有 ${wish.pendingCount} 个任务待领取——${SETTLE_PHRASE}`
+    : `，另有 ${wish.pendingCount} 个任务待领取`
+}
+
+/** 任务级写入前的愿望新鲜视图（wishSettleNote 的对比基准；无关联返回 undefined）。 */
+function wishViewBefore(store: XingyuanStore, wishId: string | undefined): WishProgressView | undefined {
+  if (wishId === undefined) return undefined
+  const raw = store.domain.table('wishes').get(wishId)
+  return raw === undefined ? undefined : freshWish(store, raw)
+}
+
+/**
+ * 批量写入前的多愿望前视图（单遍 freshWishes 索引，禁逐条 freshWish 的 O(W×T) 扫描，
+ * 对齐批量读契约）：返回 wishId → 视图 的 Map，缺失（无关联/已删）不入表。
+ */
+function wishViewsBefore(store: XingyuanStore, wishIds: Iterable<string | undefined>): Map<string, WishProgressView> {
+  const wanted = new Set<string>()
+  for (const id of wishIds) if (id !== undefined) wanted.add(id)
+  if (wanted.size === 0) return new Map()
+  const out = new Map<string, WishProgressView>()
+  for (const view of freshWishes(store)) {
+    if (wanted.has(view.wishId)) out.set(view.wishId, view)
+  }
+  return out
+}
+
+/**
+ * 闸门比对纯函数（before/after 视图给谁用由调用方决定，翻转判定单一出处）：
+ * syncWishProgress 只刷新库存位，回包不注明则用户只见任务完结行、达成庆祝与
+ * 收尾指引断链（数据层翻转而回复层无感知）。翻转时补发 wish 事件——卡面与回包、
+ * 愿望页三方对不上即歧义。非翻转但待领取数变化同样补发（不产文案）：待收尾行上的
+ * 「N 个任务待领取」是卡面的一部分，增删任务后不补发则页面计数已动、卡定格旧数。
+ */
+function compareWishSettle(agent: Agent | undefined, before: WishProgressView | undefined, after: WishProgressView | undefined): string {
+  if (after === undefined) return ''
+  // 各行以句号收尾（emoji 置于行首）：单任务回包常在 note 后续接成长行/提示句，
+  // 无终止符会粘连成「🎉成长：」式病句；批量场景逐行拼接同样依赖行自带句读
+  if (after.archived && before?.archived !== true) {
+    emitWish(agent, 'updated', after)
+    // 达成路径有二（承诺全部完成 / 分母收缩后完成率追平），措辞不锁死单一原因
+    return `🎉 愿望「${after.title}」已达成——全部完成，没有待领取的任务了。`
+  }
+  if (after.settled && before?.settled !== true) {
+    emitWish(agent, 'updated', after)
+    // 收尾句照抄即可转述：「不得代做」的约束在提示词与 claim 描述里承担，
+    // 不混进这段面向用户的行（终审 S1——回包是逐字转述面，第三人称祈使句会漏到用户耳朵里）
+    return `愿望「${after.title}」就差最后一步——答应自己的都做到了，但还有 ${after.pendingCount} 个任务待领取。${SETTLE_PHRASE}。`
+  }
+  if ((before?.archived === true || before?.settled === true) && !after.archived && !after.settled) {
+    // 回退出达成闸门（撤销打卡/延长截止日扩大分母/领取候选使完成率跌破 100%）：
+    // 补发事件让愿望卡摘掉「已达成/待结算」定格，回包与卡面、愿望页三方同源
+    emitWish(agent, 'updated', after)
+    return `愿望「${after.title}」已${before!.archived ? '取消达成' : '退出待收尾'}，回到进行中（进度 ${after.progress}%）。`
+  }
+  if (before !== undefined && after.pendingCount !== before.pendingCount) {
+    // 计数漂移（如向待收尾愿望再追加一个待领取任务）：文案不产、事件必发，卡随页面同源
+    emitWish(agent, 'updated', after)
+  }
+  return ''
+}
+
+/** 单任务写入后的闸门联动（O(T) 一遍任务表，单条场景即最优；批量走 wishSettleNotes 单遍索引）。 */
+function wishSettleNote(store: XingyuanStore, agent: Agent | undefined, wishId: string | undefined, before: WishProgressView | undefined): string {
+  if (wishId === undefined) return ''
+  const raw = store.domain.table('wishes').get(wishId)
+  if (raw === undefined) return ''
+  return compareWishSettle(agent, before, freshWish(store, raw))
+}
+
+/**
+ * 批量写入后的多愿望闸门比对（单遍 freshWishes 后视图，对齐批量读契约）：
+ * 前视图来自 wishViewsBefore、后视图此处在写入完成后取一遍，逐愿望过比对——
+ * 曾按愿望逐条 freshWish（O(W×T) 全表重扫，违批量读契约字面，终审 S3）。
+ */
+function wishSettleNotes(store: XingyuanStore, agent: Agent | undefined, beforeMap: Map<string, WishProgressView>): string[] {
+  if (beforeMap.size === 0) return []
+  const wanted = new Set(beforeMap.keys())
+  const afterMap = new Map<string, WishProgressView>()
+  for (const view of freshWishes(store)) {
+    if (wanted.has(view.wishId)) afterMap.set(view.wishId, view)
+  }
+  const notes: string[] = []
+  for (const [wishId, before] of beforeMap) {
+    notes.push(compareWishSettle(agent, before, afterMap.get(wishId)))
+  }
+  return notes.filter((note) => note !== '')
 }
 
 /**
@@ -320,7 +431,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
           failed.push(`${item.name}：${error instanceof Error ? error.message : '未知原因'}`)
         }
       }
-      const finalWish = store.domain.table('wishes').get(wish.wishId)!
+      const finalWish = freshWish(store, store.domain.table('wishes').get(wish.wishId)!)
       emitWish(exec.agent, 'created', finalWish)
       for (const task of created) emitTask(store, exec.agent, 'created', task)
       const lines = created.map((task, index) => `${index + 1}. ${taskLine(task)}`).join('\n')
@@ -352,7 +463,9 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         if (!approved) return '已取消创建。可以告诉我要调整的地方，我修改后再确认。'
       }
       const wish = await createWish(store, args, today)
-      emitWish(exec.agent, 'created', wish)
+      // 裸愿望 = 计划中三态——必须发新鲜视图（freshWish），否则卡丢派生位降级成
+      // 「进度 0%」与愿望页「计划中」自相矛盾（create_wish_with_tasks 同口径）
+      emitWish(exec.agent, 'created', freshWish(store, wish))
       return `已创建愿望「${wish.title}」（分类：${wish.categoryName}）。`
     },
   }))
@@ -367,7 +480,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       // 批量读契约：freshWishes 单遍任务索引，禁逐条 freshWish 的 O(W×T) 扫描
       const wishes = freshWishes(store)
       if (wishes.length === 0) return '暂无愿望。可以告诉我你的第一个愿望，我来帮你拆解执行计划。'
-      return `共 ${wishes.length} 个愿望：\n${wishes.map((w) => `- [${w.wishId}] 「${w.title}」(${w.categoryName})，进度 ${w.progress}%${w.archived ? '，已达成 🎉' : ''}`).join('\n')}`
+      return `共 ${wishes.length} 个愿望：\n${wishes.map((w) => `- [${w.wishId}] 「${w.title}」(${w.categoryName})，进度 ${w.progress}%${wishStatusNote(w)}`).join('\n')}`
     },
   }))
 
@@ -392,7 +505,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       }
       const fresh = freshWishes(store, hits)
       if (fresh.length === 0) return '没有符合条件的愿望。'
-      return `找到 ${fresh.length} 个愿望：\n${fresh.map((w) => `- [${w.wishId}] 「${w.title}」(${w.categoryName})，进度 ${w.progress}%`).join('\n')}\n后续工具调用必须使用方括号内的真实 ID；向用户回复时只转述愿望内容，不要展示 ID。`
+      return `找到 ${fresh.length} 个愿望：\n${fresh.map((w) => `- [${w.wishId}] 「${w.title}」(${w.categoryName})，进度 ${w.progress}%${wishStatusNote(w)}`).join('\n')}\n后续工具调用必须使用方括号内的真实 ID；向用户回复时只转述愿望内容，不要展示 ID。`
     },
   }))
 
@@ -434,7 +547,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       }
       if (latest === undefined) return '当前暂无愿望。'
       const fresh = freshWishes(store, [latest])[0]!
-      return `[${fresh.wishId}] 「${fresh.title}」(${fresh.categoryName})，进度 ${fresh.progress}%${fresh.archived ? '，已达成 🎉' : ''}`
+      return `[${fresh.wishId}] 「${fresh.title}」(${fresh.categoryName})，进度 ${fresh.progress}%${wishStatusNote(fresh)}`
     },
   }))
 
@@ -446,15 +559,26 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     isConcurrencySafe: () => true,
     async execute(args) {
       const wish = requireWish(store, args.wishId)
-      const detail = freshWishes(store, [wish])[0]!
-      const counts = checkinCountIndex(store)
-      const tasks: TaskRecord[] = []
-      for (const [, task] of store.domain.table('tasks').entries()) {
-        if (task.wishId === args.wishId) tasks.push(freshTask(store, task, todayIso(), counts))
-      }
+      // 单遍任务索引一次新鲜化愿望 + 下属任务（禁逐条 freshTask 全表扫描，批量读契约）
+      const index = freshWishesWithTasks(store, [wish])
+      const detail = index.wishes[0]!
+      const tasks = index.tasksByWish.get(args.wishId) ?? []
       const desc = detail.description !== undefined ? `\n描述：${detail.description}` : ''
       const due = detail.estimatedCompletionDate !== undefined ? `，预计完成 ${detail.estimatedCompletionDate}` : ''
-      const head = `[${detail.wishId}] 「${detail.title}」(${detail.categoryName})，进度 ${detail.progress}%（已完成 ${detail.totalCompletedDays}/${detail.totalRequiredDays > 0 ? detail.totalRequiredDays : '不限'} 天）${due}${desc}`
+      // 进度行三分支：可度量（required>0）报百分比+分数；planning 报规范状态词「计划中」；
+      // 已领取但全为无截止日任务（claimed>0 且 required=0）→ 与页面一致报「进度 X%」但用文字说明
+      // 「无应打天数」，绝不得渲染「0/0 天」（终审 P1 回归锁；progress 恒 0 属 §11 无出口口径）
+      const measurable = detail.totalRequiredDays > 0
+      const progressText = measurable
+        ? `进度 ${detail.progress}%（已完成 ${detail.totalCompletedDays}/${detail.totalRequiredDays} 天，只算已领取任务）`
+        : detail.planning
+          ? `计划中${detail.pendingCount > 0 ? `（还没开始，${detail.pendingCount} 个任务待领取，在任务页「待领取」组）` : '（还没有安排任务，可让我推荐）'}`
+          : `进度 ${detail.progress}%（已领取的任务均无截止日，按不限次数打卡）`
+      // 待领取提示（不算进进度；满进度而有待领取 = 待收尾，引导用户决定）
+      const pendingNote = measurable && detail.pendingCount > 0
+        ? `；另有 ${detail.pendingCount} 个任务待领取（不算进进度${detail.settled ? `；已完成的都做到了，${SETTLE_PHRASE}` : ''}）`
+        : ''
+      const head = `[${detail.wishId}] 「${detail.title}」(${detail.categoryName})，${progressText}${due}${desc}${pendingNote}`
       if (tasks.length === 0) return `${head}\n暂无下属任务。`
       return `${head}\n下属任务 ${tasks.length} 个：\n${tasks.map((t) => `- [${t.taskId}] ${taskLine(t)}，${statusLabel(t.status)}（${t.completedDays}/${t.requiredDays > 0 ? t.requiredDays : '不限'}）`).join('\n')}`
     },
@@ -483,7 +607,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         colorKey: args.colorKey,
         estimatedCompletionDate: args.estimatedCompletionDate,
       })
-      emitWish(exec.agent, 'updated', updated)
+      emitWish(exec.agent, 'updated', freshWish(store, updated))
       return `已更新愿望「${updated.title}」。`
     },
   }))
@@ -499,7 +623,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     async execute(args, exec) {
       const renamed = await renameCategory(store, args.oldName, args.newName)
       if (renamed.length === 0) throw new ToolError(`分类「${args.oldName}」不存在`)
-      for (const wish of renamed) emitWish(exec.agent, 'updated', wish)
+      for (const view of freshWishes(store, renamed)) emitWish(exec.agent, 'updated', view)
       return `已将 ${renamed.length} 个愿望的分类从「${args.oldName}」改为「${args.newName}」。`
     },
   }))
@@ -587,7 +711,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
   ctx.tools.register(defineTool({
     name: 'create_task',
     description: '创建单个任务。何时使用：用户明确要求创建一个具体任务时使用。依赖关系：创建前必须先调用check_similar_tasks查重，确认无相似项后才可创建。'
-      + '周期口径：weekly/monthly 的机会日从领取日起算（每 7 天/逐自然月推进），不绑定自然周星期几；用户要求固定星期几打卡时如实说明，不要默认能满足。'
+      + '周期规则：weekly/monthly 的机会日从领取日起算（每 7 天/逐自然月推进），不绑定自然周星期几；用户要求固定星期几打卡时如实说明，不要默认能满足。'
       + `输出：创建成功返回任务信息（任务ID、名称、截止日期、打卡周期）；不指定wish_id时任务不关联任何愿望。${CREATE_NOTE}`,
     parameters: {
       wishId: { type: 'string', description: '关联愿望ID，可选。取列表返回的真实值' },
@@ -606,6 +730,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         ))
         if (!approved) return '已取消创建。可以告诉我要调整的地方，我修改后再确认。'
       }
+      // 向已达成愿望追加候选会令其退档（闸门重算），回包必须触达（三方同源）
+      const wishBefore = wishViewBefore(store, args.wishId)
       const task = await createTask(store, {
         wishId: args.wishId,
         name: args.name,
@@ -616,7 +742,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       })
       emitTask(store, exec.agent, 'created', task)
       const preview = taskPreview(store, task)
-      return `已创建任务「${task.name}」（${cycleLabel(task.checkInCycle)}${task.dueDate !== undefined ? `，截止 ${task.dueDate}` : ''}），应打卡 ${task.requiredDays > 0 ? `${task.requiredDays} 天` : '不限'}，当前待领取。${preview.length > 0 ? `近期打卡日：${preview.join('、')}。` : ''}`
+      const settle = wishSettleNote(store, exec.agent, task.wishId, wishBefore)
+      return `已创建任务「${task.name}」（${cycleLabel(task.checkInCycle)}${task.dueDate !== undefined ? `，截止 ${task.dueDate}` : ''}），应打卡 ${task.requiredDays > 0 ? `${task.requiredDays} 天` : '不限'}，当前待领取。${settle}${preview.length > 0 ? `近期打卡日：${preview.join('、')}。` : ''}`
     },
   }))
 
@@ -656,6 +783,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       }
       const created: TaskRecord[] = []
       const failed: string[] = []
+      // 预捕获受影响愿望的创建前视图（单遍索引去重）；追加候选可能令已达成愿望退档
+      const wishBefore = wishViewsBefore(store, args.tasks.map((item) => item.wishId))
       for (const item of args.tasks) {
         try {
           created.push(await createTask(store, { ...item, source: 'ai' }))
@@ -666,8 +795,9 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       // 愿望库存进度由 createTask 内部联动落库（读侧 fresh 兜底，但
       // overview/开场上下文消费的是库存 archived 原值，不回写会短暂失真）
       for (const task of created) emitTask(store, exec.agent, 'created', task)
+      const settles = wishSettleNotes(store, exec.agent, wishBefore)
       const lines = created.map((task, index) => `${index + 1}. ${taskLine(task)}`).join('\n')
-      return `已创建 ${created.length} 个任务：\n${lines}${failed.length > 0 ? `\n失败：${failed.join('；')}` : ''}`
+      return `已创建 ${created.length} 个任务：\n${lines}${failed.length > 0 ? `\n失败：${failed.join('；')}` : ''}${settles.length > 0 ? `\n${settles.join('\n')}` : ''}`
     },
   }))
 
@@ -698,14 +828,30 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
 
   ctx.tools.register(defineTool({
     name: 'claim_task',
-    description: '领取任务。何时使用：用户明确要求领取时，将待领取(pending)状态的任务改为进行中。注意：仅在用户明确要求时调用，不得主动领取。依赖关系：任务状态必须为 pending 才能领取；领取日成为机会日锚点。截止日已过的待领取任务无法领取，须先 update_task 延长截止日再领取。',
+    description: '领取任务。何时使用：用户明确要求领取时，将待领取(pending)状态的任务改为进行中。注意：仅在用户明确要求时调用，不得主动领取。依赖关系：任务状态必须为 pending 才能领取；领取日成为机会日锚点，领取后该任务的应打天数计入所属愿望进度（愿望进度只统计已领取任务，待领取的不算进进度但会拦住达成）。向用户转述时说「待领取的任务」，不要说「候选」。截止日已过的待领取任务无法领取，须先 update_task 延长截止日再领取。',
     parameters: { taskId: { type: 'string', required: true, description: '任务ID，取列表返回的真实值' } },
     output: TEXT_OUTPUT,
     async execute(args, exec) {
+      const preTask = requireTask(store, args.taskId)
+      const wishBefore = wishViewBefore(store, preTask.wishId)
+
       const task = await claimTask(store, args.taskId)
       emitTask(store, exec.agent, 'updated', task)
       const preview = taskPreview(store, task)
-      return `已领取任务「${task.name}」，进入进行中。${preview.length > 0 ? `近期打卡日：${preview.join('、')}。` : ''}`
+      const wishTitle = wishNameOf(store, task)
+      const wishPart = wishTitle !== undefined ? `愿望「${wishTitle}」` : '愿望'
+
+      // 领取候选可能触发闸门翻转（requiredDays>0 扩大分母致进度回落 / 0 天任务不扩分母但清候选）
+      const settle = wishSettleNote(store, exec.agent, task.wishId, wishBefore)
+
+      // 进度归属如实说明：独立任务（无所属愿望）不进任何愿望——首分支曾漏 wishId 守卫，
+      // 对带截止日的独立任务谎报「已计入愿望进度」（终审 B2）；无截止日任务 requiredDays=0 同理须说明
+      const scope = task.wishId === undefined
+        ? ''
+        : task.requiredDays > 0
+          ? `新增承诺 ${task.requiredDays} 天应打，已计入${wishPart}进度。`
+          : `该任务不限应打天数，不计入${wishPart}进度。`
+      return `已领取任务「${task.name}」，进入进行中。${settle}${scope}${preview.length > 0 ? `近期打卡日：${preview.join('、')}。` : ''}`
     },
   }))
 
@@ -724,6 +870,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     output: TEXT_OUTPUT,
     async execute(args, exec) {
       const before = requireTask(store, args.taskId)
+      const wishBefore = wishViewBefore(store, before.wishId)
 
       const after = await updateTask(store, args.taskId, {
         name: args.name,
@@ -739,7 +886,9 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         args.checkInCycle !== undefined ? `周期 → ${cycleLabel(after.checkInCycle)}（应打卡 ${after.requiredDays > 0 ? `${after.requiredDays} 天` : '不限'}）` : undefined,
       ].filter((change) => change !== undefined)
       const restarted = before.status === 'closed' && after.status === 'in_progress'
-      return `已更新任务「${after.name}」：${changes.join('，')}${restarted ? '。任务已重新开始' : ''}。`
+      // 改截止日/周期会重算应打天数，可能翻转所属愿望的达成闸门（达成/待结算/回退）
+      const settle = wishSettleNote(store, exec.agent, after.wishId, wishBefore)
+      return `已更新任务「${after.name}」：${changes.join('，')}${restarted ? '。任务已重新开始' : ''}。${settle}`
     },
   }))
 
@@ -756,6 +905,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     timeoutMs: 600_000,
     async execute(args, exec) {
       const task = requireTask(store, args.taskId)
+      const wishBefore = wishViewBefore(store, task.wishId)
 
       const today = todayIso()
       const target = args.checkInDate
@@ -790,7 +940,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       const expTail = level.nextLevelExperience !== null
         ? `（距下一级还差 ${level.nextLevelExperience - level.totalExperience} 经验）`
         : '（已满级）'
-      return `已为「${result.task.name}」勾选 ${result.date} 的打卡 ✓（${result.task.completedDays}/${result.task.requiredDays > 0 ? result.task.requiredDays : '不限'} 天）。${achieved ? '🎉 任务达标完结！继续保持！' : ''}成长：Lv.${level.level} ${level.levelName}，累计经验 ${level.totalExperience}${expTail}。`
+      const settle = wishSettleNote(store, exec.agent, result.task.wishId, wishBefore)
+      return `已为「${result.task.name}」勾选 ${result.date} 的打卡 ✓（${result.task.completedDays}/${result.task.requiredDays > 0 ? result.task.requiredDays : '不限'} 天）。${achieved ? '🎉 任务达标完结！' : ''}${settle}成长：Lv.${level.level} ${level.levelName}，累计经验 ${level.totalExperience}${expTail}。`
     },
   }))
 
@@ -805,6 +956,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     timeoutMs: 600_000,
     async execute(args, exec) {
       const task = requireTask(store, args.taskId)
+      const wishBefore = wishViewBefore(store, task.wishId)
 
       if (confirmGate(config)) {
         const approved = await confirmAction(ctx, exec, args.checkInDate !== undefined
@@ -824,7 +976,9 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         completedDays: result.task.completedDays,
         requiredDays: result.task.requiredDays,
       })
-      return `已取消「${result.task.name}」在 ${result.date} 的打卡（当前 ${result.task.completedDays}/${result.task.requiredDays > 0 ? result.task.requiredDays : '不限'} 天）。`
+      // 撤销可能使已达成的愿望回退（达成闸门重算），如实告知模型以免继续按达成态回复
+      const settle = wishSettleNote(store, exec.agent, result.task.wishId, wishBefore)
+      return `已取消「${result.task.name}」在 ${result.date} 的打卡（当前 ${result.task.completedDays}/${result.task.requiredDays > 0 ? result.task.requiredDays : '不限'} 天）。${settle}`
     },
   }))
 
@@ -836,6 +990,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     timeoutMs: 600_000,
     async execute(args, exec) {
       const task = requireTask(store, args.taskId)
+      const wishBefore = wishViewBefore(store, task.wishId)
 
       const approved = await confirmAction(ctx, exec, bi(
         `确定删除任务「${task.name}」吗？其打卡记录与微行动拆解将一并删除，不可恢复。`,
@@ -844,7 +999,9 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       if (!approved) return '已取消删除。'
       await removeTaskCompletely(store, task.taskId)
       emitTask(store, exec.agent, 'deleted', task)
-      return `已删除任务「${task.name}」。如需重新添加，随时告诉我！`
+      // 删除最后一个候选 = 收尾路径落地：达成翻转必须回包注明并同步愿望卡（settleHint 引导的闭环）
+      const settle = wishSettleNote(store, exec.agent, task.wishId, wishBefore)
+      return `已删除任务「${task.name}」。${settle}如需重新添加，随时告诉我！`
     },
   }))
 
@@ -867,6 +1024,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       if (!approved) return '已取消删除。'
       let success = 0
       const failed: string[] = []
+      // 预捕获受影响愿望的写入前视图（单遍索引去重），删除后逐一比对达成闸门翻转
+      const wishBefore = wishViewsBefore(store, [...args.taskIds].map((id) => store.domain.table('tasks').get(id)?.wishId))
       for (const id of args.taskIds) {
         const task = store.domain.table('tasks').get(id)
         if (task === undefined) {
@@ -877,13 +1036,15 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         emitTask(store, exec.agent, 'deleted', task)
         success++
       }
-      return `批量删除完成：成功 ${success} 个${failed.length > 0 ? `，失败 ${failed.length} 个（不存在）` : ''}。`
+      const settles = wishSettleNotes(store, exec.agent, wishBefore)
+      // 收尾行与汇总句分行（批量场景每行自带句读，粘连成「…。🎉 愿望…」病句——与 batch_create 同构）
+      return `批量删除完成：成功 ${success} 个${failed.length > 0 ? `，失败 ${failed.length} 个（不存在）` : ''}。${settles.length > 0 ? `\n${settles.join('\n')}` : ''}`
     },
   }))
 
   ctx.tools.register(defineTool({
     name: 'get_today_unchecked_tasks',
-    description: '获取今日待打卡任务。何时使用：用户想查看今天需要完成但尚未打卡的任务时使用。口径：未领取（待领取状态）的任务不计入待打卡，但会单列提示可领取。',
+    description: '获取今日待打卡任务。何时使用：用户想查看今天需要完成但尚未打卡的任务时使用。规则：未领取（待领取状态）的任务不计入待打卡，但会单列提示可领取。',
     parameters: {},
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
@@ -935,7 +1096,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
 
   ctx.tools.register(defineTool({
     name: 'get_tasks_for_next_days',
-    description: '获取未来N天的任务安排。何时使用：查看近期任务计划时使用。口径：计划口径——未领取任务单列「未领取」计数并在行内标注（未领取），不计入待打卡数。限制：默认7天，最多31天。',
+    description: '获取未来N天的任务安排。何时使用：查看近期任务计划时使用。规则：未领取任务单列「未领取」计数并在行内标注（未领取），不计入待打卡数。限制：默认7天，最多31天。',
     parameters: { days: { type: 'integer', description: '天数 1-31，默认7' } },
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
@@ -957,7 +1118,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
 
   ctx.tools.register(defineTool({
     name: 'get_tasks_for_date_range',
-    description: '获取日期范围内的任务安排。口径：计划口径——未领取任务单列「未领取」计数，不计入待打卡数。限制：最多31天（超出自动截断）。',
+    description: '获取日期范围内的任务安排。规则：未领取任务单列「未领取」计数，不计入待打卡数。限制：最多31天（超出自动截断）。',
     parameters: {
       startDate: { type: 'string', required: true, description: '开始日期 yyyy-MM-dd' },
       endDate: { type: 'string', required: true, description: '结束日期 yyyy-MM-dd，不早于开始日期' },
@@ -983,7 +1144,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
 
   ctx.tools.register(defineTool({
     name: 'get_recommended_tasks',
-    description: '获取推荐任务。何时使用：想基于历史打卡数据获取继续坚持的任务建议时使用。排序口径是固定的：进行中任务按历史打卡次数从多到少取前 5（并非智能挑选），向用户转述时如实说明。',
+    description: '获取推荐任务。何时使用：想基于历史打卡数据获取继续坚持的任务建议时使用。排序规则是固定的：进行中任务按历史打卡次数从多到少取前 5（并非智能挑选），向用户转述时如实说明。',
     parameters: {},
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,
@@ -1164,7 +1325,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
 
   ctx.tools.register(defineTool({
     name: 'generate_chart',
-    description: `【内部工具】生成统计图表。何时使用：用户询问打卡/任务/愿望的统计、趋势、分布、排行、进度等可视化数据时使用。chartKey 必须 15 选 1（对应图表展示指南选型速查表，禁止编造其他值）：${CHART_KEYS.join(' / ')}。用户未明确统计维度时优先 checkinTrend。口径提示：checkinTimeDistribution 按「实际打卡时刻」分桶；checkinRateTrend 副标题为整段整体率。输出：图表自动渲染为卡片；文字回复基于 subtitle 与数据概括结论与建议，不得只说「已生成图表」。禁止在回复中提及此工具。`,
+    description: `【内部工具】生成统计图表。何时使用：用户询问打卡/任务/愿望的统计、趋势、分布、排行、进度等可视化数据时使用。chartKey 必须 15 选 1（对应图表展示指南选型速查表，禁止编造其他值）：${CHART_KEYS.join(' / ')}。用户未明确统计维度时优先 checkinTrend。注意：checkinTimeDistribution 按「实际打卡时刻」分桶；checkinRateTrend 副标题为整段整体率。输出：图表自动渲染为卡片；文字回复基于 subtitle 与数据概括结论与建议，不得只说「已生成图表」。禁止在回复中提及此工具。`,
     parameters: {
       chartKey: { type: 'string', required: true, enum: CHART_KEYS, description: '图表类型标识，15选1，见图表展示指南速查表' },
       days: { type: 'integer', description: '天数，可选。仅趋势/分布类生效：趋势类默认14，分布类默认30，最大90' },
@@ -1222,6 +1383,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       return JSON.stringify({
         wishCount: wishes.length,
         taskCount: tasks.length,
+        // 进度语义声明（防模型误报）：progress 只算已领取任务；archived=已达成；settled=待收尾（满进度有待领取，不算达成）
+        wishProgressCaliber: 'progress 只算已领取的任务；archived=true 才是已达成；settled=true 表示待收尾（进度满但有待领取任务，勿报达成）',
         ...(wishesTruncated || tasksTruncated
           ? { truncated: true, truncatedHint: '数据量较大已截断，请基于已返回数据回答；如需细节请询问具体愿望/任务名称' }
           : {}),
@@ -1230,6 +1393,9 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
           title: w.title,
           categoryName: w.categoryName,
           progress: w.progress,
+          archived: w.archived,
+          settled: w.settled,
+          pendingCount: w.pendingCount,
           ...(w.estimatedCompletionDate !== undefined ? { estimatedCompletionDate: w.estimatedCompletionDate } : {}),
         })),
         tasks: tasks.slice(0, config.batchTaskLimit).map((t) => ({
@@ -1250,7 +1416,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
 
   ctx.tools.register(defineTool({
     name: 'get_growth_stats',
-    description: `获取用户成长统计。何时使用：用户询问等级、经验值、升级进度、连续打卡天数、累计打卡天数、愿望/任务达成数量等成长数据时调用。返回当前等级（Lv.1-10）、经验与下一级门槛、连续/最长连续（承诺账本口径：未来预勾计入累计与最长但不参与当前连续）。`,
+    description: `获取用户成长统计。何时使用：用户询问等级、经验值、升级进度、连续打卡天数、累计打卡天数、愿望/任务达成数量等成长数据时调用。返回当前等级（Lv.1-10）、经验与下一级门槛、连续/最长连续（规则：未来预勾计入累计与最长但不参与当前连续）。`,
     parameters: {},
     output: TEXT_OUTPUT,
     isConcurrencySafe: () => true,

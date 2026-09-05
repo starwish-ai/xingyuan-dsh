@@ -222,6 +222,26 @@ describe('growthSummary 聚合', () => {
     expect(summary.stats.totalExperience).toBe(20)
     expect(summary.level.level).toBe(1)
   })
+
+  it('满进度仍有待领取任务：不计入已达成（消费位取派生 archived——旧 progress>=100 谓词会误计）', async () => {
+    const store = memoryStore()
+    await store.domain.table('wishes').put('w-hold', {
+      wishId: 'w-hold', title: '差一步', categoryName: '学习', progress: 100,
+      totalRequiredDays: 1, totalCompletedDays: 1, archived: true, createdAt: '2026-01-01',
+    })
+    await store.domain.table('tasks').put('t-done', {
+      taskId: 't-done', wishId: 'w-hold', name: '已兑现', checkInCycle: 'once', source: 'user',
+      status: 'closed', requiredDays: 1, completedDays: 1, closedReason: 'achieved', claimDate: '2026-01-01', createdAt: '2026-01-01T00:00:00',
+    })
+    await store.domain.table('tasks').put('t-pending', {
+      taskId: 't-pending', wishId: 'w-hold', name: '还挂着', checkInCycle: 'once', source: 'ai',
+      status: 'pending', requiredDays: 1, completedDays: 0, createdAt: '2026-01-01T00:00:00',
+    })
+    const summary = growthSummary(store, '2026-01-06')
+    expect(summary.totalWishes).toBe(1)
+    // freshWishes 派生 archived=false（进度满但有待领取 = 待收尾），达成计数必须为 0
+    expect(summary.completedWishes).toBe(0)
+  })
 })
 
 describe('等级词表对拍（客户端 i18n ↔ 服务端权威源）', () => {

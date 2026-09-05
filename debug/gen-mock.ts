@@ -171,19 +171,21 @@ const todaySection = `
   </section>
 </div>`
 
-/** 愿望页（镜像 wishes.ts）：卡头删除为图标幽灵危险键 + 卡内展开详情 + 任务行（无冗余状态词）。 */
+/** 愿望页（镜像 wishes.ts）：卡头删除为图标幽灵危险键 + 卡内展开详情 + 任务行（无冗余状态词）；
+ * 进度三态——计划中 / 进行中（待领取单列计数）/ 待收尾（满进度有待领取，附收尾指引行）；
+ * 页头摘要三态各计各的（待收尾不混入「进行中」，与卡片称呼统一）。 **/
 const wishSection = `
 <div class="xy-page">
   <div class="xy-page-head">
     <h2 class="xy-page-title">我的愿望</h2>
-    <span class="xy-meta">1 个进行中</span>
+    <span class="xy-meta">1 个进行中 · 1 个计划中 · 1 个待收尾</span>
     <div class="xy-page-actions"><button class="xy-btn" type="button">＋ 新建愿望</button><button class="xy-btn" type="button">分类管理</button></div>
   </div>
   <div class="xy-wishcard">
     <div class="xy-card-head">
       <span class="xy-badge xy-badge-cat" style="--cat-h:220;--cat-sbg:58;--cat-sfg:46;--cat-sbd:46">学习</span>
       <span class="xy-title">AI token 自由</span>
-      <span class="xy-progress-num">进度 15%</span>
+      <span class="xy-progress-num">进度 15%<span class="xy-meta"> · 1 个任务待领取</span></span>
       <button class="xy-btn xy-btn-danger xy-btn-icon" type="button" aria-label="删除 · AI token 自由" title="删除">${ICON_TRASH}</button>
     </div>
     <div class="xy-meta">拥有属于自己的 AI 接口额度与调用能力，想用就用，不受平台和次数限制。</div>
@@ -193,6 +195,34 @@ const wishSection = `
 ${taskLine('每周复盘token用量并优化调用方式', '每周 · 5/9 天 · 下次 9月28日 · 截止 10月19日', '<button class="xy-btn xy-btn-primary" type="button">提前打卡 9月28日</button><button class="xy-btn xy-btn-inline" type="button" aria-expanded="true">收起详情</button>')}
 ${detailOps("mock-detail-wish")}
 ${taskLine('每天动手练习调用AI接口30分钟', '每天 · 1/31 天 · 截止 9月23日', '<button class="xy-btn xy-btn-primary" type="button">✓ 打卡</button><button class="xy-btn xy-btn-inline" type="button" aria-expanded="false">展开详情</button>')}
+${taskLine('每周读一篇 Agent 领域论文', '每周 · 领取后开始计 8 次', '<button class="xy-btn" type="button">领取</button><button class="xy-btn xy-btn-inline" type="button" aria-expanded="false">展开详情</button>')}
+    </div>
+  </div>
+  <div class="xy-wishcard">
+    <div class="xy-card-head">
+      <span class="xy-badge xy-badge-cat" style="--cat-h:150;--cat-sbg:52;--cat-sfg:40;--cat-sbd:44">健康</span>
+      <span class="xy-title">规律作息</span>
+      <span class="xy-progress-num">进度 100%<span class="xy-meta"> · 2 个任务待领取</span></span>
+      <button class="xy-btn xy-btn-danger xy-btn-icon" type="button" aria-label="删除 · 规律作息" title="删除">${ICON_TRASH}</button>
+    </div>
+    <div class="xy-bar"><div class="xy-bar-fill" style="transform:scaleX(1)"></div></div>
+    <div class="xy-meta">答应自己的都做完了——待领取的领了继续，或删掉就达成</div>
+    <div class="xy-wishtasks">
+${taskLine('每天 23 点前上床', '每天 · 21/21 天 · 已达成', '<button class="xy-btn xy-btn-inline" type="button" aria-expanded="false">展开详情</button>')}
+${taskLine('睡前不碰手机', '每天 · 领取后开始计 14 天', '<button class="xy-btn" type="button">领取</button>')}
+    </div>
+  </div>
+  <div class="xy-wishcard">
+    <div class="xy-card-head">
+      <span class="xy-badge xy-badge-cat" style="--cat-h:280;--cat-sbg:56;--cat-sfg:44;--cat-sbd:45">生活</span>
+      <span class="xy-title">整理书房</span>
+      <span class="xy-progress-num">计划中<span class="xy-meta"> · 2 个任务待领取</span></span>
+      <button class="xy-btn xy-btn-danger xy-btn-icon" type="button" aria-label="删除 · 整理书房" title="删除">${ICON_TRASH}</button>
+    </div>
+    <div class="xy-bar"><div class="xy-bar-fill" style="transform:scaleX(0)"></div></div>
+    <div class="xy-wishtasks">
+${taskLine('每天清一张桌面', '每天 · 领取后开始计 7 天', '<button class="xy-btn" type="button">领取</button><button class="xy-btn xy-btn-inline" type="button" aria-expanded="false">展开详情</button>')}
+${taskLine('周末集中断舍离一次', '每周 · 领取后开始计 4 次', '<button class="xy-btn" type="button">领取</button>')}
     </div>
   </div>
 </div>`

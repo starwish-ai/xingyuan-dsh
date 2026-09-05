@@ -39,8 +39,12 @@ export function WishesPage(): ReactElement {
   const data = page.data
   if (data === undefined) return createElement(PageSkeleton)
 
-  const active = data.wishes.filter((w) => !w.archived)
+  // 页头四态计数：进行中/计划中/待收尾/已达成各计各的，与卡头徽章同一称呼
+  // （消灭「摘要算进行中、卡上写计划中」的并见歧义）；全部取服务端派生位，展示层不重建谓词
   const achieved = data.wishes.filter((w) => w.archived)
+  const settledCount = data.wishes.filter((w) => w.settled).length
+  const planningCount = data.wishes.filter((w) => !w.archived && w.planning).length
+  const active = data.wishes.filter((w) => !w.archived)
 
   /** 删除愿望（级联下属任务与打卡记录，服务端同一写路径）：确认后直连动作并整页刷新。
    * 行移除后触发按钮销毁、焦点落空——刷新完成后把焦点交给页面标题兜底。 */
@@ -73,20 +77,25 @@ export function WishesPage(): ReactElement {
         : [line]
     })
 
-  const card = (wish: ApiWish): ReactElement =>
-    createElement('div', { key: wish.wishId, className: 'xy-wishcard' },
+  const card = (wish: ApiWish): ReactElement => {
+    // 承诺口径（§5.2 规则 7）：进度分母只计已领取任务。展示三态：
+    // 计划中（无已领取任务）/ 进行中（正常百分比）/ 待结算（满进度而有候选——不归档，附收尾指引）。
+    // settled/pendingCount/planning 直取服务端 wishProgressFromAgg 派生位（随 /api/wishes 下发），
+    // 展示层禁止重建 `progress>=100 && 有候选` 闸门或 planning 谓词（单一判定源，防与工具回包分叉）
+    const { pendingCount, settled, planning } = wish
+    const progressLabel = planning ? t('wish.planning') : t('wish.progress', { percent: wish.progress })
+    const pendingMeta = pendingCount > 0 ? ` · ${t('wish.pendingCount', { n: pendingCount })}` : ''
+    return createElement('div', { key: wish.wishId, className: 'xy-wishcard' },
       createElement('div', { className: 'xy-card-head' },
         createElement('span', {
           className: 'xy-badge xy-badge-cat',
           style: categoryVars(wish.colorKey, wish.categoryName),
         }, wish.categoryName),
         createElement('span', { className: 'xy-title' }, wish.title),
-        // 长期尺度 = 计划口径（分母含未领取任务的应打天数，§5.2 规则 7）：愿望含未领取
-        // 任务时必须呈现「含未领取任务」标注，避免把计划分母误读为承诺分母
         createElement('span', { className: 'xy-progress-num' },
-          t('wish.progress', { percent: wish.progress }),
-          wish.tasks.some((task) => task.status === 'pending')
-            ? createElement('span', { className: 'xy-meta' }, ` · ${t('wish.progressHasPending')}`)
+          progressLabel,
+          pendingCount > 0
+            ? createElement('span', { className: 'xy-meta' }, pendingMeta)
             : null),
         createElement('button', {
           className: 'xy-btn xy-btn-danger xy-btn-icon',
@@ -106,13 +115,14 @@ export function WishesPage(): ReactElement {
         'aria-valuemin': 0,
         'aria-valuemax': 100,
         'aria-valuenow': wish.progress,
-        'aria-label': t('wish.progress', { percent: wish.progress })
-          + (wish.tasks.some((task) => task.status === 'pending') ? ` · ${t('wish.progressHasPending')}` : ''),
+        'aria-label': progressLabel + pendingMeta,
       },
         createElement('div', { className: 'xy-bar-fill', style: { transform: `scaleX(${Math.min(wish.progress, 100) / 100})` } })),
+      settled ? createElement('div', { className: 'xy-meta' }, t('wish.settleHint')) : null,
       wish.tasks.length > 0
         ? createElement('div', { className: 'xy-wishtasks' }, ...wishTasks(wish))
         : createElement('div', { className: 'xy-meta' }, t('wish.noTasks')))
+  }
 
   return createElement('div', { className: 'xy-page', ref: stabilize },
     page.error !== undefined ? createElement(StaleBanner, { onRetry: () => void page.reload() }) : null,
@@ -120,7 +130,10 @@ export function WishesPage(): ReactElement {
     createElement('div', { className: 'xy-page-head' },
       createElement('h2', { className: 'xy-page-title' }, t('wish.pageTitle')),
       createElement('span', { className: 'xy-meta' }, t('wish.summary', {
-        active: active.length,
+        // 四态计数各计各的（进行中扣除计划中与待收尾，不相套）；列表渲染仍归未完成组（未完成≠进行中计数）
+        active: active.length - settledCount - planningCount,
+        planning: planningCount > 0 ? t('wish.planningSuffix', { n: planningCount }) : '',
+        settled: settledCount > 0 ? t('wish.settledSuffix', { n: settledCount }) : '',
         achieved: achieved.length > 0 ? t('wish.achievedSuffix', { n: achieved.length }) : '',
       })),
       // 动作组整体右置（单一 margin-left:auto），避免多按钮各自 auto margin 平分剩余空间

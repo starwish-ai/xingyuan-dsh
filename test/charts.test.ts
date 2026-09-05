@@ -43,6 +43,29 @@ describe('图表读侧新鲜化', () => {
     expect(achievement?.subtitle).toBe('1/1')
   })
 
+  it('满进度有待领取任务：wishProgress 仍上榜（100%）、wishAchievement 不计达成（候选拦达成·消费侧锁）', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    void store.domain.table('wishes').put('w-hold', {
+      wishId: 'w-hold', title: '差一步', categoryName: '学习',
+      progress: 100, totalRequiredDays: 1, totalCompletedDays: 1, archived: true, createdAt: `${addDays(today, -2)}T00:00:00`,
+    } as never)
+    await store.domain.table('tasks').put('t-done', {
+      taskId: 't-done', wishId: 'w-hold', name: '已兑现', checkInCycle: 'once', source: 'user',
+      status: 'closed', requiredDays: 1, completedDays: 1, closedReason: 'achieved', claimDate: addDays(today, -2), dueDate: addDays(today, -1), createdAt: `${addDays(today, -2)}T00:00:00`,
+    } as never)
+    await store.domain.table('tasks').put('t-pending', {
+      taskId: 't-pending', wishId: 'w-hold', name: '还挂着', checkInCycle: 'once', source: 'ai',
+      status: 'pending', requiredDays: 1, completedDays: 0, dueDate: addDays(today, 5), createdAt: `${addDays(today, -2)}T00:00:00`,
+    } as never)
+    // 旧 `progress < 100` 排行谓词会把满进度愿望剔掉——派生 archived=false（有待领取）必须在榜且显示 100%
+    const progress = buildChart('wishProgress', {}, store, CONFIG)
+    expect(progress?.data.map((d) => d.value)).toEqual([100])
+    // 旧 `progress >= 100` 达成谓词会误报 1/1——候选拦达成后应为 0/1
+    const achievement = buildChart('wishAchievement', {}, store, CONFIG)
+    expect(achievement?.subtitle).toBe('0/1')
+  })
+
   it('checkinCalendar 未指定月仅返回最近一年内的打卡日', () => {
     const store = memoryStore()
     const today = todayIso()
@@ -111,18 +134,20 @@ describe('统计窗与无安排日口径', () => {
     expect(spec!.data.reduce((acc, d) => acc + d.value, 0)).toBe(1)
   })
 
-  it('taskCompletionRate：分母含未领取任务时副标题注明口径，领取后恢复朴素文案', async () => {
+  it('taskCompletionRate：分母只计已领取任务（承诺口径），全候选时不出图', async () => {
     const store = memoryStore()
     void store.domain.table('wishes').put('w', {
       wishId: 'w', title: '愿望w', categoryName: '学习',
       progress: 0, totalRequiredDays: 0, totalCompletedDays: 0, archived: false, createdAt: `${todayIso()}T00:00:00`,
     } as never)
-    const task = await createTask(store, { name: '未领取', wishId: 'w', checkInCycle: 'daily', dueDate: addDays(todayIso(), 5) }, todayIso())
-    const pendingSpec = buildChart('taskCompletionRate', {}, store, CONFIG)
-    expect(pendingSpec?.subtitle).toContain('含未领取')
-    await claimTask(store, task.taskId, todayIso())
-    const claimedSpec = buildChart('taskCompletionRate', {}, store, CONFIG)
-    expect(claimedSpec?.subtitle).not.toContain('含未领取')
+    await createTask(store, { name: '未领取', wishId: 'w', checkInCycle: 'daily', dueDate: addDays(todayIso(), 5) }, todayIso())
+    // 全候选：无已领取应打天数 → 不出图（不产误导性的 0/0）
+    expect(buildChart('taskCompletionRate', {}, store, CONFIG)).toBeUndefined()
+    const claimed = await createTask(store, { name: '已领取', wishId: 'w', checkInCycle: 'daily', dueDate: addDays(todayIso(), 5) }, todayIso())
+    await claimTask(store, claimed.taskId, todayIso())
+    const spec = buildChart('taskCompletionRate', {}, store, CONFIG)
+    // 分母 = 已领取任务应打天数；候选的 6 天不计入，副标题恒标注口径
+    expect(spec?.subtitle).toBe(`0/${claimed.requiredDays} 天（已领取任务）`)
   })
 })
 

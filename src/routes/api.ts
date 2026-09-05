@@ -346,6 +346,10 @@ function wishes(deps: ApiDeps): Record<string, unknown> {
       description: w.description,
       progress: w.progress,
       archived: w.archived,
+      // 待结算/候选/计划中计数由 wishProgressFromAgg 单一公式族派生（freshWishes 视图字段），展示层禁止重建谓词
+      settled: w.settled,
+      pendingCount: w.pendingCount,
+      planning: w.planning,
       estimatedCompletionDate: w.estimatedCompletionDate,
       totalRequiredDays: w.totalRequiredDays,
       totalCompletedDays: w.totalCompletedDays,

@@ -320,7 +320,7 @@ describe('愿望收口：createWish/updateWish 校验同源', () => {
     await expect(updateWish(store, 'no-such-wish', { title: '任意' }, '2026-08-02')).rejects.toMatchObject({ code: 'not_found' })
   })
 
-  it('createTask 内置进度联动；删除任务后回写归零（收口后调用方无需手抄）', async () => {
+  it('createTask 候选不进进度分母，领取后计入；删除回写归零（收口后调用方无需手抄）', async () => {
     const store = memoryStore()
     const wishId = 'w-auto'
     await store.domain.table('wishes').put(wishId, {
@@ -330,7 +330,11 @@ describe('愿望收口：createWish/updateWish 校验同源', () => {
     const task = await createTask(store, { wishId, name: '练琴', checkInCycle: 'daily', dueDate: '2026-08-10' }, '2026-08-05')
     // createTask 返回前已完成联动（此前需调用方各自 sync）：应打 08-05..08-10 共 6 天
     expect(task.requiredDays).toBe(6)
+    // 承诺口径（§5.2 规则 7）：候选任务不进愿望进度分母，领取才计入
     let stored = store.domain.table('wishes').get(wishId)!
+    expect(stored.totalRequiredDays).toBe(0)
+    await claimTask(store, task.taskId, '2026-08-05')
+    stored = store.domain.table('wishes').get(wishId)!
     expect(stored.totalRequiredDays).toBe(6)
     expect(await removeTaskCompletely(store, 'no-such-task')).toBeUndefined()
     await removeTaskCompletely(store, task.taskId)

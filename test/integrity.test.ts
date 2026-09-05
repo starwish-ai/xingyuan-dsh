@@ -151,6 +151,47 @@ describe('愿望进度 floor 口径（提前归档回归）', () => {
   })
 })
 
+describe('愿望达成谓词（承诺口径：候选不进分母，但拦达成）', () => {
+  it('满进度而有候选 = 待结算：不归档；候选删除（收尾）后达成', async () => {
+    const store = memoryStore()
+    putWish(store, 'w')
+    putTask(store, 't-done', { wishId: 'w', requiredDays: 2, completedDays: 2, status: 'closed', closedReason: 'achieved' })
+    putTask(store, 't-pending', { wishId: 'w', status: 'pending', requiredDays: 5, completedDays: 0 })
+    const settled = freshWish(store, store.domain.table('wishes').get('w')!)
+    expect(settled.progress).toBe(100) // 候选的 5 天不进分母
+    expect(settled.totalRequiredDays).toBe(2)
+    expect(settled.totalCompletedDays).toBe(2)
+    expect(settled.archived).toBe(false) // 候选拦达成
+    // 用户删除候选（修订计划收尾）→ 达成谓词满足
+    await store.domain.table('tasks').delete('t-pending')
+    const done = freshWish(store, store.domain.table('wishes').get('w')!)
+    expect(done.progress).toBe(100)
+    expect(done.archived).toBe(true)
+  })
+
+  it('全候选愿望：进度 0 且无分母（页面显示「计划中」的语义）', () => {
+    const store = memoryStore()
+    putWish(store, 'w')
+    putTask(store, 't-pending', { wishId: 'w', status: 'pending', requiredDays: 5, completedDays: 0 })
+    const fresh = freshWish(store, store.domain.table('wishes').get('w')!)
+    expect(fresh.progress).toBe(0)
+    expect(fresh.totalRequiredDays).toBe(0)
+    expect(fresh.archived).toBe(false)
+  })
+
+  it('候选领取即扩大承诺范围：进度回落，愿望退出可达成态', () => {
+    const store = memoryStore()
+    putWish(store, 'w')
+    putTask(store, 't-done', { wishId: 'w', requiredDays: 2, completedDays: 2, status: 'closed', closedReason: 'achieved' })
+    putTask(store, 't-pending', { wishId: 'w', status: 'pending', requiredDays: 5, completedDays: 0 })
+    // 领取候选（承诺口径下分母加入其 5 天）→ 进度回落、不再满足达成谓词
+    void store.domain.table('tasks').update('t-pending', (task) => ({ ...(task as TaskRecord), status: 'in_progress', claimDate: todayIso() }))
+    const claimed = freshWish(store, store.domain.table('wishes').get('w')!)
+    expect(claimed.progress).toBe(Math.floor((2 / 7) * 100))
+    expect(claimed.archived).toBe(false)
+  })
+})
+
 describe('GET 日期参数 bad_date 契约', () => {
   const config: RoutesConfig = { rangeDefaultDays: 7, rangeMaxDays: 31, memoryListLimit: 500 }
   function deps(): ApiDeps {
@@ -261,5 +302,32 @@ describe('任务详情网格窗口口径', () => {
     expect(payload.grid.find((cell) => cell.date === today)?.state).toBe('checked')
     expect(payload.grid.some((cell) => cell.date === addDays(today, 30))).toBe(true)
     expect(payload.grid.some((cell) => cell.date === addDays(today, 3))).toBe(false) // 最旧的预勾被裁剪
+  })
+})
+
+describe('API 愿望载荷三态下发位（展示谓词禁止重建闸门）', () => {
+  const config: RoutesConfig = { rangeDefaultDays: 7, rangeMaxDays: 31, memoryListLimit: 500 }
+  const deps = (store: ReturnType<typeof memoryStore>): ApiDeps => ({ store, config })
+  const url = (query: string): URL => new URL(`http://localhost/xingyuan/api${query}`)
+
+  interface WishRow { wishId: string; settled: boolean; planning: boolean; pendingCount: number; archived: boolean; progress: number }
+
+  it('/api/wishes 携 settled/planning/pendingCount：待收尾（满进度有待领取）与计划中（裸愿望）各有其位', () => {
+    const store = memoryStore()
+    putWish(store, 'w-settled')
+    putTask(store, 't-done', { wishId: 'w-settled', requiredDays: 2, completedDays: 2, status: 'closed', closedReason: 'achieved' })
+    putTask(store, 't-cand', { wishId: 'w-settled', status: 'pending' })
+    putWish(store, 'w-plain') // 裸愿望（无任务）：progress 0、计划中
+    const payload = getApi(deps(store), '/api/wishes', url('/wishes')) as { wishes: WishRow[] }
+    const settled = payload.wishes.find((w) => w.wishId === 'w-settled')!
+    expect(settled.progress).toBe(100)
+    expect(settled.archived).toBe(false)
+    expect(settled.settled).toBe(true)
+    expect(settled.planning, '有已领取任务 → 非计划中').toBe(false)
+    expect(settled.pendingCount).toBe(1)
+    const plain = payload.wishes.find((w) => w.wishId === 'w-plain')!
+    expect(plain.settled).toBe(false)
+    expect(plain.planning, '无任何已领取任务 → 计划中').toBe(true)
+    expect(plain.pendingCount).toBe(0)
   })
 })

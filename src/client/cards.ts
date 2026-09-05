@@ -41,9 +41,11 @@ function WishView(props: CardProps<'xy-wish'>): ReactElement {
       }, t('badge.wish')),
       createElement('span', { className: 'xy-title' }, deleted ? t('state.deleted', { title: wish.wish.title }) : wish.wish.title)),
     // 已删除卡不再渲染活体进度（删除态 × 进度百分比自相矛盾）
+    // 三态位（achieved/planning/settled/pendingCount）来自事件载荷（wishProgressFromAgg 派生），
+    // 与愿望页/工具回包同一称呼；旧事件无这些位则如实降级为纯「进度 X%」显示（不重建谓词，§5.2 规则 7）
     createElement('div', { className: 'xy-meta' }, deleted
       ? wish.wish.categoryName
-      : `${wish.wish.categoryName} · ${t('wish.progress', { percent: wish.wish.progress })}`))
+      : `${wish.wish.categoryName} · ${wish.wish.achieved ? t('wish.achieved') : wish.wish.planning ? t('wish.planning') : t('wish.progress', { percent: wish.wish.progress })}${wish.wish.pendingCount ? ` · ${t('wish.pendingCount', { n: wish.wish.pendingCount })}` : ''}${wish.wish.settled ? ` · ${t('wish.settled')}` : ''}`))
 }
 
 function TaskView(props: CardProps<'xy-task'>): ReactElement {

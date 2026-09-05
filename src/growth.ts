@@ -179,7 +179,9 @@ export interface GrowthSummary {
 export function growthSummary(store: XingyuanStore, today: string = todayIso()): GrowthSummary {
   // 单遍任务索引批量新鲜化（freshWishes），替代逐愿望嵌套全表扫描 O(W×T)
   const wishes = freshWishes(store)
-  const completedWishes = wishes.filter((wish) => wish.progress >= 100).length
+  // 达成口径与愿望卡一致（freshWishes 派生的 archived 谓词）：承诺全部完成且无未处理候选——
+  // 禁止在此重复写 progress >= 100 谓词（候选拦达成会漏掉，见 §5.2 规则 7）
+  const completedWishes = wishes.filter((wish) => wish.archived).length
   let totalTasks = 0
   let completedTasks = 0
   for (const [, task] of store.domain.table('tasks').entries()) {

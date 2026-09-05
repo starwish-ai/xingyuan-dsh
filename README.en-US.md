@@ -12,6 +12,7 @@ XingYuan is a wish & habit-building companion, shipped as a DeepSeek Harness plu
 
 - **Conversation-driven**: create wishes / tasks in natural language with duplicate detection
 - **Opportunity-day check-ins**: check-in, make-up, cancel, and future pre-checks; progress always recomputed against today
+- **Commitment-based progress**: only claimed tasks count; a wish achieves when everything committed is done and nothing is left to claim — full progress with unclaimed tasks leaves it "wrapping up" for your call (claim to continue, or delete to achieve), never nagging, never deciding for you
 - **Micro-actions**: break an overwhelming goal into 3–7 tiny steps and walk through them guided
 - **Growth system**: levels Lv.1–Lv.10, streak bonuses, stat cards, 30-day bar chart
 - **Session view tabs**: Today / Wishes / Tasks / Calendar / Growth / Memory — buttons call action endpoints directly; shown only in XingYuan-preset sessions by default, switchable to always show/hide and per-tab in Settings

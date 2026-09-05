@@ -19,6 +19,16 @@ export interface XingyuanWishSnapshot {
   readonly totalRequiredDays: number
   readonly totalCompletedDays: number
   readonly createdAt: string
+  /**
+   * 候选（未领取）任务数、待收尾标记（进度 100% 而有待领取任务、不归档）、计划中标记
+   * （无任何已领取任务）与达成标记：卡片三态展示与愿望页/工具回包同一谓词
+   * （store.wishProgressFromAgg 派生），客户端禁止用 `progress>=100 && 有候选` 重建闸门。
+   * optional：旧事件回放无这些位，如实降级为纯进度显示（同 generatedAt 惯例）。
+   */
+  readonly pendingCount?: number
+  readonly settled?: boolean
+  readonly planning?: boolean
+  readonly achieved?: boolean
 }
 
 /** 任务快照（卡片与 API 共用形状）。 */
