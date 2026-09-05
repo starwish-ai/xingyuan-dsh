@@ -5,6 +5,51 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-09-05
+
+> **Note:** behavioral revision — long-term ratios (wish progress, progress charts) join
+> the commitment semantics: unclaimed tasks no longer count in the denominator, and
+> achievement additionally requires zero unclaimed tasks. No data format change; upgrades
+> from 0.5.x are seamless — the switch can only raise progress, and every newly-qualifying
+> wish carries unclaimed candidates that the achievement gate holds back (nothing archives
+> by accident).
+
+### Added
+- **Achievement gate and the "wrapping up" state**: a wish achieves only at 100% progress
+  with no unclaimed tasks (single formula `wishProgressFromAgg` shared by the write path and
+  the read side). Full progress with unclaimed tasks parks the wish at "wrapping up" — the
+  bar is full, the wish is not archived — and the card shows the pending count with the
+  guidance line "claim to continue, or delete to achieve". The call is always the user's:
+  the assistant never claims or deletes on its own to force achievement.
+- **Gate flips always reach the model**: check-in / claim / update / cancel / delete / create
+  (including batches) compare before/after wish views and, on achieve / wrap-up / rollback,
+  say so in the tool reply and re-emit the wish event, so chat card, reply and wishes page
+  stay in sync. Count drift without a flip also re-emits (the "N to claim" badge never
+  freezes).
+- **Single-source display bits**: `pendingCount` / `settled` / `planning` / `achieved` are
+  produced by `freshWishes` and delivered via `/api/wishes` and `xingyuan/wish` events;
+  replays of older events degrade honestly to a plain progress display.
+- **Wording standard**: all user-facing and verbatim-relay surfaces (i18n, tool replies,
+  prompt guides, standalone pages) say "待领取的任务" / "待收尾" — no internal jargon.
+  Locked by a banned-word test (`test/prompts.test.ts`) and a shared guidance-line constant.
+
+### Changed
+- `wishProgress` and `taskCompletionRate` now divide by claimed-task days only; the
+  subtitle is fixed to "已领取任务" (the conditional "含未领取任务" wording is gone —
+  one metric, one meaning).
+- Growth-page achievement counts and the `wishAchievement` chart consume the derived
+  achieved bit instead of `progress >= 100`, matching the wish card exactly.
+- The session-opening overview reads fresh derived views (not the stored `archived` bit)
+  and distinguishes "all wishes achieved" from "no wishes yet".
+
+### Fixed
+- Creating a bare wish showed "进度 0%" on the chat card while the wishes page said
+  "计划中" (the create event dropped the derived bits).
+- Claiming a standalone task (no parent wish) claimed its days were folded into "wish
+  progress".
+- Batch-delete replies glued the achievement guidance onto the summary line; batch paths
+  no longer re-scan the task table per wish on the after side.
+
 ## [0.5.9] - 2026-09-04
 
 > **Note:** this release migrates the plugin to DeepSeek Harness `0.1.2-rc.1`
