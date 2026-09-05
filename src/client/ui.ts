@@ -241,6 +241,15 @@ export function IconEdit(): ReactElement {
     createElement('path', { d: 'M5 19l1-4L17.5 3.5a2.12 2.12 0 0 1 3 3L9 18z' }))
 }
 
+/** 下箭头线性图标（披露开关方向指示；展开态旋转由宿主按钮的 aria-expanded 选择器驱动）。 */
+export function IconChevronDown(): ReactElement {
+  return createElement('svg', {
+    viewBox: '0 0 24 24', width: 14, height: 14, 'aria-hidden': 'true', focusable: 'false',
+    style: { display: 'block', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const },
+  },
+    createElement('path', { d: 'M6 9l6 6 6-6' }))
+}
+
 // ===== 页面三态 =====
 
 export function PageError(props: { message: string; onRetry: () => void; retryLabel?: string }): ReactElement {

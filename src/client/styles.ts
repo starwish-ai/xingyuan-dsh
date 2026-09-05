@@ -236,9 +236,9 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 }
 .xy-btn:active:not(:disabled){transform:scale(.97)}
 .xy-btn:disabled{opacity:.55;cursor:not-allowed}
-.xy-btn:focus-visible,.xy-input:focus-visible,.xy-cell:focus-visible,.xy-seg-btn:focus-visible,.xy-toggle:focus-visible,.xy-swatch:focus-visible,.xy-growth-col:focus-visible{outline:2px solid var(--xyd-accent);outline-offset:2px}
+.xy-btn:focus-visible,.xy-input:focus-visible,.xy-cell:focus-visible,.xy-seg-btn:focus-visible,.xy-toggle:focus-visible,.xy-swatch:focus-visible,.xy-growth-col:focus-visible,.xy-wishtoggle:focus-visible{outline:2px solid var(--xyd-accent);outline-offset:2px}
 /* 触控基线：消除移动端双击缩放延迟与系统点按高亮（交互反馈统一由 hover/active 承担） */
-.xy-btn,.xy-seg-btn,.xy-cell,.xy-swatch,.xy-toggle,.xy-growth-col{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.xy-btn,.xy-seg-btn,.xy-cell,.xy-swatch,.xy-toggle,.xy-growth-col,.xy-wishtoggle{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 /* 行内按钮：≥26px 命中目标（卡片头/操作行的紧凑主战按钮） */
 .xy-btn-inline{margin-left:auto;padding:3px 10px;font-size:12px;min-height:26px;display:inline-flex;align-items:center}
 /* 图标幽灵键（≥26px 方形命中目标）：编辑/删除这类高频重复的行内低频动作降噪——
@@ -321,9 +321,17 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
   .xy-wishcard:hover{border-color:var(--dsw-alias-border-l2);box-shadow:var(--xyd-shadow-card)}
 }
 .xy-progress-num{margin-left:auto;flex:none;color:var(--dsw-alias-label-secondary);font-size:12px;font-variant-numeric:tabular-nums}
-/* 卡内子任务列表：分隔线替代裸 gap 堆叠；行留白由任务行自身 padding 承担。
+/* 任务区披露开关（默认收起，展开集合走 view-state）：整行按钮继承虚线分隔（原属
+ * .xy-wishtasks 的卡内分界），箭头旋转只动 transform；按钮文本含任务数（口语化，无状态词）。 */
+.xy-wishtoggle{margin-top:8px;display:flex;align-items:center;gap:5px;width:100%;padding:8px 0 5px;background:none;border:0;border-top:1px dashed var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;cursor:pointer;text-align:left}
+@media (hover:hover) and (pointer:fine){
+  .xy-wishtoggle:hover{color:var(--dsw-alias-label-primary)}
+}
+.xy-wishtoggle svg{flex:none;transition:transform .15s ease}
+.xy-wishtoggle[aria-expanded='true'] svg{transform:rotate(180deg)}
+/* 卡内子任务列表：分隔线已上移到披露开关，行留白由任务行自身 padding 承担。
  * 结构为 [taskline, detail?, taskline, detail?] —— 相邻选择器精确命中「新任务行」边界。 */
-.xy-wishtasks{margin-top:8px;display:flex;flex-direction:column;border-top:1px dashed var(--dsw-alias-border-l1)}
+.xy-wishtasks{display:flex;flex-direction:column}
 .xy-wishtasks>.xy-taskline+.xy-taskline,.xy-wishtasks>.xy-detail+.xy-taskline{border-top:1px solid var(--dsw-alias-border-l1)}
 .xy-wishtasks>.xy-taskline{padding:9px 0}
 /* 展开详情是卡内最后一个元素时收掉底部留白：卡片自身 padding 已承担收尾 */
@@ -581,6 +589,6 @@ body[data-ds-dark-theme] .xy-dcell-checked{color:var(--xyd-on-dcell)}
 @media (prefers-reduced-motion: reduce){
   .xy-skel,.xy-toast,.xy-modal-backdrop,.xy-modal{animation:none}
   .xy-toast-out,.xy-modal-backdrop.xy-modal-out,.xy-modal-out .xy-modal{transition:none}
-  .xy-bar-fill,.xy-btn,.xy-toggle,.xy-toggle::after,.xy-wishcard,.xy-cell,.xy-daynum,.xy-seg-btn,.xy-input,.xy-swatch,.xy-grouprow{transition:none}
+  .xy-bar-fill,.xy-btn,.xy-toggle,.xy-toggle::after,.xy-wishcard,.xy-cell,.xy-daynum,.xy-seg-btn,.xy-input,.xy-swatch,.xy-grouprow,.xy-wishtoggle svg{transition:none}
 }
 `

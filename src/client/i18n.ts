@@ -88,7 +88,8 @@ export const ZH_DICT = {
   'wish.settled': '待收尾',
   'wish.settleHint': '答应自己的都做完了——待领取的领了继续，或删掉就达成',
   'wish.eta': '预计完成 {date}',
-  'wish.noTasks': '暂无下属任务——在对话里告诉我，让我为它推荐打卡任务',
+  'wish.noTasks': '还没有任务——在对话里告诉我，让我为它推荐打卡任务',
+  'wish.tasksToggle': '{n} 个任务',
   'wish.pageTitle': '我的愿望',
   'wish.summary': '{active} 个进行中{planning}{settled}{achieved}',
   'wish.planningSuffix': ' · {n} 个计划中',
@@ -157,7 +158,7 @@ export const ZH_DICT = {
   'confirm.undoAt': '确定撤销「{name}」在{date}的打卡吗？进度将回退。',
   'confirm.futureAt': '「{name}」的打卡日 {date} 在今天之后，提前打卡表示承诺当天完成。确认？',
   'confirm.deleteTask': '确定删除任务「{name}」吗？其打卡记录与微行动拆解将一并删除，不可恢复。',
-  'confirm.deleteWish': '确定删除愿望「{name}」吗？下属任务、打卡记录与微行动拆解将一并删除，不可恢复。',
+  'confirm.deleteWish': '确定删除愿望「{name}」吗？它的任务、打卡记录与微行动拆解将一并删除，不可恢复。',
   'confirm.renameCategory': '把分类「{old}」下的全部愿望改名为「{new}」吗？（共 {count} 个）',  'confirm.deleteEmptyCategory': '删除空分类「{name}」的自定义颜色吗？',
 
   // --- 今日页 ---
@@ -543,6 +544,7 @@ const EN_DICT: Record<XyKey, string> = {
   'wish.settleHint': 'Everything you committed to is done — claim the rest to keep going, or delete them to achieve the wish',
   'wish.eta': 'Target date {date}',
   'wish.noTasks': 'No tasks yet — tell me in chat and I will suggest check-in tasks for it',
+  'wish.tasksToggle': 'Tasks ({n})',
   'wish.pageTitle': 'My Wishes',
   'wish.summary': '{active} in progress{planning}{settled}{achieved}',
   'wish.planningSuffix': ' · {n} planning',

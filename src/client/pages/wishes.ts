@@ -1,11 +1,11 @@
-/** 愿望页：进行中/已达成愿望卡 + 下属任务行（领取/打卡/详情聚合）+ 愿望删除 + 分类管理 + 快速新建。 */
+/** 愿望页：进行中/已达成愿望卡 + 任务区披露（默认收起，展开集合跨标签保留）+ 任务行（领取/打卡/详情聚合）+ 愿望删除 + 分类管理 + 快速新建。 */
 import { createElement, useState, useSyncExternalStore, type ReactElement } from 'react'
 import { postAction } from '../api.js'
 import { useXyT } from '../i18n.js'
 import { softConfirmDanger, useActionGuard, usePageData, useScrollTopOnMount, useStableScrollbar } from '../hooks.js'
 import { getViewState, setViewState } from '../view-state.js'
 import { todayHintStore } from '../tab-hint.js'
-import { PageEmpty, PageError, PageSkeleton, StaleBanner, toast, IconTrash, focusPageTitle } from '../ui.js'
+import { PageEmpty, PageError, PageSkeleton, StaleBanner, toast, IconTrash, IconChevronDown, focusPageTitle } from '../ui.js'
 import { categoryVars } from '../../category-color.js'
 import { TaskLine } from './task-line.js'
 import { formatMediumDate } from './format.js'
@@ -33,6 +33,17 @@ export function WishesPage(): ReactElement {
     if (next.has(taskId)) next.delete(taskId)
     else next.add(taskId)
     setExpanded(next)
+  }
+  // 愿望卡任务区披露集合（默认收起）：愿望页定位总览，任务明细是二级信息；打卡/领取
+  // 主触点在今日页/日历，卡头进度/待领取数/收尾指引不受收起影响。展开集合与任务详情
+  // 展开集分开（两个粒度互不覆盖），同样经 view-state 跨标签切换保留
+  const [tasksOpen, setTasksOpenRaw] = useState<ReadonlySet<string>>(() => getViewState<ReadonlySet<string>>('wishes.tasksOpen', new Set()))
+  const setTasksOpen = (next: ReadonlySet<string>): void => { setViewState('wishes.tasksOpen', next); setTasksOpenRaw(next) }
+  const toggleTasks = (wishId: string): void => {
+    const next = new Set(tasksOpen)
+    if (next.has(wishId)) next.delete(wishId)
+    else next.add(wishId)
+    setTasksOpen(next)
   }
 
   if (page.error !== undefined && page.data === undefined) return createElement(PageError, { message: page.error, onRetry: () => void page.reload() })
@@ -119,9 +130,22 @@ export function WishesPage(): ReactElement {
       },
         createElement('div', { className: 'xy-bar-fill', style: { transform: `scaleX(${Math.min(wish.progress, 100) / 100})` } })),
       settled ? createElement('div', { className: 'xy-meta' }, t('wish.settleHint')) : null,
-      wish.tasks.length > 0
-        ? createElement('div', { className: 'xy-wishtasks' }, ...wishTasks(wish))
-        : createElement('div', { className: 'xy-meta' }, t('wish.noTasks')))
+      // 任务区披露：有任务时默认收起为整行开关（文本=任务数 + 箭头，aria-controls 关联
+      // 容器 id；展开后开关仍在列表上方兼作收起控件）；无任务维持原文案，不出开关
+      ...(wish.tasks.length > 0
+        ? [
+            createElement('button', {
+              key: 'wishtoggle',
+              className: 'xy-wishtoggle',
+              'aria-expanded': tasksOpen.has(wish.wishId),
+              'aria-controls': `xy-wishtasks-${wish.wishId}`,
+              onClick: () => toggleTasks(wish.wishId),
+            }, t('wish.tasksToggle', { n: wish.tasks.length }), createElement(IconChevronDown)),
+            tasksOpen.has(wish.wishId)
+              ? createElement('div', { key: 'wishtasks', id: `xy-wishtasks-${wish.wishId}`, className: 'xy-wishtasks' }, ...wishTasks(wish))
+              : null,
+          ]
+        : [createElement('div', { key: 'notasks', className: 'xy-meta' }, t('wish.noTasks'))]))
   }
 
   return createElement('div', { className: 'xy-page', ref: stabilize },

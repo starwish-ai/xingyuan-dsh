@@ -6,7 +6,7 @@
  *   → 产出 debug/ui-mock.html（深色）与 debug/ui-mock-light.html（浅色），本地起静态服务截图核对。
  * 纪律：markup 为真实 tsx 输出的手写镜像，仅用于视觉核对；对应组件结构变更时须同步本文件。
  *
- * 场景覆盖（与页面一一对应）：日历 / 今日（含非星愿提示行）/ 愿望（卡内展开详情）/ 任务（分组卡+已完结行）/
+ * 场景覆盖（与页面一一对应）：日历 / 今日（含非星愿提示行）/ 愿望（任务区披露：收起默认态+展开态 / 卡内展开详情）/ 任务（分组卡+已完结行）/
  * 成长（英雄卡+强调 streak 统计+近30天柱图）/ 记忆（撰写卡+图标行动作）/
  * 设置（四分节面板，含标签页显示）/ 快速新建（任务轻表单）/ 空态·错误态·危险按钮（纯文字版式，插画已移除）。
  */
@@ -32,6 +32,11 @@ const SHELL_DARK = `
 // ===== 共享片段（镜像 src/client/ui.ts 的 IconTrash / IconEdit）=====
 const ICON_TRASH = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" focusable="false" style="display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12"/><path d="M10 11v6M14 11v6" opacity="0.55"/></svg>'
 const ICON_EDIT = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" focusable="false" style="display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M13.5 5l5.5 5.5"/><path d="M5 19l1-4L17.5 3.5a2.12 2.12 0 0 1 3 3L9 18z"/></svg>'
+const ICON_CHEVRON = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false" style="display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M6 9l6 6 6-6"/></svg>'
+
+/** 任务区披露开关（镜像 wishes.ts）：整行按钮 = 任务数 + 下箭头；展开态旋转由 aria-expanded 选择器驱动。 */
+const wishToggle = (id: string, n: number, open: boolean): string =>
+  `<button class="xy-wishtoggle" type="button" aria-expanded="${open}" aria-controls="${id}">${n} 个任务${ICON_CHEVRON}</button>`
 
 // 2026 年 8 月：1 日周六（周一头），首行 7/27–8/2，末行 8/31 + 9/1–9/6；
 // 27 = today + 待打卡（验证环与状态底共存），20 = 选中态
@@ -191,7 +196,8 @@ const wishSection = `
     <div class="xy-meta">拥有属于自己的 AI 接口额度与调用能力，想用就用，不受平台和次数限制。</div>
     <div class="xy-meta">预计完成 2026年11月24日</div>
     <div class="xy-bar"><div class="xy-bar-fill" style="transform:scaleX(.15)"></div></div>
-    <div class="xy-wishtasks">
+${wishToggle('mock-wishtasks-1', 3, true)}
+    <div class="xy-wishtasks" id="mock-wishtasks-1">
 ${taskLine('每周复盘token用量并优化调用方式', '每周 · 5/9 天 · 下次 9月28日 · 截止 10月19日', '<button class="xy-btn xy-btn-primary" type="button">提前打卡 9月28日</button><button class="xy-btn xy-btn-inline" type="button" aria-expanded="true">收起详情</button>')}
 ${detailOps("mock-detail-wish")}
 ${taskLine('每天动手练习调用AI接口30分钟', '每天 · 1/31 天 · 截止 9月23日', '<button class="xy-btn xy-btn-primary" type="button">✓ 打卡</button><button class="xy-btn xy-btn-inline" type="button" aria-expanded="false">展开详情</button>')}
@@ -207,10 +213,7 @@ ${taskLine('每周读一篇 Agent 领域论文', '每周 · 领取后开始计 8
     </div>
     <div class="xy-bar"><div class="xy-bar-fill" style="transform:scaleX(1)"></div></div>
     <div class="xy-meta">答应自己的都做完了——待领取的领了继续，或删掉就达成</div>
-    <div class="xy-wishtasks">
-${taskLine('每天 23 点前上床', '每天 · 21/21 天 · 已达成', '<button class="xy-btn xy-btn-inline" type="button" aria-expanded="false">展开详情</button>')}
-${taskLine('睡前不碰手机', '每天 · 领取后开始计 14 天', '<button class="xy-btn" type="button">领取</button>')}
-    </div>
+${wishToggle('mock-wishtasks-2', 2, false)}
   </div>
   <div class="xy-wishcard">
     <div class="xy-card-head">
@@ -220,10 +223,7 @@ ${taskLine('睡前不碰手机', '每天 · 领取后开始计 14 天', '<button
       <button class="xy-btn xy-btn-danger xy-btn-icon" type="button" aria-label="删除 · 整理书房" title="删除">${ICON_TRASH}</button>
     </div>
     <div class="xy-bar"><div class="xy-bar-fill" style="transform:scaleX(0)"></div></div>
-    <div class="xy-wishtasks">
-${taskLine('每天清一张桌面', '每天 · 领取后开始计 7 天', '<button class="xy-btn" type="button">领取</button><button class="xy-btn xy-btn-inline" type="button" aria-expanded="false">展开详情</button>')}
-${taskLine('周末集中断舍离一次', '每周 · 领取后开始计 4 次', '<button class="xy-btn" type="button">领取</button>')}
-    </div>
+${wishToggle('mock-wishtasks-3', 2, false)}
   </div>
 </div>`
 
@@ -525,7 +525,7 @@ const html = (dark: boolean): string => `<!doctype html>
   ${calSection}
   <h1 style="color:var(--dsw-alias-label-primary);font-size:14px;padding:12px 20px 0">今日页</h1>
   ${todaySection}
-  <h1 style="color:var(--dsw-alias-label-primary);font-size:14px;padding:12px 20px 0">愿望页 · 卡内展开详情（周对齐打卡网格 / 图标删除键）</h1>
+  <h1 style="color:var(--dsw-alias-label-primary);font-size:14px;padding:12px 20px 0">愿望页 · 任务区披露（默认收起 / 展开态）+ 卡内展开详情（周对齐打卡网格 / 图标删除键）</h1>
   ${wishSection}
   <h1 style="color:var(--dsw-alias-label-primary);font-size:14px;padding:12px 20px 0">任务页 · 分组卡展开详情（已完结行保留状态词）</h1>
   ${tasksSection}
