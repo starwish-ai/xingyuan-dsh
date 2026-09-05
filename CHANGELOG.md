@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-09-05
+
+### Added
+- **Wishes page: collapsible task area**: each wish card's task list now starts collapsed
+  behind a full-row disclosure toggle ("N 个任务" / "Tasks (N)" with a chevron that flips
+  when expanded). Card-header progress, the "N to claim" badge and the wrap-up guidance
+  line stay visible while collapsed; expanding restores the task rows exactly as before —
+  claim / check-in buttons and the inline per-task detail expansion now nest inside the
+  card-level disclosure. Achieved wishes collapse the same way; wishes without tasks keep
+  their existing hint and get no toggle. Expanded cards are remembered across view-tab
+  switches (view-state snapshot). Client-only: no API, storage or write-path changes.
+
+### Changed
+- Wish-card copy de-jargoned: the empty hint now says "还没有任务" (was "暂无下属任务")
+  and the delete-wish confirmation says "它的任务…" (was "下属任务…"), matching the
+  established plain-wording standard for user-facing surfaces.
+
 ## [0.6.0] - 2026-09-05
 
 > **Note:** behavioral revision — long-term ratios (wish progress, progress charts) join
