@@ -18,7 +18,7 @@ XingYuan is a wish & habit-building companion, shipped as a DeepSeek Harness plu
 - **Session view tabs**: Today / Wishes / Tasks / Calendar / Growth / Memory — buttons call action endpoints directly; shown only in XingYuan-preset sessions by default, switchable to always show/hide and per-tab in Settings
 - **Memory**: important memories injected into context (limit configurable), full CRUD
 - **Charts**: 15 chart types rendered as cards
-- **Safe writes**: write operations confirmed by default (configurable); deletion always confirmed
+- **Safe writes**: write confirmation is per-category (create / check-in / undo / claim / edit / save memory); deletion always confirms and cannot be turned off; defaults match previous versions
 - **Theming**: light/dark follows the app theme
 
 Tools are only mounted on sessions using the XingYuan preset; other sessions are unaffected.
@@ -41,7 +41,7 @@ Business data lives at `~/.dsh/xingyuan/xingyuan.sqlite` and survives uninstall 
 | --- | --- |
 | Coach style | Gentle / humorous / strict |
 | User profile | Nickname, occupation, interests |
-| Write confirmation | Whether create / check-in writes need confirmation (deletion always does) |
+| Write confirmation | Master switch + per-category toggles (create / check-in / undo / claim / edit / save memory); deletion always confirms and cannot be turned off |
 | Memory injection limit | Max memories injected per turn |
 | Tab visibility | Three modes (follow session / always show / always hide) plus per-tab toggles; defaults to follow session |
 | Confirm card language | Language of the in-chat confirmation card (Chinese / English; the platform does not expose UI language to plugins, defaults to Chinese) |

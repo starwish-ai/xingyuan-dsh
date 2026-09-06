@@ -54,7 +54,7 @@ describe('客户端样式兼容契约', () => {
       '--xyd-label-on-2', '--xyd-ok-soft', '--xyd-ok-border', '--xyd-warn-soft',
       '--xyd-warn-border', '--xyd-ok-badge', '--xyd-shadow-card', '--xyd-shadow-toast',
       '--xyd-shadow-modal', '--xyd-hover', '--xyd-mask', '--xyd-on-c2', '--xyd-on-c3',
-      '--xyd-on-dcell',
+      '--xyd-on-dcell', '--xyd-on-warn',
     ]) {
       const light = STYLE_TEXT.includes(`${token}:`)
       const dark = STYLE_TEXT.includes(`body[data-ds-dark-theme]{`)
@@ -65,6 +65,54 @@ describe('客户端样式兼容契约', () => {
       const darkEnd = STYLE_TEXT.indexOf('}', darkStart)
       const darkBlock = STYLE_TEXT.slice(darkStart, darkEnd)
       expect(darkBlock.includes(`${token}:`), `${token} 深色档缺失`).toBe(true)
+    }
+  })
+
+  it('warn-soft 底的前景对达标：--xyd-on-warn 复合底在浅/深两主题均 ≥4.5:1（WCAG 1.4.3，StaleBanner 文字）', () => {
+    const darkStart = STYLE_TEXT.indexOf('body[data-ds-dark-theme]{')
+    const lightBlock = STYLE_TEXT.slice(0, darkStart)
+    const darkBlock = STYLE_TEXT.slice(darkStart, STYLE_TEXT.indexOf('}', darkStart))
+
+    const tokenValue = (block: string, name: string): string => {
+      const match = block.match(new RegExp(`${name}:([^;]+);`))
+      expect(match, `${name} 未找到`).not.toBeNull()
+      return match![1]!.trim()
+    }
+    const parseRgb = (value: string): [number, number, number] => {
+      if (value.startsWith('#')) {
+        const h = value.slice(1)
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+      }
+      const nums = value.match(/[\d.]+/g)!.map(Number)
+      return [nums[0]!, nums[1]!, nums[2]!]
+    }
+    const composite = (fg: [number, number, number], alpha: number, bg: [number, number, number]): [number, number, number] =>
+      [0, 1, 2].map((i) => Math.round(fg[i]! * alpha + bg[i]! * (1 - alpha))) as [number, number, number]
+    const luminance = ([r, g, b]: [number, number, number]): number => {
+      const lin = [r, g, b].map((v) => {
+        const c = v / 255
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+      })
+      return 0.2126 * lin[0]! + 0.7152 * lin[1]! + 0.0722 * lin[2]!
+    }
+    const contrast = (a: [number, number, number], b: [number, number, number]): number => {
+      const sorted = [luminance(a), luminance(b)].sort((x, y) => y - x)
+      return (sorted[0]! + 0.05) / (sorted[1]! + 0.05)
+    }
+
+    // 底色假设 = debug/gen-mock.ts SHELL_LIGHT/SHELL_DARK 的 bg-layer-1 替身值
+    // （仓库声明的壳观感基准）：StaleBanner 挂在宿主页面底上，替身值即审计口径。
+    const scenarios = [
+      { theme: '浅色', layer: [255, 255, 255] as [number, number, number], block: lightBlock },
+      { theme: '深色', layer: [31, 39, 49] as [number, number, number], block: darkBlock },
+    ]
+    for (const { theme, layer, block } of scenarios) {
+      const warnSoft = tokenValue(block, '--xyd-warn-soft')
+      const onWarn = parseRgb(tokenValue(block, '--xyd-on-warn'))
+      const nums = warnSoft.match(/[\d.]+/g)!.map(Number)
+      const bg = composite([nums[0]!, nums[1]!, nums[2]!], nums[3]!, layer)
+      const ratio = contrast(onWarn, bg)
+      expect(ratio, `${theme} on-warn 对 warn-soft 复合底 ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5)
     }
   })
 })

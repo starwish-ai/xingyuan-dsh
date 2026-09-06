@@ -8,6 +8,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { makeXingyuanStore, xingyuanDomainSpec } from './domain.js'
 import { installPrefSettings } from './pref-settings.js'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
@@ -47,8 +48,10 @@ export const Config: z<Config> = z.object({
   repairSessionLogs: z.boolean().default(true),
 })
 
-/** 依赖：storageDomain（领域设施）、webServer（页面路由）、sessions（活会话枚举）。 */
-export const inject = ['webServer', 'storageDomain', 'sessions']
+/** 依赖：storageDomain（领域设施）、webServer（页面路由）、sessions（活会话枚举）、
+ *  sqlite 后端生命周期键（官方 storage 契约：数据形式提供方注入它，使激活不与
+ *  后端注册发生竞态——不依赖 patch 的行顺序）。 */
+export const inject = ['webServer', 'storageDomain', 'sessions', storageBackendServiceKey('sqlite')]
 
 export async function apply(ctx: Context, config: Config): Promise<void> {
   let disposed = false

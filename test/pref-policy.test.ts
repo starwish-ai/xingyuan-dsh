@@ -7,12 +7,16 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  CONFIRM_OPS,
+  CONFIRM_OP_DEFAULTS,
   MEMORY_LIMIT_MAX,
   MEMORY_LIMIT_MIN,
   PREF_DEFAULTS,
+  normalizeConfirmOps,
   parseMemoryLimit,
 } from '../src/pref-policy.js'
 import { PrefSettingsSchema } from '../src/pref-settings.js'
+import type { PrefSettings } from '../src/pref-policy.js'
 
 describe('parseMemoryLimit（记忆注入上限输入解析）', () => {
   it('合法值原样返回且不标夹取', () => {
@@ -65,5 +69,33 @@ describe('PrefSettingsSchema（对话偏好命名空间 schema）', () => {
   it('默认值落在合法区间内', () => {
     expect(PREF_DEFAULTS.memoryInjectLimit).toBeGreaterThanOrEqual(MEMORY_LIMIT_MIN)
     expect(PREF_DEFAULTS.memoryInjectLimit).toBeLessThanOrEqual(MEMORY_LIMIT_MAX)
+  })
+})
+
+describe('confirmOps（确认类目明细，分层模型见 AGENTS.md §10 决策 8）', () => {
+  it('schema 缺 confirmOps 键解析为类目默认（旧存量值零迁移）', () => {
+    expect(PrefSettingsSchema().confirmOps).toEqual(CONFIRM_OP_DEFAULTS)
+  })
+
+  it('部分对象缺键由各键 default 补齐', () => {
+    // 断言对象刻意缺键：schema 解析层负责补默认（类型层要求全键，运行时容错正是被测行为）
+    expect(PrefSettingsSchema({ ...PREF_DEFAULTS, confirmOps: { claim: true } as PrefSettings['confirmOps'] }).confirmOps)
+      .toEqual({ ...CONFIRM_OP_DEFAULTS, claim: true })
+  })
+
+  it('显式 false 不被 default 吃掉', () => {
+    const allOff = Object.fromEntries(CONFIRM_OPS.map((op) => [op, false])) as PrefSettings['confirmOps']
+    expect(PrefSettingsSchema({ ...PREF_DEFAULTS, confirmOps: allOff }).confirmOps.create).toBe(false)
+  })
+
+  it('normalizeConfirmOps：非对象/缺键/非布尔键一律回落类目默认', () => {
+    expect(normalizeConfirmOps(undefined)).toEqual(CONFIRM_OP_DEFAULTS)
+    expect(normalizeConfirmOps('junk')).toEqual(CONFIRM_OP_DEFAULTS)
+    expect(normalizeConfirmOps({ claim: true })).toEqual({ ...CONFIRM_OP_DEFAULTS, claim: true })
+    expect(normalizeConfirmOps({ create: 'yes' })).toEqual(CONFIRM_OP_DEFAULTS)
+  })
+
+  it('schema 键与 CONFIRM_OPS 一一对应（防漂移）', () => {
+    expect(Object.keys(PrefSettingsSchema().confirmOps).sort()).toEqual([...CONFIRM_OPS].sort())
   })
 })

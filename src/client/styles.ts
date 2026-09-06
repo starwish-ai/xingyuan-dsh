@@ -60,6 +60,9 @@ export const STYLE_TEXT = `
   --xyd-on-c2:#7c4a03;
   --xyd-on-c3:#065f46;
   --xyd-on-dcell:#0b3d26;
+  /* warn-soft 底的前景伙伴（StaleBanner 文字）：壳通用次要色对琥珀柔底浅 4.19 /
+     深 2.95，跌破 WCAG 1.4.3 AA——按 ≥4.5:1 校准的专用对（on-c2 同族暖琥珀前景） */
+  --xyd-on-warn:#7c4a03;
   /* 阴影对（卡片悬停/toast/弹窗/英雄卡）：深浅各自配档，禁止正文区裸写 rgba */
   --xyd-shadow-card:0 2px 10px rgba(15,23,42,.07);
   --xyd-shadow-toast:0 8px 24px -8px rgba(15,23,42,.2),0 2px 8px -2px rgba(15,23,42,.1);
@@ -109,6 +112,7 @@ body[data-ds-dark-theme]{
   --xyd-on-c2:#ffd9a8;
   --xyd-on-c3:#a7f3c9;
   --xyd-on-dcell:#a7f3c9;
+  --xyd-on-warn:#ffd9a8;
   --xyd-shadow-card:0 2px 10px rgba(0,0,0,.32);
   --xyd-shadow-toast:0 8px 24px -8px rgba(0,0,0,.5),0 2px 8px -2px rgba(0,0,0,.35);
   --xyd-shadow-modal:0 24px 48px -16px rgba(0,0,0,.55),0 4px 12px -4px rgba(0,0,0,.4);
@@ -276,6 +280,9 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-banner-ok{margin-top:10px;padding:10px 12px;border-radius:var(--xyd-r-inner);background:var(--xyd-ok-soft);border:1px solid var(--xyd-ok-border);font-size:13px}
 /* 刷新失败但旧数据仍在的诚实降级横幅：琥珀虚线面板（警示但不恐吓——动作已成功） */
 .xy-stalerow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;padding:8px 12px;border:1px dashed var(--xyd-warn-border);border-radius:var(--xyd-r-inner);background:var(--xyd-warn-soft)}
+/* 提示文字用琥珀柔底的专用前景对（--xyd-on-warn）：次要通用色在此底上浅 4.19 / 深
+ * 2.95，深色远低于 AA；重试键保持 label-primary（对琥珀柔底 >10:1），无需处理 */
+.xy-stalerow .xy-meta{color:var(--xyd-on-warn)}
 .xy-stalerow .xy-btn-inline{margin-left:0}
 
 /* ===== 分组卡（任务页状态分桶 / 今日页待打卡·已完成共用）=====
@@ -518,6 +525,16 @@ button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 2px var(--xyd-accent-ring)}
 .xy-toggle::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-label-primary);transition:transform .15s}
 .xy-toggle:checked::after{transform:translateX(16px);background:var(--xyd-on-accent)}
 .xy-hint{color:var(--dsw-alias-label-secondary);font-size:12px;margin:0}
+/* 确认类目明细：缩进嵌在总开关下（与「总开关 + 明细」分层同构），行 = 开关 + 名称；
+ * 锁定行（删除）为只读展示，其说明行缩进与文字对齐（开关 38px + 间距 8px） */
+.xy-confirm-ops{display:flex;flex-direction:column;gap:8px;margin-left:22px}
+/* 禁用弱化必须显式写：自定义外观的 toggle 不吃原生禁用变灰，总开关关闭时明细行
+ * 否则与可用态无法区分；锁定的删除行恒禁用，常态弱化即「冻结在开启态」的语义 */
+.xy-confirm-ops .xy-toggle:disabled{opacity:.4;cursor:default}
+.xy-op-group-head{font-weight:600;font-size:13px}
+.xy-op-row{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px}
+.xy-op-row-locked{color:var(--dsw-alias-label-secondary);cursor:default}
+.xy-op-locked-hint{padding-left:46px}
 
 /* ===== 详情聚合视图 ===== */
 /* 段间 10px 呼吸；每段内部「标签 → 内容」固定 5px 纵向节奏（label 不再与内容文字挤行）。

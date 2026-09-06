@@ -422,8 +422,20 @@ const settingsSection = `
       <h3 class="xy-panel-head">对话偏好</h3>
       <label class="xy-field">
         <span class="xy-field-head"><input type="checkbox" class="xy-toggle" name="confirmWrites" checked>写操作二次确认</span>
-        <p class="xy-hint">创建愿望/任务、打卡、取消打卡时先弹应用内确认卡（删除始终确认）；关闭后对话中的这类操作将直接执行。</p>
+        <p class="xy-hint">总开关：开启后按下方类目决定是否弹确认卡，关闭后除删除（始终确认）外一律直接执行。</p>
       </label>
+      <div class="xy-confirm-ops" role="group" aria-label="确认类目">
+        <span class="xy-op-group-head">确认类目</span>
+        <label class="xy-op-row"><input type="checkbox" class="xy-toggle" name="confirmOps.create" checked>创建愿望/任务（含微行动拆解）</label>
+        <label class="xy-op-row"><input type="checkbox" class="xy-toggle" name="confirmOps.checkin" checked>打卡</label>
+        <label class="xy-op-row"><input type="checkbox" class="xy-toggle" name="confirmOps.cancelCheckin" checked>取消打卡</label>
+        <label class="xy-op-row"><input type="checkbox" class="xy-toggle" name="confirmOps.claim">领取任务</label>
+        <label class="xy-op-row"><input type="checkbox" class="xy-toggle" name="confirmOps.update">修改愿望/任务/分类</label>
+        <label class="xy-op-row"><input type="checkbox" class="xy-toggle" name="confirmOps.memorySave">保存记忆</label>
+        <div class="xy-op-row xy-op-row-locked"><input type="checkbox" class="xy-toggle" name="confirmOps.deleteLocked" checked disabled>删除（含批量、微行动重开）</div>
+        <span class="xy-hint xy-op-locked-hint">始终确认，不可关闭：删除不可恢复。</span>
+        <span class="xy-hint">类目明细在总开关开启时生效；默认与之前版本一致。</span>
+      </div>
       <label class="xy-field">
         <span class="xy-field-head">记忆注入上限</span>
         <input type="number" min="5" max="200" class="xy-input xy-input-num" name="memoryInjectLimit" inputmode="numeric" value="40">

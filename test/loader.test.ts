@@ -13,15 +13,30 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { Loader } from '@deepseek-ai/cordis-plugin-loader'
+import { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 // 类型副作用：组合内各服务的 Context 声明合并
 import type {} from '@deepseek-ai/dsh-storage'
 import type {} from '@deepseek-ai/dsh-tools'
+import { inject } from '../src/index.js'
 import type { XingyuanStore } from '../src/domain.js'
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 /** 组合内由本测试创建的行（收尾倒序拆除）。 */
 const ENTRIES = ['xingyuan-side', 'xingyuan', 'tools', 'user-questions', 'system-prompt', 'storage-domain', 'xingyuan-sqlite', 'storage'] as const
+
+/**
+ * 轮询等待服务出现。激活链（preset 发布 → 开领域 → provide）在 apply 返回后的
+ * 微/宏任务中完成，registry 无公开的就绪事件可 await——只能观测其公开读取面。
+ */
+async function untilDefined<T>(get: () => T | undefined, what: string): Promise<T> {
+  for (let i = 0; i < 500; i++) {
+    const value = get()
+    if (value !== undefined) return value
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`等待超时：${what}`)
+}
 
 describe('loader 级组合启动', () => {
   let ctx: Context
@@ -35,19 +50,6 @@ describe('loader 级组合启动', () => {
   /** 模型可见工具名集合（registry 公开面 schemas()）。 */
   function visibleTools(): string[] {
     return ctx.tools.schemas().map((schema) => schema.name)
-  }
-
-  /**
-   * 轮询等待服务出现。激活链（preset 发布 → 开领域 → provide）在 apply 返回后的
-   * 微/宏任务中完成，registry 无公开的就绪事件可 await——只能观测其公开读取面。
-   */
-  async function untilDefined<T>(get: () => T | undefined, what: string): Promise<T> {
-    for (let i = 0; i < 500; i++) {
-      const value = get()
-      if (value !== undefined) return value
-      await new Promise((resolve) => setTimeout(resolve, 10))
-    }
-    throw new Error(`等待超时：${what}`)
   }
 
   beforeAll(async () => {
@@ -148,5 +150,84 @@ describe('loader 级组合启动', () => {
     })
     expect(store.domain.table('wishes').get('w-remount')?.title).toBe('重挂载愿望')
     expect(visibleTools()).toContain('create_wish')
+  })
+
+  it('主行单独重载（HMR 只换主行的场景）：sqlite 行不动，重挂主行后领域可重开且介质数据仍在', async () => {
+    // 官方 HMR 语义：dispose 只作用于被换的那一行，兄弟行（xingyuan-sqlite）存活。
+    // unit.close() 若不释放单元占用，重开必抛 "already open on this backend"——
+    // 插件就此死亡直到进程重启。sqlite 行未重挂 → :memory: 介质未销毁，重开领域
+    // 应看到重载前写入的数据（同后端实例同一 DB 连接）。
+    const storeBefore = await untilDefined(() => ctx.xingyuan, '重载前的 xingyuan 服务')
+    await storeBefore.domain.table('wishes').put('w-mainrow-reload', {
+      wishId: 'w-mainrow-reload',
+      title: '主行重载存活愿望',
+      categoryName: '学习',
+      progress: 0,
+      totalRequiredDays: 0,
+      totalCompletedDays: 0,
+      archived: false,
+      createdAt: '2026-09-06T00:00:00',
+    })
+    await loader.remove('xingyuan')
+    await mount({ id: 'xingyuan', name: './lib/index.js' })
+    const store = await untilDefined(() => ctx.xingyuan, '主行单独重挂后的 xingyuan 服务')
+    expect(store.domain.table('wishes').get('w-mainrow-reload')?.title).toBe('主行重载存活愿望')
+  })
+})
+
+/**
+ * 后端注册顺序无关激活（官方 storage.zh.md 契约）：
+ * 「数据形式提供方注入 storageBackendServiceKey(name)，使自身激活不会与后端注册
+ * 发生竞态」——bundle 主行必须靠依赖声明等待 sqlite 后端行，而非依赖 patch 的
+ * 行顺序。
+ */
+describe('后端注册顺序无关激活', () => {
+  it('主行 inject 声明 sqlite 后端生命周期键（声面契约：缺失即退回依赖 patch 行顺序）', () => {
+    // 声明唯一出处是 src/index.ts（lib 产物由构建复制；lib 的行为面由上一测试的
+    // 敌对顺序装载覆盖），此处直接对源码声明断言
+    expect(inject).toContain(storageBackendServiceKey('sqlite'))
+  })
+
+  it('敌对顺序端到端：主行先于 sqlite 行发起装载，靠依赖声明等待而非失败', { timeout: 15_000 }, async () => {
+    process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'xy-loader-order-'))
+    const ctx2: Context = new Context()
+    ctx2.baseUrl = `${pathToFileURL(pkgRoot).href}/`
+    const registeredRoutes = new Set<string>()
+    ctx2.provide('webServer', {
+      register(route: { kind: string; path: string }): () => void {
+        const key = `${route.kind}:${route.path}`
+        if (registeredRoutes.has(key)) throw new Error(`duplicate ${key} route`)
+        registeredRoutes.add(key)
+        return () => { registeredRoutes.delete(key) }
+      },
+    })
+    ctx2.provide('sessions', { list: () => [] })
+    await ctx2.plugin(Loader)
+    const loader2 = ctx2.loader
+    const mount2 = (entry: { id: string; name: string; config?: unknown }) =>
+      loader2.create(entry as Parameters<Loader['create']>[0])
+
+    await mount2({ id: 'storage', name: '@deepseek-ai/dsh-storage' })
+    await mount2({ id: 'storage-domain', name: '@deepseek-ai/dsh-storage-domain', config: { backend: 'sqlite', routes: { xingyuan: 'sqlite' } } })
+    // 关键时序：主行先发起，此刻 sqlite 后端尚未注册。有依赖声明时 fiber 等待；
+    // 无声明时 apply 立即执行并失败（backend-not-found），服务永不就绪 → untilDefined 超时红。
+    const mainMount = mount2({ id: 'xingyuan', name: './lib/index.js' })
+    mainMount.catch(() => {}) // 失败形态的拒绝先挂钩防未处理拒绝（红态由下方断言呈现）
+    await mount2({ id: 'xingyuan-sqlite', name: './lib/sqlite.js', config: { path: ':memory:' } })
+    const store = await untilDefined(() => ctx2.xingyuan, '顺序颠倒组合的 xingyuan 服务')
+    await store.domain.table('wishes').put('w-order', {
+      wishId: 'w-order',
+      title: '顺序无关愿望',
+      categoryName: '学习',
+      progress: 0,
+      totalRequiredDays: 0,
+      totalCompletedDays: 0,
+      archived: false,
+      createdAt: '2026-09-06T00:00:00',
+    })
+    expect(store.domain.table('wishes').get('w-order')?.title).toBe('顺序无关愿望')
+    for (const id of ['xingyuan', 'xingyuan-sqlite', 'storage-domain', 'storage']) {
+      try { await loader2.remove(id) } catch {}
+    }
   })
 })

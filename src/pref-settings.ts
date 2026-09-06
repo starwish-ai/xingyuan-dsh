@@ -28,6 +28,7 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-settings'
 import {
   CONFIRM_LANGS,
+  CONFIRM_OP_DEFAULTS,
   MEMORY_LIMIT_MAX,
   MEMORY_LIMIT_MIN,
   PREF_DEFAULTS,
@@ -40,6 +41,16 @@ export const PREF_NS = 'xingyuan-pref'
 /** 配置 schema（默认值写进 schema；step(1) 让服务端也拒绝小数，防手改文档/RPC 直写）。 */
 export const PrefSettingsSchema: z<PrefSettings> = z.object({
   confirmWrites: z.boolean().default(PREF_DEFAULTS.confirmWrites),
+  // 确认类目明细：对象整体作为一个命名空间字段下发（客户端每次写合并后的完整对象）；
+  // 键与 pref-policy 的 CONFIRM_OPS 一一对应（测试对拍），旧存量值缺该键由 default 兜底
+  confirmOps: z.object({
+    create: z.boolean().default(CONFIRM_OP_DEFAULTS.create),
+    checkin: z.boolean().default(CONFIRM_OP_DEFAULTS.checkin),
+    cancelCheckin: z.boolean().default(CONFIRM_OP_DEFAULTS.cancelCheckin),
+    claim: z.boolean().default(CONFIRM_OP_DEFAULTS.claim),
+    update: z.boolean().default(CONFIRM_OP_DEFAULTS.update),
+    memorySave: z.boolean().default(CONFIRM_OP_DEFAULTS.memorySave),
+  }).default({ ...CONFIRM_OP_DEFAULTS }),
   memoryInjectLimit: z.number().step(1).min(MEMORY_LIMIT_MIN).max(MEMORY_LIMIT_MAX)
     .default(PREF_DEFAULTS.memoryInjectLimit),
   // schemastery 无 z.enum，两值枚举用 const+union 表达（与 ui-settings 的显隐三态同款）

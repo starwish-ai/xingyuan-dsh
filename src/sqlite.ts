@@ -29,6 +29,7 @@ class SqliteKvUnit implements KvUnit {
     private readonly db: DatabaseSync,
     private readonly descriptor: KvUnitDescriptor,
     private readonly onDirty: () => void,
+    private readonly release: () => void,
   ) {}
 
   async loadAll(): Promise<{ tables: Record<string, Record<string, unknown>>; global: unknown }> {
@@ -70,7 +71,13 @@ class SqliteKvUnit implements KvUnit {
     this.onDirty()
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    // 官方契约（KvUnit.close："Drain pending writes and release it"；Domain.close
+    // JSDoc："release the backend unit, then free the domain name for a later open"）。
+    // 写入为同步 API 无待排水，释放 = 归还单元占用：不释放则领域 close→重开必撞
+    // open-set 门禁（主行单独重载的 HMR 路径由此永久激活失败）。
+    this.release()
+  }
 
   private physical(table: string): string {
     return `u_${this.descriptor.name}_${table}`
@@ -146,7 +153,7 @@ class SqliteBackend implements StorageBackend {
       db.exec(`CREATE TABLE IF NOT EXISTS "u_${descriptor.name}_${table}" (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
     }
     this.open.add(descriptor.name)
-    return new SqliteKvUnit(db, descriptor, () => {})
+    return new SqliteKvUnit(db, descriptor, () => {}, () => { this.open.delete(descriptor.name) })
   }
 }
 

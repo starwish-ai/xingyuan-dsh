@@ -5,8 +5,9 @@
  * 单测（不经 storageDomain，构造 KvUnitDescriptor 即可）。
  *
  * 后端生命周期事实（由实现决定，测试如实对拍）：同一后端实例对同一 unit 只允许
- * open 一次（open-set 防重入，unit.close() 是空操作）——「重开」必须整后端关闭后
- * 换新实例挂同一 DB 文件（这恰好就是「进程重启后冷读」的真实形态）。
+ * 同时 open 一次（open-set 防重入）；unit.close() 释放占用，同名单元可在同一实例
+ * 重开（官方契约 "release it"，主行单独重载的 HMR 路径依赖此语义）——整后端关闭
+ * 则换新实例挂同一 DB 文件（进程重启后冷读的真实形态）。
  */
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -92,6 +93,22 @@ describe('sqlite 后端门禁', () => {
     db.prepare('UPDATE xingyuan_meta SET global = ? WHERE unit = ?').run('{not-json', 'xingyuan')
     db.close()
     await expect(unit.loadAll()).rejects.toThrow(/global slot is not valid JSON/)
+  })
+
+  it('close 释放单元名：同一后端实例 close 后可重开且数据仍在（官方契约 "release it"；主行单独重载路径）', async () => {
+    const path = join(workDir, 'reopen.sqlite')
+    const ctx = await mountBackend(path)
+    contexts.push(ctx)
+    const kv = ctx.storage.backend.get('sqlite')!.kv!
+    const unit = await kv.open(descriptor(1))
+    await unit.putRecord('wishes', 'w1', { wishId: 'w1', title: '重开前写入' })
+    await unit.close()
+    // 同一后端实例（对应「sqlite 行不动、仅主行重载」的 HMR 场景）：重开必须合法
+    // 且看到同一介质——官方 Domain.close JSDoc："release the backend unit, then
+    // free the domain name for a later open"
+    const reopened = await kv.open(descriptor(1))
+    const tables = await reopened.loadAll()
+    expect((tables.tables['wishes'] ?? {})['w1']).toMatchObject({ title: '重开前写入' })
   })
 
   it('损坏介质：表行非 JSON 时同样报 malformed-medium（与 global 槽同一排障口径）', async () => {

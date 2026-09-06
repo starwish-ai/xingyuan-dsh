@@ -5,9 +5,12 @@
  * `@deepseek-ai/dsh-settings`，绝不可进浏览器包；而设置页需要上下界与默认值
  * 做输入夹取、回显兜底与不可用态兜底。形态对标 tab-policy.ts。
  *
- * 决策口径：
- * - confirmWrites：创建/打卡/取消打卡类写操作是否二次确认，默认开；
- *   删除类始终确认，不受此开关控制（破坏性操作不设开关）。
+ * 决策口径（确认分层模型见 AGENTS.md §10 决策 8）：
+ * - confirmWrites：写操作总开关。关闭时除锁定类目（删除）外所有类目一律不弹确认卡；
+ *   开启时按 confirmOps 各类目明细决定。默认开。
+ * - confirmOps：六个可配确认类目的明细开关（创建/打卡/取消打卡/领取/修改/记忆保存），
+ *   默认值 = 总开关粒度时代的现行矩阵（创建/打卡/取消默认确认，其余默认不确认）；
+ *   删除为锁定类目，不设开关、始终确认（破坏性操作不设开关）。
  * - memoryInjectLimit：记忆注入条数上限，默认 40，合法区间 [5,200] 的整数。
  *   越界输入夹取到区间内并回显；非整数/非数字/空一律拒绝，不静默改值。
  * - confirmLang：对话内确认卡（HITL 卡头/按钮/问题文案）的显示语言，默认 zh。
@@ -26,10 +29,46 @@ export const MEMORY_LIMIT_MAX = 200
 export const CONFIRM_LANGS = ['zh', 'en'] as const
 export type ConfirmLang = (typeof CONFIRM_LANGS)[number]
 
+/**
+ * 可配确认类目（与工具面确认挂点、设置页明细行、i18n 键三方同源，勿改语义）：
+ * - create：创建愿望/任务（含批量）+ 微行动拆解；
+ * - checkin / cancelCheckin：打卡 / 取消打卡；
+ * - claim：领取任务（误领取不可逆，恢复 = 删除重建，故提供可开确认的档位）；
+ * - update：修改愿望/任务/分类改名/记忆更新；
+ * - memorySave：记忆保存。
+ * 删除（含批量、微行动重开）为锁定类目，不在其中——始终确认，见 ADR-0001。
+ */
+export const CONFIRM_OPS = ['create', 'checkin', 'cancelCheckin', 'claim', 'update', 'memorySave'] as const
+export type ConfirmOp = (typeof CONFIRM_OPS)[number]
+
+/** 各类目默认值（= 2026-09 分层化之前的现行矩阵）。 */
+export const CONFIRM_OP_DEFAULTS: Record<ConfirmOp, boolean> = {
+  create: true,
+  checkin: true,
+  cancelCheckin: true,
+  claim: false,
+  update: false,
+  memorySave: false,
+}
+
+/** 脏值容错：confirmOps 快照缺键/非布尔键一律回落类目默认（与 confirmLang 同口径）。 */
+export function normalizeConfirmOps(value: unknown): Record<ConfirmOp, boolean> {
+  const source = typeof value === 'object' && value !== null
+    ? value as Record<string, unknown>
+    : {}
+  const out = {} as Record<ConfirmOp, boolean>
+  for (const op of CONFIRM_OPS) {
+    out[op] = typeof source[op] === 'boolean' ? source[op] : CONFIRM_OP_DEFAULTS[op]
+  }
+  return out
+}
+
 /** 命名空间解析值（schema 默认 → base 层 → 用户层）。 */
 export interface PrefSettings {
-  /** 创建/取消打卡类写操作是否二次确认（删除类始终确认）。 */
+  /** 写操作总开关：关闭时除锁定的删除类目外一律不弹确认卡。 */
   confirmWrites: boolean
+  /** 各可配确认类目的明细开关（总开关开启时生效）。 */
+  confirmOps: Record<ConfirmOp, boolean>
   /** 每次对话自动注入上下文的记忆条数上限。 */
   memoryInjectLimit: number
   /** 对话内确认卡的显示语言（平台不向 host 侧暴露界面语言，见头注）。 */
@@ -39,6 +78,7 @@ export interface PrefSettings {
 /** 命名空间缺省（与 xingyuan-pref schema 默认值同源，见 src/pref-settings.ts）。 */
 export const PREF_DEFAULTS: PrefSettings = {
   confirmWrites: true,
+  confirmOps: { ...CONFIRM_OP_DEFAULTS },
   memoryInjectLimit: 40,
   confirmLang: 'zh',
 }

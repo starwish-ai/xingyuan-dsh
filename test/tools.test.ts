@@ -11,13 +11,14 @@ import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { registerTools } from '../src/preset/tools.js'
 import type { Config } from '../src/preset/tools.js'
+import { CONFIRM_OP_DEFAULTS, type ConfirmOp } from '../src/pref-policy.js'
 import { createTask, claimTask, performCheckIn } from '../src/store.js'
 import { startMicroAction, getMicroAction } from '../src/micro.js'
 import { addDays, todayIso } from '../src/opportunity.js'
 import type { WishRecord, XingyuanStore } from '../src/domain.js'
 import { memoryStore } from './memory-store.js'
 
-function makeConfig(confirmWrites: boolean): Config {
+function makeConfig(confirmWrites: boolean, confirmOps?: Partial<Record<ConfirmOp, boolean>>): Config {
   return {
     batchWishLimit: 50,
     batchTaskLimit: 100,
@@ -27,6 +28,7 @@ function makeConfig(confirmWrites: boolean): Config {
     chartRankLimit: 10,
     chartRankMax: 20,
     confirmWrites,
+    confirmOps: { ...CONFIRM_OP_DEFAULTS, ...confirmOps },
     confirmLang: 'zh',
   }
 }
@@ -36,8 +38,8 @@ interface ToolDef {
   execute: (args: never, exec: never) => Promise<unknown>
 }
 
-/** fake ctx：捕获注册的工具定义；userQuestions 桩记录询问次数并自动选「确认」。 */
-function setup(store: XingyuanStore, config: Config): {
+/** fake ctx：捕获注册的工具定义；userQuestions 桩记录询问次数并自动选 answer（默认「确认」）。 */
+function setup(store: XingyuanStore, config: Config, answer = '确认'): {
   registered: ToolDef[]
   state: { asks: number }
   events: Array<{ kind: string; data: Record<string, unknown> }>
@@ -55,7 +57,7 @@ function setup(store: XingyuanStore, config: Config): {
     userQuestions: {
       ask: async () => {
         state.asks += 1
-        return { answers: [{ selected: ['确认'] }] }
+        return { answers: [{ selected: [answer] }] }
       },
     },
   } as unknown as Context & { xingyuan: XingyuanStore }
@@ -162,6 +164,110 @@ describe('工具层：写确认门闩（confirmWrites）', () => {
     expect(state.asks).toBe(1)
     expect(store.domain.table('tasks').get(taskId)).toBeUndefined()
   })
+
+  it('claim_task：类目明细开启时弹卡（桩自动确认后领取成功）', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    const task = await createTask(store, { name: '可领取', checkInCycle: 'daily', dueDate: addDays(today, 3) }, today)
+    const { run, state } = setup(store, makeConfig(true, { claim: true }))
+    await run('claim_task', { taskId: task.taskId })
+    expect(state.asks).toBe(1)
+    expect(store.domain.table('tasks').get(task.taskId)!.status).toBe('in_progress')
+  })
+
+  it('claim_task：默认免确认，直接领取不弹卡', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    const task = await createTask(store, { name: '直接领取', checkInCycle: 'daily', dueDate: addDays(today, 3) }, today)
+    const { run, state } = setup(store, makeConfig(true))
+    await run('claim_task', { taskId: task.taskId })
+    expect(state.asks).toBe(0)
+    expect(store.domain.table('tasks').get(task.taskId)!.status).toBe('in_progress')
+  })
+
+  it('claim_task：总开关关闭时即使类目开启也不弹卡（一键静音）', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    const task = await createTask(store, { name: '静默领取', checkInCycle: 'daily', dueDate: addDays(today, 3) }, today)
+    const { run, state } = setup(store, makeConfig(false, { claim: true }))
+    await run('claim_task', { taskId: task.taskId })
+    expect(state.asks).toBe(0)
+    expect(store.domain.table('tasks').get(task.taskId)!.status).toBe('in_progress')
+  })
+
+  it('update_task：类目明细开启时弹卡；保存记忆同理', async () => {
+    const store = memoryStore()
+    const taskId = await seedLiveTask(store, '待改任务')
+    const { run, state } = setup(store, makeConfig(true, { update: true, memorySave: true }))
+    await run('update_task', { taskId, name: '新名字' })
+    await run('save_memory', { key: '生日', value: '5月15日', category: 'personal' })
+    expect(state.asks).toBe(2)
+    expect(store.domain.table('tasks').get(taskId)!.name).toBe('新名字')
+    expect(store.domain.table('memories').get('生日')).toBeDefined()
+  })
+
+  it('check_in_task：用户在确认卡取消时不写库', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    const task = await createTask(store, { name: '取消打卡', checkInCycle: 'daily', dueDate: addDays(today, 3) }, today)
+    await claimTask(store, task.taskId, today)
+    const { run, state } = setup(store, makeConfig(true), '再想想')
+    const reply = await run('check_in_task', { taskId: task.taskId }) as string
+    expect(state.asks).toBe(1)
+    expect([...store.domain.table('checkins').entries()]).toHaveLength(0)
+    expect(reply).toContain('已取消打卡')
+  })
+
+  it('update_memory：记忆保存类目开启时弹卡（归属 memorySave 而非 update）', async () => {
+    const store = memoryStore()
+    await store.domain.table('memories').put('生日', { key: '生日', value: '5月15日', category: 'personal', importance: 'medium', createdAt: 0 })
+    const { run, state } = setup(store, makeConfig(true, { memorySave: true }))
+    await run('update_memory', { key: '生日', value: '6月1日' })
+    expect(state.asks).toBe(1)
+    expect(store.domain.table('memories').get('生日')!.value).toBe('6月1日')
+  })
+
+  it('update_wish：修改类目默认关不弹卡；rename_wish_category 开启则弹', async () => {
+    const store = memoryStore()
+    await seedWish(store, 'w-u')
+    const off = setup(store, makeConfig(true))
+    await off.run('update_wish', { wishId: 'w-u', title: '新标题' })
+    expect(off.state.asks).toBe(0)
+    const on = setup(store, makeConfig(true, { update: true }))
+    await on.run('rename_wish_category', { oldName: '学习', newName: '进修' })
+    expect(on.state.asks).toBe(1)
+    expect(store.domain.table('wishes').get('w-u')!.categoryName).toBe('进修')
+  })
+
+  it('create_wish：总开关开启但 create 类目关闭时不弹卡', async () => {
+    const store = memoryStore()
+    const { run, state } = setup(store, makeConfig(true, { create: false }))
+    await run('create_wish', { title: '无确认愿望', categoryName: '阅读' })
+    expect(state.asks).toBe(0)
+    expect([...store.domain.table('wishes').entries()]).toHaveLength(1)
+  })
+
+  it('check_in_task / cancel_check_in_task：类目明细各自关闭时不弹卡', async () => {
+    const store = memoryStore()
+    const today = todayIso()
+    const task = await createTask(store, { name: '静默类目', checkInCycle: 'daily', dueDate: addDays(today, 3) }, today)
+    await claimTask(store, task.taskId, today)
+    const checkin = setup(store, makeConfig(true, { checkin: false }))
+    await checkin.run('check_in_task', { taskId: task.taskId })
+    expect(checkin.state.asks).toBe(0)
+    expect(store.domain.table('checkins').get(store.checkinKey(task.taskId, today))).toBeDefined()
+    const cancel = setup(store, makeConfig(true, { cancelCheckin: false }))
+    await cancel.run('cancel_check_in_task', { taskId: task.taskId, checkInDate: today })
+    expect(cancel.state.asks).toBe(0)
+    expect(store.domain.table('checkins').get(store.checkinKey(task.taskId, today))).toBeUndefined()
+  })
+
+  it('rename_wish_category：分类不存在时校验先于确认报错，不弹卡', async () => {
+    const store = memoryStore()
+    const { run, state } = setup(store, makeConfig(true, { update: true }))
+    await expect(run('rename_wish_category', { oldName: '不存在', newName: '无所谓' })).rejects.toThrow('分类「不存在」不存在')
+    expect(state.asks).toBe(0)
+  })
 })
 
 describe('工具层：分类改名迁移颜色覆盖键', () => {
@@ -183,6 +289,21 @@ describe('工具层：分类改名迁移颜色覆盖键', () => {
     const wishEvents = events.filter((event) => event.kind === 'xingyuan/wish')
     expect(wishEvents).toHaveLength(1)
     expect((wishEvents[0]!.data as { op: string }).op).toBe('updated')
+  })
+
+  it('rename_wish_category：纯颜色覆盖分类（零愿望）改名合法，不再误报分类不存在', async () => {
+    const store = memoryStore()
+    await store.domain.global.set({
+      ...store.domain.global.get(),
+      categoryColors: { 空分类: 'green' },
+    } as never)
+    const { run, events } = setup(store, makeConfig(false))
+    const reply = await run('rename_wish_category', { oldName: '空分类', newName: '新分类' }) as string
+    expect(reply).toContain('没有愿望')
+    const global = store.domain.global.get() as { categoryColors?: Record<string, string> }
+    expect(global.categoryColors?.['新分类']).toBe('green')
+    expect(global.categoryColors?.['空分类']).toBeUndefined()
+    expect(events.filter((event) => event.kind === 'xingyuan/wish')).toHaveLength(0)
   })
 })
 

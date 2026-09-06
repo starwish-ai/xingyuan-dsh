@@ -375,14 +375,19 @@ ctx.tools.register(defineTool({
 
 ### 5.5 HITL 写确认（preset/hitl.ts）
 
-语义矩阵：
+语义矩阵（分层模型的完整决策记录见 §10 决策 8）：总开关
+`confirmWrites` **关闭**时，除锁定的删除类目外一律不弹卡（一键静音）；**开启**时
+按六个可配类目的明细开关 `confirmOps` 逐类决定：
 
-| 操作 | 是否确认 |
-|---|---|
-| 创建 / 打卡 / 取消打卡 | 受设置「写操作二次确认」开关控制（默认开） |
-| 删除（单个/批量） | 始终确认（不可关） |
-| 教练风格 / 用户画像修改 | 免确认 |
-| 记忆保存 / 更新 | 免确认（有意的零摩擦采集；删除记忆仍走上行「始终确认」） |
+| 类目 | 覆盖操作 | 明细默认 |
+|---|---|---|
+| 创建 | 创建愿望/任务（含批量）+ 微行动拆解 | 确认 |
+| 打卡 / 取消打卡 | check_in_task / cancel_check_in_task | 确认 |
+| 领取 | claim_task（不可逆：锚点重算、误领取恢复=删除重建） | 免确认（用户指令即授权） |
+| 修改 | update_wish / update_task / rename_wish_category | 免确认 |
+| 记忆保存 | save_memory / update_memory | 免确认 |
+| **删除（锁定）** | 删除愿望/任务/记忆（含批量）+ 微行动重开 | **始终确认，无开关** |
+| 不设门闩 | 微行动步进（口头即授权）、教练风格 / 用户画像（配置偏好） | — |
 
 实现契约（dsh-user-questions 校验过的事实）：
 
@@ -397,7 +402,8 @@ ctx.tools.register(defineTool({
   派生的 subagent 调用 preset 层工具）**fail-closed 并给出指引**（回主会话确认后由
   主会话执行）——父 agent 有完整 UI，平台口径是「把未决问题写进子 agent 最终结果」，
   拒绝可执行，且保住「删除始终确认」不因委派被静默绕过。
-- `confirmWrites` 开关读取走 getter（设置热改后下一次 execute 立即生效，HMR 安全）。
+- `confirmWrites`/`confirmOps` 开关读取走 getter（设置热改后下一次 execute 立即生效，
+  HMR 安全）；受门控类目的工具描述保持「开与关都成立」的中性措辞（§5.8 静态描述约束）。
 - **确认卡语言（confirmLang，默认 zh）**：平台事实（rc.2 实测）——宿主不向 host 侧
   插件暴露用户界面语言（locale 服务是 client 半侧浏览器专属 seam，工具执行期读不到；
   ask() 载荷也无 i18n 字段）。因此确认卡卡头/按钮/问题文案的语言由对话偏好
@@ -762,7 +768,7 @@ wishProgress / wishAchievement / continuousCheckin / checkinTimeDistribution / w
 |---|---|
 | bundle 主行 Config | rangeDefaultDays(7)、rangeMaxDays(31)、memoryListLimit(500)、repairSessionLogs(true) |
 | preset side Config（无 Web 设置界面，仅组合层可调） | batchWishLimit(50)、batchTaskLimit(100)、chartTrendDays(14)、chartDistributionDays(30)、chartMaxDays(90)、chartRankLimit(10)、chartRankMax(20) |
-| bundle 对话偏好命名空间 xingyuan-pref（Web 设置页「对话偏好」卡） | confirmWrites(true)、memoryInjectLimit(40，5-200 整数，`step(1)` 让服务端也拒绝小数)、confirmLang('zh'，可选 zh/en)——见 §5.5/§5.8 |
+| bundle 对话偏好命名空间 xingyuan-pref（Web 设置页「对话偏好」卡） | confirmWrites(true)、confirmOps(六类目明细，默认=分层化前矩阵：创建/打卡/取消确认，领取/修改/记忆保存不确认)、memoryInjectLimit(40，5-200 整数，`step(1)` 让服务端也拒绝小数)、confirmLang('zh'，可选 zh/en)——见 §5.5/§5.8 |
 | bundle 界面偏好命名空间 xingyuan-ui（Web 设置页「标签页显示」卡） | tabVisibilityMode(follow)、hiddenTabs([])——schemastery 枚举用 const+union 表达，见 §5.11 |
 
 配置变更触发 HMR 热替换；不做任何跨重载的模块级单例状态。
@@ -820,7 +826,9 @@ npm provenance 开启）。
 7. **周期提醒不做**：dsh schedule 只有一次性规则（at / every_seconds ≥300s 固定速率，
    锚定创建时刻），无 daily/weekly/monthly 日历能力；v1 以今日页 + 开场概览兜底，
    向用户的差异如实说明。（另注：schedule 工具只对装载之后新建的 live 根 agent 可见。）
-8. **写确认默认开**：创建/打卡/取消受开关控制，删除始终确认（§5.5 矩阵）。
+8. **写确认分层（2026-09，ADR-0001）**：总开关 + 六类目明细（创建/打卡/取消/领取/修改/记忆保存），
+   默认=分层化前矩阵；删除始终确认、不设开关（破坏性操作不设开关）；总开关关闭=一键静音
+   （除删除外）；作用域仅对话侧 HITL，页面侧确认对话框不跟随设置（§5.5 矩阵）。
 9. **标签页显隐默认跟随会话预设**：六个会话视图标签默认仅在星愿预设的会话显示，
    设置可切「始终显示/始终隐藏」并按标签勾选；界面偏好命名空间常驻 bundle 层
    （未选星愿也可调，避免「全部隐藏后开关不可达」死锁，见 §5.11）。

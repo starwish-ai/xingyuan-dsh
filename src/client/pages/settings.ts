@@ -7,10 +7,13 @@ import { toastError } from '../ui.js'
 import { useXyT, activeLocale, type XyKey } from '../i18n.js'
 import { TAB_IDS, type TabId, type TabVisibilityMode } from '../../tab-policy.js'
 import {
+  CONFIRM_OPS,
   MEMORY_LIMIT_MAX,
   MEMORY_LIMIT_MIN,
   PREF_DEFAULTS,
+  normalizeConfirmOps,
   parseMemoryLimit,
+  type ConfirmOp,
 } from '../../pref-policy.js'
 
 /** xingyuan-pref 命名空间快照（对话偏好字段）。 */
@@ -18,6 +21,7 @@ interface PrefScopeSnapshotLike {
   readonly status: 'loading' | 'ready' | 'unavailable'
   readonly value?: {
     readonly confirmWrites?: boolean
+    readonly confirmOps?: Record<string, boolean>
     readonly memoryInjectLimit?: number
     readonly confirmLang?: 'zh' | 'en'
   }
@@ -86,6 +90,16 @@ const TAB_LABEL_KEYS: Record<TabId, XyKey> = {
   memory: 'tab.memory',
 }
 
+/** 确认类目的显示名键（与 pref-policy CONFIRM_OPS 一一对应）。 */
+const CONFIRM_OP_LABEL_KEYS: Record<ConfirmOp, XyKey> = {
+  create: 'settings.pref.confirmOps.create',
+  checkin: 'settings.pref.confirmOps.checkin',
+  cancelCheckin: 'settings.pref.confirmOps.cancelCheckin',
+  claim: 'settings.pref.confirmOps.claim',
+  update: 'settings.pref.confirmOps.update',
+  memorySave: 'settings.pref.confirmOps.memorySave',
+}
+
 export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeLike }): ReactElement {
   const t = useXyT()
   const scope = props.scope
@@ -122,6 +136,8 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
   const [savedMsg, setSavedMsg] = useState('')
   // 二次确认开关：本地乐观值（undefined=跟随远端快照）——写入在途时 UI 立即响应，失败回滚
   const [pendingToggle, setPendingToggle] = useState<boolean | undefined>(undefined)
+  // 确认类目明细：乐观值为「合并后的完整对象」（每次写整体下发），失败回滚
+  const [pendingOps, setPendingOps] = useState<Record<ConfirmOp, boolean> | undefined>(undefined)
   // 标签页显隐：模式与勾选各自乐观（写入在途时禁用对应控件，失败回滚 + toast）
   const [pendingMode, setPendingMode] = useState<TabVisibilityMode | undefined>(undefined)
   const [pendingHidden, setPendingHidden] = useState<readonly TabId[] | undefined>(undefined)
@@ -137,6 +153,8 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
   // 开关显示值：乐观本地值优先（写入在途），否则远端快照，值缺席回落 schema 默认。
   // 不可写成 `!== false`——那样「值未知」会被渲染成「已开启」，安全策略类开关尤其不能撒谎。
   const confirmWrites = pendingToggle ?? snap.value?.confirmWrites ?? PREF_DEFAULTS.confirmWrites
+  // 确认类目显示值：乐观优先 → 快照（脏键容错回落默认）→ 全默认
+  const confirmOps = pendingOps ?? normalizeConfirmOps(snap.value?.confirmOps)
   // 偏好区提示：判定顺序不可换——memory 模式下 status 同样是 unavailable，
   // 先判 mode 才不会把「远程/临时模式」误报成「命名空间未就绪」
   const prefNoticeKey: XyKey | undefined =
@@ -238,11 +256,17 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
    */
   const verifyWritten = (
     seq: number,
-    field: 'confirmWrites' | 'memoryInjectLimit' | 'confirmLang',
-    value: boolean | number | string,
+    field: 'confirmWrites' | 'confirmOps' | 'memoryInjectLimit' | 'confirmLang',
+    value: boolean | number | string | Record<ConfirmOp, boolean>,
   ): void => {
     if (seq !== writeSeqRef.current) return
-    if (scope.getSnapshot().value?.[field] !== value) toastError(new Error(t('settings.pref.writeFailed')))
+    const current: unknown = scope.getSnapshot().value?.[field]
+    // 对象字段（confirmOps）按 CONFIRM_OPS 逐键比对（对键序不敏感；JSON.stringify
+    // 比对会依赖两侧对象键序巧合一致）；标量直接全等
+    const same = typeof value === 'object'
+      ? CONFIRM_OPS.every((key) => (current as Record<ConfirmOp, boolean> | undefined)?.[key] === value[key])
+      : current === value
+    if (!same) toastError(new Error(t('settings.pref.writeFailed')))
   }
 
   /** 标签页显隐命名空间的写后校验（与 verifyWritten 同款，命名空间独立故写队列与序号独立）。 */
@@ -271,6 +295,26 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
       })
       .catch((err: unknown) => {
         setPendingLang(undefined)
+        toastError(err)
+      })
+  }
+
+  /**
+   * 切换单个确认类目：整体写合并后的 confirmOps 对象（与 hiddenTabs 整组写入同款），
+   * 乐观值顶住回显、失败回滚 + toast。总开关关闭时明细行禁用（不弹卡由总开关决定）。
+   */
+  const toggleConfirmOp = (op: ConfirmOp, next: boolean): void => {
+    if (!writable || pendingOps !== undefined || !confirmWrites || confirmOps[op] === next) return
+    const merged = { ...confirmOps, [op]: next }
+    setPendingOps(merged)
+    const seq = ++writeSeqRef.current
+    void scope.set('confirmOps', merged)
+      .then(() => {
+        setPendingOps(undefined)
+        verifyWritten(seq, 'confirmOps', merged)
+      })
+      .catch((err: unknown) => {
+        setPendingOps(undefined)
         toastError(err)
       })
   }
@@ -424,6 +468,39 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
           }),
           t('settings.pref.confirmWrites')),
         createElement('p', { className: 'xy-hint' }, t('settings.pref.confirmWritesHint'))),
+      // 确认类目明细（锁定删除行恒展示）：总开关关闭时整组禁用置灰——不弹卡由总开关
+      // 决定；禁用原因由组尾 hint 承担（aria-describedby 关联），不在每行重复
+      createElement('div', {
+        className: 'xy-confirm-ops',
+        role: 'group',
+        'aria-labelledby': 'xy-confirm-ops-head',
+        'aria-describedby': 'xy-confirm-ops-hint',
+      },
+        createElement('span', { className: 'xy-op-group-head', id: 'xy-confirm-ops-head' }, t('settings.pref.confirmOps.group')),
+        ...CONFIRM_OPS.map((op) => createElement('label', { className: 'xy-op-row', key: op },
+          createElement('input', {
+            type: 'checkbox',
+            className: 'xy-toggle',
+            name: `confirmOps.${op}`,
+            checked: confirmOps[op],
+            disabled: !writable || pendingOps !== undefined || !confirmWrites,
+            onChange: (e: { target: { checked: boolean } }) => toggleConfirmOp(op, e.target.checked),
+          }),
+          t(CONFIRM_OP_LABEL_KEYS[op]))),
+        // 锁定类目：div + 只读开关（不可交互故不用 label），说明单独一行与文字对齐
+        createElement('div', { className: 'xy-op-row xy-op-row-locked' },
+          createElement('input', {
+            type: 'checkbox',
+            className: 'xy-toggle',
+            name: 'confirmOps.deleteLocked',
+            checked: true,
+            readOnly: true,
+            disabled: true,
+            'aria-label': t('settings.pref.confirmOps.delete'),
+          }),
+          createElement('span', null, t('settings.pref.confirmOps.delete'))),
+        createElement('span', { className: 'xy-hint xy-op-locked-hint' }, t('settings.pref.confirmOps.deleteHint')),
+        createElement('span', { className: 'xy-hint', id: 'xy-confirm-ops-hint' }, t('settings.pref.confirmOps.hint'))),
       createElement('label', { className: 'xy-field' },
         createElement('span', { className: 'xy-field-head' }, t('settings.pref.memoryLimit')),
         createElement('input', {
