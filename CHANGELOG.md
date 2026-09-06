@@ -5,6 +5,41 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-09-06
+
+### Changed
+- **Settings page information architecture**: the former single "chat preferences"
+  card is split into two focused cards — "Confirmation before writes" (master
+  switch + six category rows + an always-on badge for deletes) and "Chat
+  preferences" (memory injection limit + confirmation-card language). Toggle and
+  enum settings now follow the settings-row convention used by OS settings pages
+  (label + description left, control right, hairline dividers); form fields keep
+  the label-above layout. Both themes and narrow viewports verified against the
+  static style mock.
+- Confirmation-card language uses a segmented control (consistent with coach
+  style / tab visibility) instead of a dropdown; tab visibility chips gain a ✓
+  prefix to distinguish multi-select chips from single-select segmented controls.
+- The locked delete category shows an "Always on" badge instead of a disabled
+  checkbox: a disabled control read as "broken", the badge states the fact.
+- Coach style hint is static guidance (the segmented buttons already carry the
+  current selection).
+
+### Fixed
+- Disabled controls now look disabled: custom toggles and segmented buttons get
+  explicit grey-out styling when the settings namespace is read-only or a write
+  is in flight (they ignore native disabled rendering).
+- With the write-confirmation master switch off, the locked delete row is no
+  longer greyed out — it is not governed by the master switch, and the dimmed
+  label contradicted its "Always on" badge.
+- Entering an out-of-range memory injection limit (e.g. 300) shows an
+  informational note that the nearest bound was saved, instead of an "enter an
+  integer between 5 and 200" error while the clamped value had in fact been
+  saved. Genuinely invalid input (non-integers) keeps the inline error.
+- Free-standing hint lines (namespace notice, trailing data note) align with the
+  card text column instead of hugging the container's left edge.
+- Memory-limit input: `autocomplete="off"` and tabular numerals; corrected a
+  stale style comment.
+
 ## [0.6.2] - 2026-09-06
 
 ### Added
