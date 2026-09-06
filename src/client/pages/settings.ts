@@ -124,9 +124,10 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
   const [nicknameDraft, setNicknameDraft] = useState('')
   const [occupationDraft, setOccupationDraft] = useState('')
   const [interestsDraft, setInterestsDraft] = useState('')
-  // 记忆注入上限：草稿态编辑（null=显示快照值），失焦才校验提交——避免逐键持久化与非法中间值死锁
+  // 记忆注入上限：草稿态编辑（null=显示快照值），失焦才校验提交——避免逐键持久化与非法中间值死锁。
+  // 错误态分两档：invalid=未保存的就地报错；clamped=越界已按边界值保存的说明性提示（不是错误）
   const [limitDraft, setLimitDraft] = useState<string | null>(null)
-  const [limitError, setLimitError] = useState(false)
+  const [limitError, setLimitError] = useState<'invalid' | 'clamped' | undefined>(undefined)
   // 记忆注入上限：写入在途的乐观值（与开关的 pendingToggle 同款，用于禁用控件并顶住回显，
   // 否则提交后到快照回折前会闪回旧值）
   const [pendingLimit, setPendingLimit] = useState<number | undefined>(undefined)
@@ -322,16 +323,17 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
   const commitLimit = (): void => {
     const raw = limitDraft
     setLimitDraft(null)
-    setLimitError(false)
+    setLimitError(undefined)
     if (raw === null || !writable) return
     // 空串视为放弃编辑：静默回显保存值。若在此报错，会同时出现「已填回旧值」与
     // 「请输入 5-200 的整数」两条互相矛盾的信息。
     if (raw.trim() === '') return
     const parsed = parseMemoryLimit(raw)
     // 非法输入就地报错（不再静默回弹）：用户明确知道哪里错、该怎么改
-    if (parsed === undefined) { setLimitError(true); return }
+    if (parsed === undefined) { setLimitError('invalid'); return }
     if (parsed.clamped) {
-      // 越界但可夹取：按夹取值提交并回显，同时给出行内提示
+      // 越界但可夹取：按夹取值提交并回显，给说明性提示而非报错——值已成功保存，
+      // 「请输入合法整数」的报错口径与实际行为矛盾
       const seq = ++writeSeqRef.current
       setPendingLimit(parsed.value)
       void scope.set('memoryInjectLimit', parsed.value)
@@ -341,7 +343,7 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
           verifyWritten(seq, 'memoryInjectLimit', parsed.value)
         })
         .catch((err: unknown) => { setPendingLimit(undefined); toastError(err) })
-      setLimitError(true)
+      setLimitError('clamped')
       return
     }
     if (parsed.value === snap.value?.memoryInjectLimit) return
@@ -353,11 +355,6 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
         verifyWritten(seq, 'memoryInjectLimit', parsed.value)
       })
       .catch((err: unknown) => { setPendingLimit(undefined); toastError(err) })
-  }
-
-  const coachLabel = (id: string | undefined): string => {
-    const index = COACH_IDS.indexOf(id as (typeof COACH_IDS)[number])
-    return index >= 0 ? t(COACH_KEYS[index]!) : (id ?? '')
   }
 
   const saveCoach = (style: string): void => {
@@ -385,7 +382,8 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
       }))
   }
 
-  // 三个分节各自成面板卡（与全站卡片语言一致），字段不再裸堆叠；卡内节奏由样式层统一
+  // 分节各自成面板卡（与全站卡片语言一致）；开关类设置用 row 语法（标签+说明在左、
+  // 控件在右），表单类字段保持 label 在上的纵排——两类各有惯例，不混用
   return createElement('div', { className: 'xy-settings' },
     createElement('section', { className: 'xy-panel' },
       createElement('h3', { className: 'xy-panel-head' }, t('settings.coach.title')),
@@ -397,10 +395,11 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
           disabled: saving,
           onClick: () => saveCoach(id),
         }, t(COACH_KEYS[i]!)))),
+      // 分段按钮已表达当前风格，说明行只讲作用不报状态；错误态保留重试入口
       createElement('p', { className: 'xy-hint' },
         profileError !== undefined ? t('settings.coach.loadFailed', { error: profileError })
           : profile === undefined ? t('common.loading') + '…'
-          : t('settings.coach.current', { label: coachLabel(profile.coachStyle) })),
+          : t('settings.coach.hint')),
       profileError !== undefined
         ? createElement('button', { className: 'xy-btn', onClick: loadProfile }, t('common.retry'))
         : null),
@@ -438,105 +437,111 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
           createElement('span', { 'aria-hidden': 'true' }, '✓ '),
           savedMsg) : null),
       createElement('p', { className: 'xy-hint' }, t('settings.profile.sharedHint'))),
+    // 整页 section 没有官方卡片那套「按命名空间自动显隐」的保护，失败呈现归注册方。
+    // 命名空间级通知作用于下方两卡（写操作确认/对话偏好），页级一次说清不逐卡重复
+    prefNoticeKey !== undefined
+      ? createElement('p', { className: 'xy-hint' }, t(prefNoticeKey))
+      : null,
+    // 写操作确认独立成卡：安全类设置自成一组，与一般行为参数分离
     createElement('section', { className: 'xy-panel' },
-      createElement('h3', { className: 'xy-panel-head' }, t('settings.pref.title')),
-      // 整页 section 没有官方卡片那套「按命名空间自动显隐」的保护，失败呈现归注册方
-      prefNoticeKey !== undefined
-        ? createElement('p', { className: 'xy-hint' }, t(prefNoticeKey))
-        : null,
-      createElement('label', { className: 'xy-field' },
-        createElement('span', { className: 'xy-field-head' },
-          createElement('input', {
-            type: 'checkbox',
-            className: 'xy-toggle',
-            name: 'confirmWrites',
-            checked: confirmWrites,
-            disabled: !writable || pendingToggle !== undefined,
-            onChange: (e: { target: { checked: boolean } }) => {
-              if (!writable) return
-              // 乐观写：先落 UI 再等持久化；失败回滚到快照口径并 toast
-              const next = e.target.checked
-              setPendingToggle(next)
-              const seq = ++writeSeqRef.current
-              void scope.set('confirmWrites', next)
-                .then(() => { setPendingToggle(undefined); verifyWritten(seq, 'confirmWrites', next) })
-                .catch((err: unknown) => {
-                  setPendingToggle(undefined)
-                  toastError(err)
-                })
-            },
-          }),
-          t('settings.pref.confirmWrites')),
-        createElement('p', { className: 'xy-hint' }, t('settings.pref.confirmWritesHint'))),
+      createElement('h3', { className: 'xy-panel-head' }, t('settings.confirm.title')),
+      createElement('label', { className: 'xy-setrow' },
+        createElement('span', { className: 'xy-setrow-main' },
+          createElement('span', { className: 'xy-setrow-label' }, t('settings.confirm.master')),
+          createElement('span', { className: 'xy-setrow-desc' }, t('settings.pref.confirmWritesHint'))),
+        createElement('input', {
+          type: 'checkbox',
+          className: 'xy-toggle',
+          name: 'confirmWrites',
+          checked: confirmWrites,
+          disabled: !writable || pendingToggle !== undefined,
+          onChange: (e: { target: { checked: boolean } }) => {
+            if (!writable) return
+            // 乐观写：先落 UI 再等持久化；失败回滚到快照口径并 toast
+            const next = e.target.checked
+            setPendingToggle(next)
+            const seq = ++writeSeqRef.current
+            void scope.set('confirmWrites', next)
+              .then(() => { setPendingToggle(undefined); verifyWritten(seq, 'confirmWrites', next) })
+              .catch((err: unknown) => {
+                setPendingToggle(undefined)
+                toastError(err)
+              })
+          },
+        })),
       // 确认类目明细（锁定删除行恒展示）：总开关关闭时整组禁用置灰——不弹卡由总开关
       // 决定；禁用原因由组尾 hint 承担（aria-describedby 关联），不在每行重复
       createElement('div', {
-        className: 'xy-confirm-ops',
+        className: `xy-confirm-ops${confirmWrites ? '' : ' xy-confirm-ops-off'}`,
         role: 'group',
         'aria-labelledby': 'xy-confirm-ops-head',
         'aria-describedby': 'xy-confirm-ops-hint',
       },
         createElement('span', { className: 'xy-op-group-head', id: 'xy-confirm-ops-head' }, t('settings.pref.confirmOps.group')),
-        ...CONFIRM_OPS.map((op) => createElement('label', { className: 'xy-op-row', key: op },
+        createElement('div', { className: 'xy-setrows' },
+          ...CONFIRM_OPS.map((op) => createElement('label', { className: 'xy-setrow', key: op },
+            createElement('span', { className: 'xy-setrow-main' },
+              createElement('span', { className: 'xy-setrow-label' }, t(CONFIRM_OP_LABEL_KEYS[op]))),
+            createElement('input', {
+              type: 'checkbox',
+              className: 'xy-toggle',
+              name: `confirmOps.${op}`,
+              checked: confirmOps[op],
+              disabled: !writable || pendingOps !== undefined || !confirmWrites,
+              onChange: (e: { target: { checked: boolean } }) => toggleConfirmOp(op, e.target.checked),
+            }))),
+          // 锁定类目：div + 「始终开启」徽章（不可交互，不用禁用开关表达恒开语义）
+          createElement('div', { className: 'xy-setrow' },
+            createElement('span', { className: 'xy-setrow-main' },
+              createElement('span', { className: 'xy-setrow-label' }, t('settings.pref.confirmOps.delete')),
+              createElement('span', { className: 'xy-setrow-desc' }, t('settings.pref.confirmOps.deleteHint'))),
+            createElement('span', { className: 'xy-locked' }, t('settings.pref.confirmOps.locked'))))),
+      createElement('span', { className: 'xy-hint', id: 'xy-confirm-ops-hint' }, t('settings.pref.confirmOps.hint'))),
+    // 一般对话行为参数：记忆注入上限 + 确认卡语言
+    createElement('section', { className: 'xy-panel' },
+      createElement('h3', { className: 'xy-panel-head' }, t('settings.pref.title')),
+      createElement('div', { className: 'xy-setrows' },
+        createElement('label', { className: 'xy-setrow' },
+          createElement('span', { className: 'xy-setrow-main' },
+            createElement('span', { className: 'xy-setrow-label' }, t('settings.pref.memoryLimit')),
+            createElement('span', { className: 'xy-setrow-desc' }, t('settings.pref.memoryLimitHint')),
+            limitError === 'invalid'
+              ? createElement('span', { id: 'xy-limit-error', className: 'xy-field-err', role: 'alert' }, t('settings.pref.limitInvalid'))
+              : limitError === 'clamped'
+                ? createElement('span', { id: 'xy-limit-error', className: 'xy-hint', role: 'status' }, t('settings.pref.limitClamped'))
+                : null),
           createElement('input', {
-            type: 'checkbox',
-            className: 'xy-toggle',
-            name: `confirmOps.${op}`,
-            checked: confirmOps[op],
-            disabled: !writable || pendingOps !== undefined || !confirmWrites,
-            onChange: (e: { target: { checked: boolean } }) => toggleConfirmOp(op, e.target.checked),
-          }),
-          t(CONFIRM_OP_LABEL_KEYS[op]))),
-        // 锁定类目：div + 只读开关（不可交互故不用 label），说明单独一行与文字对齐
-        createElement('div', { className: 'xy-op-row xy-op-row-locked' },
-          createElement('input', {
-            type: 'checkbox',
-            className: 'xy-toggle',
-            name: 'confirmOps.deleteLocked',
-            checked: true,
-            readOnly: true,
-            disabled: true,
-            'aria-label': t('settings.pref.confirmOps.delete'),
-          }),
-          createElement('span', null, t('settings.pref.confirmOps.delete'))),
-        createElement('span', { className: 'xy-hint xy-op-locked-hint' }, t('settings.pref.confirmOps.deleteHint')),
-        createElement('span', { className: 'xy-hint', id: 'xy-confirm-ops-hint' }, t('settings.pref.confirmOps.hint'))),
-      createElement('label', { className: 'xy-field' },
-        createElement('span', { className: 'xy-field-head' }, t('settings.pref.memoryLimit')),
-        createElement('input', {
-          type: 'number', min: MEMORY_LIMIT_MIN, max: MEMORY_LIMIT_MAX,
-          className: 'xy-input xy-input-num', name: 'memoryInjectLimit', inputMode: 'numeric',
-          'aria-label': t('settings.pref.memoryLimit'),
-          'aria-invalid': limitError || undefined,
-          ...(limitError ? { 'aria-describedby': 'xy-limit-error' } : {}),
-          // 写入在途时顶住乐观值并禁用（与开关同款），避免闪回旧值与并发写交错
-          value: limitDraft ?? (pendingLimit !== undefined ? String(pendingLimit) : limit),
-          disabled: !writable || pendingLimit !== undefined,
-          onChange: (e: { target: { value: string } }) => { setLimitDraft(e.target.value); setLimitError(false) },
-          onBlur: commitLimit,
-          onKeyDown: (e: { key: string; currentTarget: { blur(): void } }) => {
-            if (e.key === 'Enter') e.currentTarget.blur()
-          },
-        }),
-        createElement('span', { className: 'xy-hint' }, t('settings.pref.memoryLimitHint')),
-        limitError
-          ? createElement('span', { id: 'xy-limit-error', className: 'xy-field-err', role: 'alert' }, t('settings.pref.limitInvalid'))
-          : null),
-      // 确认卡语言：平台不向 host 侧暴露界面语言（rc.2 实测），对话侧确认卡文案无法
-      // 自动跟随界面语言——由此处显式选择，即时热生效（hitl/tools 每次执行读 thunk）
-      createElement('label', { className: 'xy-field' },
-        createElement('span', { className: 'xy-field-head' }, t('settings.pref.confirmLang')),
-        createElement('select', {
-          className: 'xy-input', value: confirmLang, name: 'confirmLang',
-          'aria-label': t('settings.pref.confirmLang'),
-          disabled: !writable || pendingLang !== undefined,
-          onChange: (e: { target: { value: string } }) => {
-            if (e.target.value === 'zh' || e.target.value === 'en') switchConfirmLang(e.target.value)
-          },
-        },
-          createElement('option', { value: 'zh' }, t('settings.pref.confirmLang.zh')),
-          createElement('option', { value: 'en' }, t('settings.pref.confirmLang.en'))),
-        createElement('span', { className: 'xy-hint' }, t('settings.pref.confirmLangHint')))),
+            type: 'number', min: MEMORY_LIMIT_MIN, max: MEMORY_LIMIT_MAX,
+            className: 'xy-input xy-input-num', name: 'memoryInjectLimit', inputMode: 'numeric',
+            autoComplete: 'off',
+            'aria-label': t('settings.pref.memoryLimit'),
+            'aria-invalid': limitError === 'invalid' || undefined,
+            ...(limitError ? { 'aria-describedby': 'xy-limit-error' } : {}),
+            // 写入在途时顶住乐观值并禁用（与开关同款），避免闪回旧值与并发写交错
+            value: limitDraft ?? (pendingLimit !== undefined ? String(pendingLimit) : limit),
+            disabled: !writable || pendingLimit !== undefined,
+            onChange: (e: { target: { value: string } }) => { setLimitDraft(e.target.value); setLimitError(undefined) },
+            onBlur: commitLimit,
+            onKeyDown: (e: { key: string; currentTarget: { blur(): void } }) => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+            },
+          })),
+        // 确认卡语言：平台不向 host 侧暴露界面语言（rc.2 实测），对话侧确认卡文案无法
+        // 自动跟随界面语言——由此处显式选择，即时热生效（hitl/tools 每次执行读 thunk）。
+        // 两档枚举与教练风格共用分段控件（下拉对小枚举过重）；行内是按钮组故不用 label
+        createElement('div', { className: 'xy-setrow' },
+          createElement('span', { className: 'xy-setrow-main' },
+            createElement('span', { className: 'xy-setrow-label' }, t('settings.pref.confirmLang')),
+            createElement('span', { className: 'xy-setrow-desc' }, t('settings.pref.confirmLangHint'))),
+          createElement('span', { className: 'xy-seg', role: 'group', 'aria-label': t('settings.pref.confirmLang') },
+            ...(['zh', 'en'] as const).map((lang) => createElement('button', {
+              key: lang,
+              type: 'button',
+              className: `xy-seg-btn${confirmLang === lang ? ' xy-on' : ''}`,
+              'aria-pressed': confirmLang === lang,
+              disabled: !writable || pendingLang !== undefined,
+              onClick: () => switchConfirmLang(lang),
+            }, t(lang === 'zh' ? 'settings.pref.confirmLang.zh' : 'settings.pref.confirmLang.en'))))))),
     // 标签页显示：模式三态（跟随会话/始终显示/始终隐藏）+ 六个标签勾选 chips。
     // 与教练风格卡同一 xy-seg 视觉语法；「始终隐藏」时勾选区整组禁用置灰。
     // 命名空间常驻于 bundle 层（未选星愿预设也可调），见 src/ui-settings.ts 头注。
@@ -560,13 +565,15 @@ export function SettingsSection(props: { scope: PrefScopeLike; uiscope: UiScopeL
       },
         ...TAB_IDS.map((id) => {
           const shown = !hiddenTabs.includes(id)
+          // 多选勾选态加勾形装饰（对读屏隐藏，状态由 aria-pressed 承担）：
+          // 与上方单选的模式分段在视觉上区分「可多选」
           return createElement('button', {
             key: id,
             className: `xy-seg-btn${shown ? ' xy-on' : ''}`,
             'aria-pressed': shown,
             disabled: !uiWritable || pendingHidden !== undefined || tabMode === 'hide',
             onClick: () => toggleTab(id, !shown),
-          }, t(TAB_LABEL_KEYS[id]))
+          }, shown ? createElement('span', { 'aria-hidden': 'true' }, '✓ ') : null, t(TAB_LABEL_KEYS[id]))
         })),
       createElement('p', { className: 'xy-hint' }, t('settings.tabs.hint'))),
     createElement('p', { className: 'xy-hint' }, t('settings.dataHint')))

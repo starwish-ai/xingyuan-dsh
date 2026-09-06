@@ -264,7 +264,7 @@ body[data-ds-dark-theme] .xy-badge-cat{background:hsl(var(--cat-h,275) calc(var(
 .xy-input:disabled{opacity:.55;cursor:not-allowed}
 .xy-field-err{color:var(--xyd-danger);font-size:12px;margin-top:4px}
 /* 数字微输入（设置页注入上限等）：按内容长度定宽，不随浏览器默认 size 拉成宽条 */
-.xy-input-num{width:96px}
+.xy-input-num{width:96px;font-variant-numeric:tabular-nums}
 
 /* 列表行 */
 .xy-rowmain{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -506,35 +506,54 @@ button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 2px var(--xyd-accent-ring)}
 
 /* ===== 设置页 ===== */
 .xy-settings{display:flex;flex-direction:column;gap:16px;max-width:560px;color:var(--dsw-alias-label-primary);font-size:14px}
-/* 设置三个分节各自成面板卡；间距交给 xy-settings 的 gap，卡内子元素统一 10px 纵向节奏 */
+/* 游离于卡片外的说明行（页级命名空间通知/页尾数据说明）随卡内文字对齐
+ * （xy-panel 横向内边距 14px），不得贴容器左缘悬在列外 */
+.xy-settings>.xy-hint{padding:0 14px}
+/* 设置各分节自成面板卡；间距交给 xy-settings 的 gap，卡内子元素统一 10px 纵向节奏 */
 .xy-settings .xy-panel{margin-top:0}
 .xy-settings .xy-panel>*+*{margin-top:10px}
 .xy-field{display:flex;flex-direction:column;gap:6px}
-.xy-field-head{display:flex;align-items:center;gap:8px;font-weight:600}
+/* 设置行（业界设置页 row 惯例）：标签+说明在左、控件在右，扫描线对齐；说明文字
+ * flex:1 收缩换行、控件 flex:none 不被挤压，窄面板下控件换行左对齐。
+ * label 行整行可点（label 包裹控件）；div 行（分段按钮组/锁定行）不可点。 */
+.xy-setrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+label.xy-setrow{cursor:pointer}
+.xy-setrow-main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 220px}
+.xy-setrow-label{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere}
+.xy-setrow-desc{color:var(--dsw-alias-label-secondary);font-size:12px;margin:0;overflow-wrap:anywhere}
+/* 行列表：行间 hairline 分隔（与分组卡 xy-grouprow 同一语法），首行不画线 */
+.xy-setrows{display:flex;flex-direction:column}
+.xy-setrows>.xy-setrow{padding:8px 0}
+.xy-setrows>.xy-setrow+.xy-setrow{border-top:1px solid var(--dsw-alias-border-l1)}
+.xy-setrow>.xy-toggle,.xy-setrow>.xy-input-num,.xy-setrow>.xy-seg{flex:none}
 .xy-input-wide{width:100%;max-width:360px;box-sizing:border-box}
 .xy-seg{display:flex;gap:6px;flex-wrap:wrap}
 .xy-seg-btn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border-radius:999px;padding:5px 14px;font-size:13px;cursor:pointer;transition:border-color .15s ease,background-color .15s ease,color .15s ease}
+.xy-seg-btn:disabled{opacity:.55;cursor:not-allowed}
 @media (hover:hover) and (pointer:fine){
-  .xy-seg-btn:hover{border-color:var(--xyd-accent)}
+  .xy-seg-btn:hover:not(:disabled){border-color:var(--xyd-accent)}
 }
 /* 选中态双选择器：类名与 aria-pressed 属性等价（组件侧用属性表达状态语义） */
 .xy-seg-btn.xy-on,.xy-seg-btn[aria-pressed='true']{background:var(--xyd-accent);border-color:transparent;color:var(--xyd-on-accent)}
 .xy-save-row{display:flex;align-items:center;gap:10px;margin-top:2px}
 .xy-toggle{width:38px;height:22px;appearance:none;border-radius:999px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);position:relative;cursor:pointer;transition:background .15s}
+/* 禁用即置灰（与 xy-btn/xy-input 同语法）：只读命名空间/写入在途的控件不得看起来仍可交互 */
+.xy-toggle:disabled{opacity:.4;cursor:not-allowed}
 .xy-toggle:checked{background:var(--xyd-accent);border-color:transparent}
 .xy-toggle::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-label-primary);transition:transform .15s}
 .xy-toggle:checked::after{transform:translateX(16px);background:var(--xyd-on-accent)}
 .xy-hint{color:var(--dsw-alias-label-secondary);font-size:12px;margin:0}
-/* 确认类目明细：缩进嵌在总开关下（与「总开关 + 明细」分层同构），行 = 开关 + 名称；
- * 锁定行（删除）为只读展示，其说明行缩进与文字对齐（开关 38px + 间距 8px） */
-.xy-confirm-ops{display:flex;flex-direction:column;gap:8px;margin-left:22px}
-/* 禁用弱化必须显式写：自定义外观的 toggle 不吃原生禁用变灰，总开关关闭时明细行
- * 否则与可用态无法区分；锁定的删除行恒禁用，常态弱化即「冻结在开启态」的语义 */
-.xy-confirm-ops .xy-toggle:disabled{opacity:.4;cursor:default}
-.xy-op-group-head{font-weight:600;font-size:13px}
-.xy-op-row{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px}
-.xy-op-row-locked{color:var(--dsw-alias-label-secondary);cursor:default}
-.xy-op-locked-hint{padding-left:46px}
+/* 确认类目明细：总开关行下平铺（row 语法 + 组头），不再缩进嵌套；
+ * 总开关关闭时整组禁用弱化必须显式写（自定义 toggle 不吃原生禁用变灰），
+ * 行文字同步降权；禁用原因由组尾 hint 承担（aria-describedby 关联） */
+.xy-confirm-ops{display:flex;flex-direction:column;gap:4px}
+/* 关闭态只降权可切换的类目行（label 行）：锁定删除行不受总开关支配（始终确认），
+ * 置灰会让「始终开启」徽章与灰字自相矛盾 */
+.xy-confirm-ops-off label.xy-setrow .xy-setrow-label{color:var(--dsw-alias-label-secondary)}
+.xy-op-group-head{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-label-secondary)}
+/* 锁定类目（删除恒确认）：「始终开启」徽章表达冻结语义——禁用开关看着像坏了，
+ * 徽章即状态；胶囊 999 符合形状纪律 */
+.xy-locked{flex:none;font-size:12px;line-height:1.4;padding:3px 9px;border-radius:999px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);color:var(--xyd-label-on-2)}
 
 /* ===== 详情聚合视图 ===== */
 /* 段间 10px 呼吸；每段内部「标签 → 内容」固定 5px 纵向节奏（label 不再与内容文字挤行）。

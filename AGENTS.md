@@ -501,12 +501,13 @@ wish-guide/task-guide/memory-guide/config-guide/chart-guide/reminder-guide(110�
 ### 5.8 设置页（设置 → 星愿）与两个常驻命名空间
 
 设置整页由 client 半侧 `slots.inject('settings.section')` **无条件注册**，常驻可见；
-页内四组分节的数据来源分成两类：
+页内五张面板卡（教练风格 / 昵称与画像 / 写操作确认 / 对话偏好 / 标签页显示）
+的数据来源分成两类：
 
 | 分节 | 数据源 | 命名空间 |
 |---|---|---|
-| 教练风格 / 用户画像 | 星愿数据库 global 单例，经 `/xingyuan/api/profile` | — |
-| 二次确认 / 记忆注入上限 / 确认卡语言 | **bundle 层常驻**命名空间 `xingyuan-pref` | `src/pref-settings.ts` |
+| 教练风格 / 昵称与画像 | 星愿数据库 global 单例，经 `/xingyuan/api/profile` | — |
+| 写操作确认 / 对话偏好（记忆注入上限 / 确认卡语言） | **bundle 层常驻**命名空间 `xingyuan-pref` | `src/pref-settings.ts` |
 | 标签页显示 | **bundle 层常驻**命名空间 `xingyuan-ui` | `src/ui-settings.ts` |
 
 - **偏好必须常驻**（踩过的坑，勿改回去）：settings 子系统明载「注册绑定调用方 fiber，
@@ -638,6 +639,14 @@ today=圆章蓝环（不覆盖状态底色，「今天该打卡」的提示不�
 `pick(today, false)` 展开今天详情（不滚动）；任何手动拾取后置位 autoPickRef，
 同一次挂载内不再自动覆写；跨标签切换的视图状态只保留月份偏移（选中日不保留），
 回来时仍默认展开今天——属既定交互行为，勿当缺陷报。
+
+**设置页行语法（2026-09 改版沉淀）**：开关/枚举类设置用 row 语法（`.xy-setrow`：
+标签+说明在左、控件在右、`.xy-setrows` hairline 分隔，与业界设置页同构），表单类
+字段保持 label 在上纵排——两类惯例不混用；游离于卡片外的说明行经
+`.xy-settings>.xy-hint` 补 panel 同款横向内边距，不得贴容器左缘悬在列外。
+禁用必须可见：自定义 `xy-toggle`/`xy-seg-btn` 不吃原生禁用变灰，`:disabled` 置灰需
+显式写（只读命名空间/写入在途的控件不得看起来仍可交互）；锁定类目用「始终开启」
+徽章而非禁用开关（禁用看着像坏了，徽章即状态）。
 
 **CSS 兼容铁律**：客户端样式禁用 `color-mix()` 等新式取色函数——dsh 壳的浏览器
 矩阵里存在不支持的环境，整条声明按无效处理（空态 SVG 线稿曾因此整体隐形、只剩

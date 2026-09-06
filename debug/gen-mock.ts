@@ -8,7 +8,7 @@
  *
  * 场景覆盖（与页面一一对应）：日历 / 今日（含非星愿提示行）/ 愿望（任务区披露：收起默认态+展开态 / 卡内展开详情）/ 任务（分组卡+已完结行）/
  * 成长（英雄卡+强调 streak 统计+近30天柱图）/ 记忆（撰写卡+图标行动作）/
- * 设置（四分节面板，含标签页显示）/ 快速新建（任务轻表单）/ 空态·错误态·危险按钮（纯文字版式，插画已移除）。
+ * 设置（五分节面板：教练/画像/确认/偏好/标签页，开关类 row 行语法）/ 快速新建（任务轻表单）/ 空态·错误态·危险按钮（纯文字版式，插画已移除）。
  */
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -394,7 +394,9 @@ const memorySection = `
   </div>
 </div>`
 
-/** 设置页（镜像 settings.ts）：教练风格分段选择 + 画像字段 + 对话偏好开关与定宽数字输入。 */
+/** 设置页（镜像 settings.ts）：五分节面板卡；开关/枚举类设置用 row 行语法
+ * （标签+说明在左、控件在右，行间 hairline），画像保持 label 在上的表单纵排；
+ * 写操作确认独立成卡（总开关行 + 类目行列表 + 锁定行「始终开启」徽章）。 */
 const settingsSection = `
 <div class="xy-page">
   <div class="xy-settings">
@@ -405,47 +407,51 @@ const settingsSection = `
         <button class="xy-seg-btn xy-on" type="button" aria-pressed="true">严格型</button>
         <button class="xy-seg-btn" type="button" aria-pressed="false">幽默型</button>
       </div>
-      <p class="xy-hint">当前：严格型。决定对话语气与人设，也可在对话中说「对我严格一点」。</p>
+      <p class="xy-hint">决定对话语气与人设，也可在对话中说「对我严格一点」。</p>
     </section>
     <section class="xy-panel">
       <h3 class="xy-panel-head">昵称与画像</h3>
-      <label class="xy-field"><span class="xy-quick-label">昵称</span><input class="xy-input xy-input-wide" placeholder="昵称：希望被怎么称呼（留空清除）" name="xy-nickname"></label>
-      <label class="xy-field"><span class="xy-quick-label">职业</span><input class="xy-input xy-input-wide" placeholder="职业（留空清除）" name="xy-occupation"></label>
-      <label class="xy-field"><span class="xy-quick-label">兴趣</span><input class="xy-input xy-input-wide" placeholder="兴趣：用顿号或逗号分隔（如 阅读、跑步）" name="xy-interests"></label>
+      <label class="xy-field"><span class="xy-quick-label">昵称</span><input class="xy-input xy-input-wide" placeholder="希望被怎么称呼" name="xy-nickname"></label>
+      <label class="xy-field"><span class="xy-quick-label">职业</span><input class="xy-input xy-input-wide" placeholder="如：教师、产品经理" name="xy-occupation"></label>
+      <label class="xy-field"><span class="xy-quick-label">兴趣</span><input class="xy-input xy-input-wide" placeholder="如：阅读、跑步" name="xy-interests"></label>
       <div class="xy-save-row">
         <button class="xy-btn xy-btn-primary" type="button">保存画像</button>
         <span class="xy-saved" role="status"><span aria-hidden="true">✓ </span>画像已保存</span>
       </div>
-      <p class="xy-hint">与对话侧共享同一份档案；对话里说「叫我小星」也会更新。</p>
+      <p class="xy-hint">留空的字段会被清除；画像与对话侧共享，对话里说「叫我小星」也会更新。</p>
     </section>
     <section class="xy-panel">
-      <h3 class="xy-panel-head">对话偏好</h3>
-      <label class="xy-field">
-        <span class="xy-field-head"><input type="checkbox" class="xy-toggle" name="confirmWrites" checked>写操作二次确认</span>
-        <p class="xy-hint">总开关：开启后按下方类目决定是否弹确认卡，关闭后除删除（始终确认）外一律直接执行。</p>
+      <h3 class="xy-panel-head">写操作确认</h3>
+      <label class="xy-setrow">
+        <span class="xy-setrow-main"><span class="xy-setrow-label">总开关</span><span class="xy-setrow-desc">开启后按下方类目决定是否弹确认卡；关闭后除删除（始终确认）外一律直接执行。</span></span>
+        <input type="checkbox" class="xy-toggle" name="confirmWrites" checked>
       </label>
       <div class="xy-confirm-ops" role="group" aria-label="确认类目">
         <span class="xy-op-group-head">确认类目</span>
-        <label class="xy-op-row"><input type="checkbox" class="xy-toggle" name="confirmOps.create" checked>创建愿望/任务（含微行动拆解）</label>
-        <label class="xy-op-row"><input type="checkbox" class="xy-toggle" name="confirmOps.checkin" checked>打卡</label>
-        <label class="xy-op-row"><input type="checkbox" class="xy-toggle" name="confirmOps.cancelCheckin" checked>取消打卡</label>
-        <label class="xy-op-row"><input type="checkbox" class="xy-toggle" name="confirmOps.claim">领取任务</label>
-        <label class="xy-op-row"><input type="checkbox" class="xy-toggle" name="confirmOps.update">修改愿望/任务/分类</label>
-        <label class="xy-op-row"><input type="checkbox" class="xy-toggle" name="confirmOps.memorySave">保存记忆</label>
-        <div class="xy-op-row xy-op-row-locked"><input type="checkbox" class="xy-toggle" name="confirmOps.deleteLocked" checked disabled>删除（含批量、微行动重开）</div>
-        <span class="xy-hint xy-op-locked-hint">始终确认，不可关闭：删除不可恢复。</span>
-        <span class="xy-hint">类目明细在总开关开启时生效；默认与之前版本一致。</span>
+        <div class="xy-setrows">
+          <label class="xy-setrow"><span class="xy-setrow-main"><span class="xy-setrow-label">创建愿望/任务（含微行动拆解）</span></span><input type="checkbox" class="xy-toggle" name="confirmOps.create" checked></label>
+          <label class="xy-setrow"><span class="xy-setrow-main"><span class="xy-setrow-label">打卡</span></span><input type="checkbox" class="xy-toggle" name="confirmOps.checkin" checked></label>
+          <label class="xy-setrow"><span class="xy-setrow-main"><span class="xy-setrow-label">取消打卡</span></span><input type="checkbox" class="xy-toggle" name="confirmOps.cancelCheckin" checked></label>
+          <label class="xy-setrow"><span class="xy-setrow-main"><span class="xy-setrow-label">领取任务</span></span><input type="checkbox" class="xy-toggle" name="confirmOps.claim"></label>
+          <label class="xy-setrow"><span class="xy-setrow-main"><span class="xy-setrow-label">修改愿望/任务/分类</span></span><input type="checkbox" class="xy-toggle" name="confirmOps.update"></label>
+          <label class="xy-setrow"><span class="xy-setrow-main"><span class="xy-setrow-label">保存记忆</span></span><input type="checkbox" class="xy-toggle" name="confirmOps.memorySave"></label>
+          <div class="xy-setrow"><span class="xy-setrow-main"><span class="xy-setrow-label">删除（含批量、微行动重开）</span><span class="xy-setrow-desc">始终确认，不可关闭：删除不可恢复。</span></span><span class="xy-locked">始终开启</span></div>
+        </div>
       </div>
-      <label class="xy-field">
-        <span class="xy-field-head">记忆注入上限</span>
-        <input type="number" min="5" max="200" class="xy-input xy-input-num" name="memoryInjectLimit" inputmode="numeric" value="40">
-        <span class="xy-hint">每次对话自动注入上下文的记忆条数上限（5-200，默认 40）；失焦后保存。</span>
-      </label>
-      <label class="xy-field">
-        <span class="xy-field-head">确认卡语言</span>
-        <select class="xy-input" name="confirmLang" aria-label="确认卡语言"><option selected>中文</option><option>English</option></select>
-        <span class="xy-hint">对话中写操作确认卡与问题的显示语言。确认卡无法自动跟随界面语言，需在此选择；默认中文。</span>
-      </label>
+      <span class="xy-hint">类目明细在总开关开启时生效；默认与之前版本一致。</span>
+    </section>
+    <section class="xy-panel">
+      <h3 class="xy-panel-head">对话偏好</h3>
+      <div class="xy-setrows">
+        <label class="xy-setrow">
+          <span class="xy-setrow-main"><span class="xy-setrow-label">记忆注入上限</span><span class="xy-setrow-desc">每次对话自动注入上下文的记忆条数上限（5-200，默认 40）；失焦后保存。</span></span>
+          <input type="number" min="5" max="200" class="xy-input xy-input-num" name="memoryInjectLimit" inputmode="numeric" value="40">
+        </label>
+        <div class="xy-setrow">
+          <span class="xy-setrow-main"><span class="xy-setrow-label">确认卡语言</span><span class="xy-setrow-desc">对话中写操作确认卡与问题的显示语言。确认卡无法自动跟随界面语言，需在此选择；默认中文。</span></span>
+          <span class="xy-seg" role="group" aria-label="确认卡语言"><button class="xy-seg-btn xy-on" type="button" aria-pressed="true">中文</button><button class="xy-seg-btn" type="button" aria-pressed="false">English</button></span>
+        </div>
+      </div>
     </section>
     <section class="xy-panel">
       <h3 class="xy-panel-head">标签页显示</h3>
@@ -455,12 +461,12 @@ const settingsSection = `
         <button class="xy-seg-btn" type="button" aria-pressed="false">始终隐藏</button>
       </div>
       <div class="xy-seg" role="group" aria-label="显示的标签页">
-        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true">今日</button>
-        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true">愿望</button>
+        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true"><span aria-hidden="true">✓ </span>今日</button>
+        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true"><span aria-hidden="true">✓ </span>愿望</button>
         <button class="xy-seg-btn" type="button" aria-pressed="false">任务</button>
-        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true">日历</button>
-        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true">成长</button>
-        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true">记忆</button>
+        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true"><span aria-hidden="true">✓ </span>日历</button>
+        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true"><span aria-hidden="true">✓ </span>成长</button>
+        <button class="xy-seg-btn xy-on" type="button" aria-pressed="true"><span aria-hidden="true">✓ </span>记忆</button>
       </div>
       <p class="xy-hint">跟随会话：仅星愿预设的会话显示标签页；其他会话自动隐藏。可单独勾选/取消各标签。</p>
     </section>
