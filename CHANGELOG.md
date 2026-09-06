@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-09-06
+
+### Added
+- **Fine-grained write-confirmation settings**: the master switch ("写操作二次确认")
+  now expands into six per-category detail toggles — create (incl. micro-action
+  breakdown), check-in, cancel check-in, claim, edit, memory save. Detail rows stay
+  visible under the master switch and grey out (explicit disabled styling) when it is
+  off; the delete row remains locked (always confirmed, no off switch). Defaults
+  reproduce the previous matrix: create / check-in / cancel check-in ask; claim /
+  edit / memory save run on your instruction. Claim, edit and memory-save tools
+  gained real confirmation hooks (600 s HITL timeout, validation before asking,
+  cancel exits without writing). Chat-side HITL only — page dialogs are unchanged.
+  Zero migration: absent settings resolve to the defaults.
+
+### Changed
+- `rename_wish_category` validates before asking: renaming a non-existent category
+  errors up front instead of after a confirmation; renaming a color-override-only
+  category (zero wishes) now succeeds and reports "0 wishes" instead of falsely
+  erroring "category does not exist" after the override had already been migrated.
+
+### Fixed
+- sqlite backend `close()` now actually releases the database handle (was an empty
+  implementation), so hot-reload / unload no longer keeps the file locked.
+- Bundle main row declares the previously missing
+  `storageBackendServiceKey('sqlite')` injection key.
+- StaleBanner text contrast: new `--xyd-on-warn` token pair reaches WCAG 4.5:1 on the
+  warn background in both light and dark themes (locked by a WCAG computation test).
+- README confirmation wording no longer contradicts AGENTS.md §5.5.
+
 ## [0.6.1] - 2026-09-05
 
 ### Added
