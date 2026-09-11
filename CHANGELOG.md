@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-09-11
+
+### Changed
+- **dsh 0.1.5-rc.2 compatibility**: peer and dev dependencies moved from
+  `0.1.2-rc.1` to `^0.1.5-rc.2`. Every host/client API this plugin consumes was
+  re-verified against the installed 0.1.5-rc.2 build — tool registration,
+  settings namespaces, storage backend/domain, user questions, system prompt,
+  conversation cards and session tabs are unchanged; the client half needs no
+  code changes. XingYuan's prompt sections (orders 5–115) now naturally precede
+  the host's relocated sections (10000+).
+
+### Fixed
+- **Session log self-heal now covers format v3**: dsh 0.1.5 names session
+  artifacts `session.v{N}.jsonl[.zstd]`; the repair module now selects the
+  highest stored generation per session instead of the fixed `session.jsonl`
+  names, so `xingyuan/*` events in new sessions keep receiving the `ignorable`
+  marker before a cold load.
+- **Legacy sessions with XingYuan cards open again**: dsh 0.1.5's v0/v1/v2 → v3
+  migration chain rejects every unknown historical event, `ignorable` included,
+  which previously made a session containing `xingyuan/*` events fail to load as
+  a whole. Legacy artifacts are now de-poisoned ahead of migration: those event
+  rows are replaced with the official inert `hook/invoked` event (seq/time
+  preserved, payload valid across every migration edge), so the session migrates
+  and opens; other rows stay byte-identical and files without XingYuan events
+  are never written. Trade-off: historical cards in those old sessions no longer
+  replay (business data lives in SQLite; the pre-repair file is backed up under
+  `~/.dsh/xingyuan/session-backups/`).
+
 ## [0.6.3] - 2026-09-06
 
 ### Changed
