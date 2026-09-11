@@ -27,6 +27,9 @@
 
 ## 安装
 
+> 需要 DeepSeek Harness `0.1.5-rc.2`（peer 依赖按该版本锁定；升级 dsh 前先核对
+> [AGENTS.md](./AGENTS.md) 的升级要点）。
+
 ```sh
 dsh plugin --profile web add @starwish-ai/xingyuan-dsh
 ```

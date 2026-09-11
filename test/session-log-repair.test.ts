@@ -2,12 +2,15 @@
  * 会话日志自愈回归（session-log-repair.ts）。
  *
  * 锁死的契约：
- * - 只给 xingyuan/* 未标记事件行补 `"ignorable": true`，官方行保持逐字节不变；
+ * - 当前格式（v3）工件：只给 xingyuan/* 未标记事件行补 `"ignorable": true`，官方行逐字节不变；
+ * - 旧格式（<v3）工件：xingyuan/* 事件行替换为惰性 hook/invoked（seq/time 不变），
+ *   替换产物能被官方迁移链（dsh-session-format-catalog）迁移并回放；
  * - 干净文件（不含星愿事件）零写入；
- * - 防御性放弃矩阵：撕裂尾 / 坏帧 / header 版本不符 / 行解析失败 / 活会话；
+ * - 目录内多代工件并存时只处理最新代（旧代被遮蔽，零写入）；
+ * - 防御性放弃矩阵：撕裂尾 / 坏帧 / header 版本与工件名不符 / 行解析失败 / 活会话；
  * - 多帧拼接容器可读可改；明文 .jsonl 变体同样支持；
- * - 补标幂等（二次运行零改写）；首次改写前有备份且按会话裁剪保留数；
- * - 补标后的事件仍能被 @deepseek-ai/dsh-session 的 decodeStorageRecord 读回。
+ * - 改写幂等（二次运行零改写）；首次改写前有备份且按会话裁剪保留数；
+ * - 补标后的事件仍能被官方恢复管线（sessionFormatCatalog.createRestore）读回。
  * 运行前置：无需 build（被测模块为纯 TS 源码直载），但依赖 Node ≥22.15 的 node:zlib zstd。
  */
 import { mkdtempSync } from 'node:fs'
@@ -16,7 +19,8 @@ import { join } from 'node:path'
 import { readFile, stat, writeFile, mkdir } from 'node:fs/promises'
 import { zstdDecompressSync } from 'node:zlib'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { decodeStorageRecord } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
+import { sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog'
 import { compressZstdFrame, repairSessionLogs, resolveDshHome, scanZstdFrames } from '../src/session-log-repair.js'
 import { existsSync } from 'node:fs'
 
@@ -28,27 +32,60 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'xy-repair-'))
 })
 
-const VERSION = 0 // 与 @deepseek-ai/dsh-session 的 SESSION_FORMAT_VERSION 同步断言见用例「版本常量」
+/** 当前格式代与旧格式夹具代（v0：0.1.2-rc.1 及更早写入的代）。 */
+const CURRENT: number = SESSION_FORMAT_VERSION
+const LEGACY = 0
 
-const headerLine = (id: string): string =>
-  JSON.stringify({ type: 'session', version: VERSION, id, createdAt: 1756000000000, delegationDepth: 0 })
+/** 官方工件名（v0 无版本段；更高代带 .vN）。 */
+const currentFilename = (compressed = true): string =>
+  `${CURRENT === 0 ? 'session' : `session.v${CURRENT}`}.jsonl${compressed ? '.zstd' : ''}`
+const legacyFilename = (compressed = true): string => `session.jsonl${compressed ? '.zstd' : ''}`
 
-/** 官方与星愿事件的信封形状（与 Session.append 产出的明文行一致）。 */
+/** 旧格式（v0/v1）物理 header：isSeeded 由 seedLength 派生，不能显式出现。 */
+const legacyHeaderLine = (id: string): string =>
+  JSON.stringify({ type: 'session', version: LEGACY, id, createdAt: 1756000000000, delegationDepth: 0 })
+
+/** 当前格式物理 header：必须显式 isSeeded/delegationDepth。 */
+const currentHeaderLine = (id: string): string =>
+  JSON.stringify({ type: 'session', version: CURRENT, id, createdAt: 1756000000000, isSeeded: false, delegationDepth: 0 })
+
+/** 官方与星愿事件的信封形状（surface 事件带 surfaceOp，与 Session.append 产出一致）。 */
 const officialLine = (seq: number): string =>
-  JSON.stringify({ type: 'user/message', seq, time: 1756000000000 + seq, data: { id: `m${seq}`, role: 'user', source: { kind: 'web' }, content: [] } })
+  JSON.stringify({ type: 'user/message', seq, time: 1756000000000 + seq, data: { id: `m${seq}`, role: 'user', source: { kind: 'user' }, content: [] }, surfaceOp: 'append' })
 
 const xingyuanLine = (seq: number): string =>
   JSON.stringify({ type: 'xingyuan/wish', seq, time: 1756000000000 + seq, data: { op: 'created', wishId: 'w1' } })
 
+/** 通用官方事件行（构造最小合法会话骨架用）。 */
+const eventLine = (type: string, seq: number, data: Record<string, unknown>): string =>
+  JSON.stringify({ type, seq, time: 1756000000000 + seq, data })
+
+/** 最小合法 v0 会话骨架：迁移要求首个 surface 事件处于打开的 step 内。 */
+function legacySessionLines(): string[] {
+  return [
+    eventLine('turn/start', 0, { turn: 1 }),
+    eventLine('step/start', 1, { turn: 1, step: 1 }),
+    officialLine(2),
+    xingyuanLine(3),
+    eventLine('step/end', 4, { turn: 1, step: 1 }),
+    eventLine('turn/end', 5, { turn: 1, reason: { kind: 'completed' } }),
+  ]
+}
+
 function buildPlaintext(sessionId: string, lines: string[], tornTail = ''): Buffer {
-  return Buffer.from([headerLine(sessionId), ...lines].join('\n') + '\n' + tornTail, 'utf8')
+  return Buffer.from([currentHeaderLine(sessionId), ...lines].join('\n') + '\n' + tornTail, 'utf8')
+}
+
+/** 旧格式完整明文（v0 header + 行）。 */
+function buildLegacyPlaintext(sessionId: string, lines: string[]): Buffer {
+  return Buffer.from([legacyHeaderLine(sessionId), ...lines].join('\n') + '\n', 'utf8')
 }
 
 /**
  * 按官方工件布局写 zstd 夹具：首帧内容拆出「header 行」单独成帧（官方
  * assertZstdHeaderFrame 强制首帧单行），其余内容各自成帧（持久化按批一帧）。
  */
-async function writeZstdArtifact(projectDir: string, sessionId: string, chunks: Buffer[]): Promise<string> {
+async function writeZstdArtifact(projectDir: string, sessionId: string, chunks: Buffer[], filename = currentFilename()): Promise<string> {
   const dir = join(home, 'sessions', projectDir, sessionId)
   await mkdir(dir, { recursive: true })
   const first = chunks[0]
@@ -59,9 +96,16 @@ async function writeZstdArtifact(projectDir: string, sessionId: string, chunks: 
   const firstRest = first.subarray(headerEnd + 1)
   if (firstRest.length > 0) frames.push(await compressZstdFrame(firstRest))
   for (const chunk of chunks.slice(1)) frames.push(await compressZstdFrame(chunk))
-  const path = join(dir, 'session.jsonl.zstd')
+  const path = join(dir, filename)
   await writeFile(path, Buffer.concat(frames))
   return path
+}
+
+/** 用官方恢复管线（严格模式 + 当前词汇校验）读一个工件：迁移拒绝或读取失败即抛。 */
+function restoreArtifact(headerLine: string, rows: string[]): { header: { version: number }; events: Array<Record<string, unknown>> } {
+  const restore = sessionFormatCatalog.createRestore(JSON.parse(headerLine), { recovery: 'strict', validation: 'current' })
+  for (const row of rows) restore.decodeRow(JSON.parse(row))
+  return restore.finish() as unknown as { header: { version: number }; events: Array<Record<string, unknown>> }
 }
 
 /** 断言容器首帧恰好一行 header（复刻官方 assertZstdHeaderFrame）。 */
@@ -98,8 +142,7 @@ function lineAt(lines: string[], index: number): string {
 // ===== 用例 =====
 
 describe('会话日志自愈', () => {
-  it('版本常量与 @deepseek-ai/dsh-session 的 SESSION_FORMAT_VERSION 一致', async () => {
-    expect(VERSION).toBe((await import('@deepseek-ai/dsh-session')).SESSION_FORMAT_VERSION)
+  it('resolveDshHome 恒定可解析', () => {
     expect(resolveDshHome()).toBeTruthy()
   })
 
@@ -111,11 +154,12 @@ describe('会话日志自愈', () => {
     const report = await repairSessionLogs({ dshHome: home })
     expect(report.patched).toBe(1)
     expect(report.eventsMarked).toBe(2)
+    expect(report.neutralized).toBe(0)
     expect(report.scanned).toBe(1)
 
     const after = splitLines(await readPlaintext(path))
     expect(after.length).toBe(lines.length + 1)
-    expect(lineAt(after, 0)).toBe(headerLine('session-abc'))
+    expect(lineAt(after, 0)).toBe(currentHeaderLine('session-abc'))
     expect(lineAt(after, 1)).toBe(lineAt(lines, 0))
     expect(lineAt(after, 3)).toBe(lineAt(lines, 2))
     expect(JSON.parse(lineAt(after, 2))).toEqual({ ...JSON.parse(lineAt(lines, 1)), ignorable: true })
@@ -151,7 +195,7 @@ describe('会话日志自愈', () => {
   it('明文 .jsonl 工件同样支持', async () => {
     const dir = join(home, 'sessions', 'p', 'session-plain')
     await mkdir(dir, { recursive: true })
-    const path = join(dir, 'session.jsonl')
+    const path = join(dir, currentFilename(false))
     await writeFile(path, buildPlaintext('session-plain', [officialLine(0), xingyuanLine(1)]))
     const report = await repairSessionLogs({ dshHome: home })
     expect(report.patched).toBe(1)
@@ -169,7 +213,7 @@ describe('会话日志自愈', () => {
     const report = await repairSessionLogs({ dshHome: home })
     expect(report.eventsMarked).toBe(2)
     const raw = await readFile(path)
-    expectHeaderFrame(raw, headerLine('session-multi'))
+    expectHeaderFrame(raw, currentHeaderLine('session-multi'))
     const lines = splitLines(await readPlaintext(path))
     expect(JSON.parse(lineAt(lines, 2)).ignorable).toBe(true)
     expect(JSON.parse(lineAt(lines, 3)).ignorable).toBe(true)
@@ -179,19 +223,19 @@ describe('会话日志自愈', () => {
   it('写回产物遵守官方帧布局：首帧恰好一行 header（防启动崩溃回归）', async () => {
     const path = await writeZstdArtifact('p', 'session-layout', [buildPlaintext('session-layout', [officialLine(0), xingyuanLine(1)])])
     await repairSessionLogs({ dshHome: home })
-    expectHeaderFrame(await readFile(path), headerLine('session-layout'))
+    expectHeaderFrame(await readFile(path), currentHeaderLine('session-layout'))
   })
 
   it('结构完整但首帧非单行 header（整文件单帧的历史错误产物）会被重写为合法布局', async () => {
     const plain = buildPlaintext('session-badlayout', [officialLine(0), xingyuanLine(1)])
     const dir = join(home, 'sessions', 'p', 'session-badlayout')
     await mkdir(dir, { recursive: true })
-    const path = join(dir, 'session.jsonl.zstd')
+    const path = join(dir, currentFilename())
     await writeFile(path, await compressZstdFrame(plain)) // 整文件单帧 = 错误布局
     const report = await repairSessionLogs({ dshHome: home })
     expect(report.patched).toBe(1)
     expect(report.eventsMarked).toBe(1)
-    expectHeaderFrame(await readFile(path), headerLine('session-badlayout'))
+    expectHeaderFrame(await readFile(path), currentHeaderLine('session-badlayout'))
   })
 
   it('无需补标但布局非法的容器仍重写为合法布局（relayout-only，幂等自愈）', async () => {
@@ -203,7 +247,7 @@ describe('会话日志自愈', () => {
     const report = await repairSessionLogs({ dshHome: home })
     expect(report.patched).toBe(1) // relayout-only
     expect(report.eventsMarked).toBe(0) // 无新增补标（已有 1 条已标记，回填 totalMarked）
-    expectHeaderFrame(await readFile(path), headerLine('session-relayout'))
+    expectHeaderFrame(await readFile(path), currentHeaderLine('session-relayout'))
   })
 
   it.each([
@@ -214,7 +258,7 @@ describe('会话日志自愈', () => {
     const frame = await compressZstdFrame(plain)
     const dir = join(home, 'sessions', 'p', 'session-x')
     await mkdir(dir, { recursive: true })
-    const path = join(dir, 'session.jsonl.zstd')
+    const path = join(dir, currentFilename())
     if (reason === 'torn') {
       await writeFile(path, frame.subarray(0, frame.length - 5)) // 截掉校验和所在的尾部
     } else {
@@ -238,11 +282,11 @@ describe('会话日志自愈', () => {
     expect(await readFile(path)).toEqual(before)
   })
 
-  it('header 版本不符按格式放弃', async () => {
+  it('header 版本与工件名不符按格式放弃', async () => {
     const dir = join(home, 'sessions', 'p', 'session-future')
     await mkdir(dir, { recursive: true })
     const futureHeader = JSON.stringify({ type: 'session', version: 99, id: 'session-future', createdAt: 1, delegationDepth: 0 })
-    const path = join(dir, 'session.jsonl.zstd')
+    const path = join(dir, legacyFilename())
     await writeFile(path, await compressZstdFrame(Buffer.from(`${futureHeader}\n${xingyuanLine(0)}\n`, 'utf8')))
     const before = await readFile(path)
     const report = await repairSessionLogs({ dshHome: home })
@@ -253,8 +297,8 @@ describe('会话日志自愈', () => {
   it('存在解析失败的事件行时整文件放弃', async () => {
     const dir = join(home, 'sessions', 'p', 'session-badline')
     await mkdir(dir, { recursive: true })
-    const path = join(dir, 'session.jsonl.zstd')
-    await writeFile(path, await compressZstdFrame(buildPlaintextRaw('session-badline')))
+    const path = join(dir, legacyFilename())
+    await writeFile(path, await compressZstdFrame(buildLegacyPlaintextRaw('session-badline')))
     const before = await readFile(path)
     const report = await repairSessionLogs({ dshHome: home })
     expect(report.skipped.unparsable).toBe(1)
@@ -278,14 +322,14 @@ describe('会话日志自愈', () => {
     expect(backups.length).toBe(1) // 上限裁剪生效
   })
 
-  it('补标后的星愿事件仍能被 dsh-session decodeStorageRecord 读回', async () => {
-    const path = await writeZstdArtifact('p', 'session-decode', [buildPlaintext('session-decode', [xingyuanLine(0), officialLine(1)])])
+  it('补标后的当前格式工件能被官方恢复管线读回（ignorable 保留）', async () => {
+    const path = await writeZstdArtifact('p', 'session-decode', [buildPlaintext('session-decode', [officialLine(0), xingyuanLine(1)])])
     await repairSessionLogs({ dshHome: home })
-    const events = splitLines(await readPlaintext(path)).slice(1).map((line) => decodeStorageRecord(JSON.parse(line)))
-    expect(events.length).toBe(2)
-    expect(events[0]![0]).toMatchObject({ type: 'xingyuan/wish', ignorable: true, seq: 0 })
-    expect(events[1]![0]).toMatchObject({ type: 'user/message', seq: 1 })
-    expect((events[1]![0] as { ignorable?: true }).ignorable).toBeUndefined()
+    const rows = splitLines(await readPlaintext(path))
+    const artifact = restoreArtifact(lineAt(rows, 0), rows.slice(1))
+    expect(artifact.header.version).toBe(CURRENT)
+    expect(artifact.events[0]).toMatchObject({ type: 'user/message', seq: 0 })
+    expect(artifact.events[1]).toMatchObject({ type: 'xingyuan/wish', ignorable: true, seq: 1 })
   })
 
   it('多个项目目录与会话遍历计数正确', async () => {
@@ -315,7 +359,7 @@ describe('会话日志自愈', () => {
     const path = await writeZstdArtifact('p', 'session-grow', [buildPlaintext('session-grow', [xingyuanLine(0)])])
     await repairSessionLogs({ dshHome: home })
     // 追加新事件（字节数变化）→ 标记失效
-    await writeFile(path, Buffer.concat(await Promise.all([compressZstdFrame(Buffer.from(headerLine('session-grow') + '\n', 'utf8')), compressZstdFrame(Buffer.from(xingyuanLine(0) + '\n' + xingyuanLine(1) + '\n', 'utf8'))])))
+    await writeFile(path, Buffer.concat(await Promise.all([compressZstdFrame(Buffer.from(currentHeaderLine('session-grow') + '\n', 'utf8')), compressZstdFrame(Buffer.from(xingyuanLine(0) + '\n' + xingyuanLine(1) + '\n', 'utf8'))])))
     const report = await repairSessionLogs({ dshHome: home })
     expect(report.patched).toBe(1)
     expect(report.eventsMarked).toBe(2) // 追加后两条都被重新补标（标记失效触发全量重扫）
@@ -332,7 +376,7 @@ describe('会话日志自愈', () => {
     await writeFile(path, await compressZstdFrame(plain))
     const report = await repairSessionLogs({ dshHome: home })
     expect(report.patched).toBe(1) // relayout-only 修复
-    expectHeaderFrame(await readFile(path), headerLine('session-marked-relayout'))
+    expectHeaderFrame(await readFile(path), currentHeaderLine('session-marked-relayout'))
     // 标记已刷新（新字节数），再跑增量跳过
     const next = await repairSessionLogs({ dshHome: home })
     expect(next.patched).toBe(0)
@@ -348,6 +392,107 @@ describe('会话日志自愈', () => {
     expect(report.eventsMarked).toBe(0) // 无新增补标（已标记事件走 clean，回填 totalMarked）
     expect(existsSync(markerPath)).toBe(true)
   })
+
+  // ===== 旧格式（<v3）去毒路径 =====
+
+  it('旧格式工件：星愿行替换为惰性 hook/invoked，官方行逐字节不变且有备份', async () => {
+    const lines = [officialLine(0), xingyuanLine(1), officialLine(2)]
+    const path = await writeZstdArtifact('p', 'session-legacy', [buildLegacyPlaintext('session-legacy', lines)], legacyFilename())
+    const before = splitLines(await readPlaintext(path))
+
+    const report = await repairSessionLogs({ dshHome: home })
+    expect(report.patched).toBe(1)
+    expect(report.eventsMarked).toBe(0)
+    expect(report.neutralized).toBe(1)
+
+    const after = splitLines(await readPlaintext(path))
+    expect(lineAt(after, 0)).toBe(legacyHeaderLine('session-legacy'))
+    expect(lineAt(after, 1)).toBe(lineAt(before, 1)) // 官方行逐字节不变
+    expect(lineAt(after, 3)).toBe(lineAt(before, 3))
+    const filler = JSON.parse(lineAt(after, 2)) as { type: string; seq: number; time: number; data: Record<string, unknown> }
+    expect(filler.type).toBe('hook/invoked')
+    expect(filler.seq).toBe(1)
+    expect(filler.time).toBe(1756000000001)
+    expect(filler.data['handlerId']).toContain('xingyuan-repair:session-legacy:1')
+    expect((await listBackups('p')).length).toBe(1)
+  })
+
+  it('旧格式替换产物可被官方迁移链迁移（v0 → v3），卡片事件不再回放', async () => {
+    const path = await writeZstdArtifact('p', 'session-migrate', [buildLegacyPlaintext('session-migrate', legacySessionLines())], legacyFilename())
+    await repairSessionLogs({ dshHome: home })
+    const rows = splitLines(await readPlaintext(path))
+    const artifact = restoreArtifact(lineAt(rows, 0), rows.slice(1))
+    expect(artifact.header.version).toBe(CURRENT)
+    expect(artifact.events.some((event) => String(event['type']).startsWith('xingyuan/'))).toBe(false)
+    expect(artifact.events.some((event) => event['type'] === 'hook/invoked')).toBe(true)
+  })
+
+  it('旧格式未修复的原始星愿事件会被官方迁移链拒绝（去毒必要性回归）', async () => {
+    const path = await writeZstdArtifact('p', 'session-raw-legacy', [buildLegacyPlaintext('session-raw-legacy', legacySessionLines())], legacyFilename())
+    const rows = splitLines(await readPlaintext(path))
+    expect(() => restoreArtifact(lineAt(rows, 0), rows.slice(1))).toThrow(/unknown historical event/)
+  })
+
+  it('旧格式干净文件零写入（工件字节与 mtime 不变）', async () => {
+    const path = await writeZstdArtifact('p', 'session-legacy-clean', [buildLegacyPlaintext('session-legacy-clean', [officialLine(0)])], legacyFilename())
+    const before = await readFile(path)
+    const beforeStat = await stat(path)
+    const report = await repairSessionLogs({ dshHome: home })
+    expect(report.patched).toBe(0)
+    expect(report.neutralized).toBe(0)
+    expect(await readFile(path)).toEqual(before)
+    expect((await stat(path)).mtimeMs).toBe(beforeStat.mtimeMs)
+  })
+
+  it('旧格式去毒幂等：二次运行零改写', async () => {
+    const path = await writeZstdArtifact('p', 'session-legacy-idem', [buildLegacyPlaintext('session-legacy-idem', [xingyuanLine(0)])], legacyFilename())
+    await repairSessionLogs({ dshHome: home })
+    const once = await readFile(path)
+    const report = await repairSessionLogs({ dshHome: home })
+    expect(report.patched).toBe(0)
+    expect(report.neutralized).toBe(0)
+    expect(await readFile(path)).toEqual(once)
+  })
+
+  it('目录内多代并存：只处理最新代（旧代被遮蔽，零写入）', async () => {
+    const dir = join(home, 'sessions', 'p', 'session-generations')
+    await mkdir(dir, { recursive: true })
+    // 旧代 v0：含未处理星愿事件（若被错误处理会改写）
+    const legacyPath = join(dir, legacyFilename())
+    await writeFile(legacyPath, await compressZstdFrame(buildLegacyPlaintext('session-generations', [xingyuanLine(0)])))
+    const legacyBefore = await readFile(legacyPath)
+    // 当前代 v3：也应被补标
+    const currentPath = join(dir, currentFilename())
+    await writeFile(currentPath, Buffer.concat(await Promise.all([
+      compressZstdFrame(Buffer.from(currentHeaderLine('session-generations') + '\n', 'utf8')),
+      compressZstdFrame(Buffer.from(xingyuanLine(0) + '\n', 'utf8')),
+    ])))
+
+    const report = await repairSessionLogs({ dshHome: home })
+    expect(report.scanned).toBe(1)
+    expect(report.patched).toBe(1)
+    expect(report.eventsMarked).toBe(1)
+    expect(report.neutralized).toBe(0)
+    expect(await readFile(legacyPath)).toEqual(legacyBefore) // 旧代未被触碰
+    const current = splitLines(await readPlaintext(currentPath))
+    expect(JSON.parse(lineAt(current, 1)).ignorable).toBe(true)
+  })
+
+  it('非规范工件名（v0 带版本段 / 前导零）一律不处理', async () => {
+    const dir = join(home, 'sessions', 'p', 'session-noncanonical')
+    await mkdir(dir, { recursive: true })
+    const names = ['session.v0.jsonl.zstd', 'session.v01.jsonl.zstd']
+    for (const name of names) {
+      await writeFile(join(dir, name), await compressZstdFrame(buildLegacyPlaintext('session-noncanonical', [xingyuanLine(0)])))
+    }
+    const before = await Promise.all(names.map((name) => readFile(join(dir, name))))
+    const report = await repairSessionLogs({ dshHome: home })
+    expect(report.scanned).toBe(0)
+    expect(report.patched).toBe(0)
+    for (const [index, name] of names.entries()) {
+      expect(await readFile(join(dir, name))).toEqual(before[index])
+    }
+  })
 })
 
 // ===== 辅助 =====
@@ -357,9 +502,9 @@ function buildPlaintextWithoutHeader(lines: string[]): Buffer {
   return Buffer.from(lines.join('\n') + '\n', 'utf8')
 }
 
-/** 含一行坏 JSON 的完整明文（用于解析失败路径）。 */
-function buildPlaintextRaw(sessionId: string): Buffer {
-  return Buffer.from([headerLine(sessionId), '{oops', xingyuanLine(1)].join('\n') + '\n', 'utf8')
+/** 含一行坏 JSON 的旧格式完整明文（用于解析失败路径）。 */
+function buildLegacyPlaintextRaw(sessionId: string): Buffer {
+  return Buffer.from([legacyHeaderLine(sessionId), '{oops', xingyuanLine(1)].join('\n') + '\n', 'utf8')
 }
 
 async function listBackups(projectDir: string): Promise<string[]> {

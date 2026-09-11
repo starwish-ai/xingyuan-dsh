@@ -25,6 +25,9 @@ Tools are only mounted on sessions using the XingYuan preset; other sessions are
 
 ## Install
 
+> Requires DeepSeek Harness `0.1.5-rc.2` (peer dependencies are pinned to that
+> release; check the upgrade notes in [AGENTS.md](./AGENTS.md) before bumping dsh).
+
 ```sh
 dsh plugin --profile web add @starwish-ai/xingyuan-dsh
 ```

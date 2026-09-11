@@ -1,14 +1,17 @@
 # 星愿 Dsh 插件开发文档
 
 > 本文档描述独立项目 `@starwish-ai/xingyuan-dsh` 的架构、核心机制与开发规范，面向后续在本仓库上迭代的开发者。
-> 接口基线：DeepSeek Harness（下称 dsh）`0.1.2-rc.1`。dsh 处于技术预览期，API 可能变动；
+> 接口基线：DeepSeek Harness（下称 dsh）`0.1.5-rc.2`。dsh 处于技术预览期，API 可能变动；
 > 升级依赖版本前先核对官方 release notes 与 §12 参考文档。
-> （0.1.2-rc.1 迁移要点：settings 子系统重排——独立函数 `installSettingsSection`/
-> `settingsNamespace` 删除，收进 `ctx.settings.installSection` 服务方法；client 半侧
-> `dsh-client-runtime` 包消失——`ClientContext` 即 cordis `Context`，`ChatNodeDataMap`
-> 合并位移到 ui-chat、`ctx.conversationEvents` 服务改为 `ctx.uiConversation.events`；
-> `dsh.client` 声明的 `inject` 语义为「依赖包行先到」，基座模块（react/cordis/ui-slots/
-> ui-primitives/dsh-client-store）由壳 staticModules 播种、无需声明。）
+> （0.1.5-rc.2 迁移要点：**会话格式升 v3**，工件改名 `session.v3.jsonl[.zstd]`（v0 仍是
+> `session.jsonl`），读取端对当前格式仍认 `ignorable`，但 **v0/v1/v2 → v3 迁移链拒绝一切
+> 未知历史事件（ignorable 也不例外）**——session-log-repair 因此新增「去毒模式」（见 §5.6）；
+> 系统提示词 section 号重排（宿主内容移到 10000+，插件固有 5–115 号现在自然排在宿主说明之前，
+> 无需改动）；`ctx.agent` 移除（插件只用 `exec.agent`，不受影响）；PTC 词汇
+> `tool/code-dispatch` → `tool/ptc-dispatch`、预设 `code` → `ptc`（插件未用）；settings/
+> storage-domain/tools/user-questions/client 三处声明合并位均无破坏性变化。
+> 0.1.2-rc.1 迁移要点（历史）：settings 收进 `ctx.settings.installSection`；`dsh-client-runtime`
+> 包消失，`ChatNodeDataMap` 移入 ui-chat、`ctx.conversationEvents` → `ctx.uiConversation.events`。）
 
 ---
 
@@ -31,7 +34,7 @@ agent 选择器出现「星愿」即安装成功。
 | 数据持久化 | 自带 sqlite 后端，`~/.dsh/xingyuan/xingyuan.sqlite` |
 
 技术栈：TypeScript（Node ≥22.5）+ Cordis 插件框架 + React 18（client 半侧）
-+ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/dsh-*` 锁定 `^0.1.2-rc.1`；
++ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/dsh-*` 锁定 `^0.1.5-rc.2`；
   `@deepseek-ai/cordis` 跟随宿主 4.x（独立版本线）；`@deepseek-ai/schemastery`
   为 `*`，跟随宿主。
 
@@ -460,25 +463,32 @@ import 会被 tsdown 擦除、不产生模块请求，无需声明 `external`—
 非基座包才需要 `dsh.client.external`。业务插件行无需 `immediately`（entry compose 会
 import 全部行、apply 正常执行）；官方 ui-schedule 同款形态可作对照。
 
-**冷读拒绝与会话日志自愈（session-log-repair.ts，必读）**：dsh（0.1.1-rc.2 起，0.1.2-rc.1 复核仍成立）
-会话持久化读取端按「本仓库生成的官方事件类型白名单」拒绝未知事件，仓库外插件事件
-按构造不在名单内；写入端 `Session.append` 又没有 ignorable 标记通道（rc.1 的读端已实现
-「带 ignorable 标记的外部事件保留放行」，但 append 签名仍无处设置该标记）——因此包含
-`xingyuan/*` 事件的会话一旦冷加载（进程重启后刷新/重开）会被
-`SessionFormatUnsupportedError` 整体拒绝。bundle 层激活期执行**会话日志自愈**：
-扫描 `$DSH_HOME/sessions` 工件，给历史日志里的 `xingyuan/*` 事件行补
-`"ignorable": true` 后原子写回。读取端对该字段既放行又不过滤——事件数据原封保留，
-卡片回放能力随之恢复。安全边界：不含星愿事件的文件零写入；文件内非星愿行逐字节
-不变；改写前备份至 `~/.dsh/xingyuan/session-backups/`（每会话留 3 份）；
-撕裂尾/坏帧/版本不符/解析失败/活会话一律整文件跳过。**增量跳过**：每个已处理会话
-在目录内写 `.xingyuan-repaired` 标记（记工件字节数 + 事件总数），下次启动 stat +
-读 40 字节标记即可跳过，避免 68 会话全量解压的 3.6s 启动拖慢（实际 <10ms）；
-工件字节数变化（新事件落盘）或标记损坏时自动重扫并刷新。**压缩工件布局硬约束**：
-zstd 容器首帧必须恰好一行 header（dsh 的 `assertZstdHeaderFrame`/`listArtifacts`
-启动期强制）——写回时按「帧 0 = header、其余事件行第二帧」重建并自检，读入的
-容器首帧非单行（历史整文件单帧的错误产物）即使无需补标也重写为合法布局。
-升级 dsh 前先核对该模块头注的前提是否仍成立；若上游开放了 ignorable 写入通道
-或事件注册面，应回归官方机制并撤下补标。
+**冷读拒绝与会话日志自愈（session-log-repair.ts，必读）**：dsh 会话持久化读取端按
+「本仓库生成的官方事件类型白名单」拒绝未知事件，仓库外插件事件按构造不在名单内；
+写入端 `Session.append` 至今没有 ignorable 标记通道。0.1.5-rc.2 的规则分两档：
+**当前格式（v3）**读取端认 `"ignorable": true`（带标事件安全跳过、数据原样保留）；
+**历史格式迁移（v0/v1/v2 → v3）**则拒绝一切未知历史事件，**ignorable 也不例外**
+（官方 alpha-historical-unknown-event-refusal 决策：迁移边无法证明不透明载荷里的
+seq/生命周期引用仍然安全；拒绝时不产出 v3 后继、源文件原样保留）。bundle 层激活期
+按工件版本执行**会话日志自愈**（工件名 `session.v{N}.jsonl[.zstd]`，v0 无版本段；
+只处理目录内最高代，旧代被遮蔽时零写入）：
+- **当前版本工件 → 补标模式**：给 `xingyuan/*` 事件行补 `"ignorable": true` 后原子写回，
+  事件数据原封保留、卡片回放能力保留；
+- **历史版本工件 → 去毒模式**：把 `xingyuan/*` 事件行替换为官方惰性事件
+  `hook/invoked`（seq/time 不变，payload 满足各迁移边的语义校验），官方迁移链即可
+  安全穿过、会话照常打开；代价是该会话历史卡片事件不再回放（业务数据在 sqlite，
+  不丢失；备份保留原件）。
+安全边界：不含星愿事件的文件零写入；文件内非星愿行逐字节不变；改写前备份至
+`~/.dsh/xingyuan/session-backups/`（每会话留 3 份）；撕裂尾/坏帧/版本与工件名不符/
+解析失败/活会话一律整文件跳过。**增量跳过**：每个已处理会话在目录内写
+`.xingyuan-repaired` 标记（记工件字节数 + 事件总数），下次启动 stat + 读 40 字节
+标记即可跳过，避免全量解压的启动拖慢（实际 <10ms）；工件字节数变化（新事件落盘）
+或标记损坏时自动重扫并刷新。**压缩工件布局硬约束**：zstd 容器首帧必须恰好一行
+header（dsh 的 `assertZstdHeaderFrame`/`listArtifacts` 启动期强制）——写回时按
+「帧 0 = header、其余事件行第二帧」重建并自检，读入的容器首帧非单行（历史整文件
+单帧的错误产物）即使无需补标也重写为合法布局。
+升级 dsh 前先核对该模块头注的前提是否仍成立；若上游迁移链改为接受 ignorable
+历史事件（或开放 ignorable 写入通道/事件注册面），去毒模式应回归补标并撤下替换。
 
 ### 5.7 系统提示词与动态上下文（preset/prompts.ts）
 
@@ -809,6 +819,9 @@ pnpm test      # vitest run
   副标题∈映射∪数字模板）——服务端加词不同步映射即红。
 - **sqlite 后端门禁**（`sqlite-backend.test.ts`）：介质版本不符拒绝打开、global 槽
   损坏拒绝（malformed-medium）、写后冷读持久化——无迁移策略的安全底座。
+- **会话日志自愈回归**（`session-log-repair.test.ts`）：补标/去毒双模式、多代工件
+  只处理最新代、布局/撕裂/坏帧放弃矩阵，以及去毒产物真实穿过官方 v0→v3 迁移链
+  （经 `@deepseek-ai/dsh-session-format-catalog`，devDependency）。
 - **重挂载回归**（loader.test.ts 末例）：webServer 桩按宿主契约「重复 (kind,path) 抛错
   + 返回 disposer」，拔除 bundle 行再重建——路由注册必须经 ctx.effect（HMR/升级路径）。
 - 业务层/工具层/路由层用例：创建→领取→打卡链路、删除级联不留孤儿、写确认门闩、
@@ -894,11 +907,26 @@ npm provenance 开启）。
 - 存储无迁移机制：领域 schema 只能用 optional 字段做向后兼容增量；破坏性演进必须升
   DOMAIN_VERSION 并提供数据重导出方案。
 - 会话事件要求每 (kind,id) 仅一条 start——新事件类型沿用 whole-value 单事件模式最省心。
-- 外部插件会话事件在 rc.2 的读取白名单之外且无 ignorable 写入通道：依赖激活期
-  会话日志自愈补标兜底（§5.6）。插件未运行期间写入的事件在下次启动前不可冷读；
+- 外部插件会话事件在 dsh 读取白名单之外且无 ignorable 写入通道：依赖激活期
+  会话日志自愈兜底（§5.6）。当前格式（v3）靠补标 `ignorable`；**历史格式（v0/v1/v2）
+  的迁移链拒绝一切未知事件，只能去毒**——被去毒会话的历史卡片不再回放（README
+  对话面正常，业务数据在 sqlite）。插件未运行期间写入的事件在下次启动前不可冷读；
   极端竞态（会话未被识别为活会话且恰在自愈写回窗口内落盘）最坏可丢失窗口内新
   写入的事件（备份只有改写前状态），一般情形是多报一次错、下次启动自愈。上游若开放
-  ignorable 写入通道或事件注册面，回归官方机制并撤下补标。
+  ignorable 写入通道、事件注册面，或迁移链改为接受 ignorable 历史事件，
+  回归官方机制并撤下补标/去毒。
+- 旧格式会话的**历史卡片不可回放**：dsh 0.1.5 历史迁移链拒绝未知事件（官方设计，
+  见 §5.6/§11 上一条），去毒是保「会话可打开」的代价；期望上游开放迁移白名单或
+  插件事件注册面后恢复。勿当缺陷报。去毒只处理 `xingyuan/*` 命名空间——其他插件
+  写入的历史事件需其作者自行处理。
+- **对话卡片会被「紧凑」转录模式折叠**：ui-chat 的 Turn Process 披露把已完成轮次
+  里落在过程窗口 `[processStartSeq, answerAnchorSeq)` 的**所有非白名单 kind 节点**
+  （含 xingyuan 五类卡片）收进「N 次工具调用」条，默认收起；白名单
+  （`TURN_PROCESS_INDEPENDENT_KINDS`：system-prompt/user/steering/turn-process/
+  turn-error/turn-max-tokens/turn-tail）为 ui-chat 写死的内置集，**插件无豁免接缝**。
+  用户侧开关：设置 → 通用设置 → 「对话显示」→ 标准（命名空间 `ui-chat` 字段
+  `transcriptView`，默认 compact，属宿主设置，插件不得代改）；单轮可点披露条展开，
+  隐藏节点是 `hidden="until-found"`，浏览器页内查找会自动展开。勿当插件缺陷报。
 - 客户端样式禁用 color-mix() 等新式取色函数：dsh 壳的浏览器矩阵里存在不支持的
   环境，凡用它的属性按无效处理（空态插画曾因此整体隐形只剩孤立色点，已移除插画
   并全站改显式 rgba 令牌，见 styles.ts 头注）。
@@ -910,7 +938,7 @@ npm provenance 开启）。
 - 非回环连接（浏览器地址不是 `localhost` / `127.0.0.0/8` / `::1`）下，settings RPC 被
   宿主降级为 memory 模式：所有偏好命名空间 `mode==='memory'`、不可写。这是 dsh 的安全
   约束（settings RPCs are loopback-only），设置页只能提示，无法绕过。
-- dsh 技术预览期升级锁版本 `0.1.2-rc.1`；跨版本升级前核对 release notes 与排障索引。
+- dsh 技术预览期升级锁版本 `0.1.5-rc.2`；跨版本升级前核对 release notes 与排障索引。
 
 ## 12. 官方参考文档
 
@@ -941,8 +969,11 @@ npm provenance 开启）。
 - 能力服务 seam：`…/docs/capability-seams.zh.md`
 - Agent 生命周期：`…/docs/agent-lifecycle.zh.md`
 - Tool 执行流水线：`…/docs/tool-execution-pipeline.zh.md`
+- 会话格式状态（含当前代与迁移链）：`…/docs/session-format-status.zh.md`
 - 测试规范：`…/docs/testing.zh.md`
 - 术语表：`…/docs/glossary.zh.md`
+- 迁移拒绝外部历史事件（§5.6 依据）：`…/.agents/notes/implemented/architecture/2026-08-31-alpha-historical-unknown-event-refusal.zh.md`
+- 保留 ignorable 外部事件（当前格式依据）：`…/.agents/notes/implemented/architecture/2026-08-30-retain-ignorable-external-session-events.zh.md`
 
 **子系统（本项目用到的高频篇目，均在 `…/docs/subsystems/` 下）**
 
@@ -980,6 +1011,7 @@ conversation-node 篇目，旧文档引用为失实）
 | INVALID_ARGS / 参数被拒 | ValueSchemaSpec DSL 的 additionalProperties/enum 要求；tool-catalog |
 | 卡片不渲染 / 刷新后丢失 | subsystems/conversation（start 唯一、确定性回放）；三个声明合并位是否齐全 |
 | 会话事件没落盘 | exec.agent 是否存在（headless 无 agent 时 append 是 no-op） |
+| 旧会话打不开（`SessionFormatUnsupportedError` / unknown historical event） | dsh 0.1.5 迁移链拒绝外部历史事件：确认 bundle 已升级到含去毒模式的自愈模块（§5.6）；源文件未动，备份在 `~/.dsh/xingyuan/session-backups/` |
 | 提醒没触发 / 周期提醒做不到 | subsystems/schedule（session-local、无日历规则、只装新建 live agent） |
 | 数据库打开报版本不符 | subsystems/storage；DOMAIN_VERSION 策略 |
 | preset 不出现 / mount 拒绝 | packages/preset/agent-presets/README.zh.md（realm 规则、roots 扫描时机） |

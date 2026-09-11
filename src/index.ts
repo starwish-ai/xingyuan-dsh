@@ -3,7 +3,7 @@
  * 1) 激活期把包内 preset 发布到用户根（preset-root.ts）；
  * 2) 打开 xingyuan 领域并发布同名服务；
  * 3) 注册 /xingyuan/* 数据 API 与页面路由；
- * 4) 激活期对会话日志做 ignorable 补标自愈（session-log-repair.ts）。
+ * 4) 激活期对会话日志做自愈（当前格式补 ignorable、旧格式去毒，见 session-log-repair.ts）。
  * （sqlite 后端在独立行 '@starwish-ai/xingyuan-dsh/sqlite'，见 cordis.patch.yml。）
  */
 import type { Context } from '@deepseek-ai/cordis'
@@ -33,9 +33,10 @@ export interface Config {
   /** 记忆列表单页条数（分页端点缺省 limit）。 */
   memoryListLimit: number
   /**
-   * 激活期会话日志自愈（默认开）：为历史日志里的 xingyuan/* 卡片事件补
-   * `"ignorable": true` 标记，修掉「重启后旧会话冷加载被整体拒绝」。
-   * 不含星愿事件的文件零写入；详见 session-log-repair.ts 头注。
+   * 激活期会话日志自愈（默认开）：当前格式日志补 `"ignorable": true` 标记，
+   * 旧格式日志的 xingyuan/* 事件替换为官方便可迁移的惰性事件（详见
+   * session-log-repair.ts 头注；dsh 0.1.5 起历史迁移链拒绝未知事件）。
+   * 不含星愿事件的文件零写入。
    */
   repairSessionLogs: boolean
 }
@@ -96,7 +97,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     try {
       const report = await repairSessionLogs({ listLiveSessionIds: () => liveSessionIds(sessions) })
       if (report.patched > 0) {
-        console.log(`[xingyuan] 会话日志自愈：补标 ${report.eventsMarked} 条卡片事件（${report.patched} 个会话，扫描 ${report.scanned}）`)
+        const parts: string[] = []
+        if (report.eventsMarked > 0) parts.push(`补标 ${report.eventsMarked} 条卡片事件`)
+        if (report.neutralized > 0) parts.push(`旧格式会话迁移前替换 ${report.neutralized} 条卡片事件（历史卡片不再回放）`)
+        console.log(`[xingyuan] 会话日志自愈：${parts.join('，')}（${report.patched} 个会话，扫描 ${report.scanned}）`)
       }
       for (const warning of report.warnings) console.warn(`[xingyuan] 会话日志自愈跳过：${warning}`)
     } catch (error) {

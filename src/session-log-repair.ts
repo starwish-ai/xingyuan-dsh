@@ -1,21 +1,26 @@
 /**
  * 会话日志自愈（bundle 常驻层）。
  *
- * 背景：dsh（0.1.1-rc.2）会话持久化读取端按「本仓库生成的官方事件类型白名单」
- * 拒绝未知事件；仓库外插件事件按构造就在名单之外，而写入端（Session.append）
- * 当前没有 ignorable 标记通道——因此任何包含 xingyuan/* 卡片事件的会话，
- * 进程重启后冷加载会被 SessionFormatUnsupportedError 整体拒绝，连对话文本都
- * 打不开（详见 docs/handoff-session-format-unsupported-event.md）。
+ * 背景：dsh 会话持久化读取端按「本仓库生成的官方事件类型白名单」拒绝未知事件；
+ * 仓库外插件事件按构造不在名单内，而写入端（Session.append）至今没有 ignorable
+ * 标记通道。0.1.5-rc.2 的规则分两档：
+ * - 当前格式（v3，工件名 session.v3.jsonl[.zstd]）：读取端认 `ignorable: true`，
+ *   不认识的带标事件被安全跳过且数据原样保留；
+ * - 历史格式迁移（v0/v1/v2 → v3）：迁移链**拒绝一切未知历史事件，ignorable
+ *   也不例外**（官方 alpha-historical-unknown-event-refusal 决策）——旧日志里的
+ *   xingyuan/* 事件会让整个会话冷加载失败，且不产出 v3 后继、源文件原样保留。
  *
- * 本模块以「事后补标」弥合「写时打标」的缺位：激活期扫描 $DSH_HOME/sessions
- * 下的会话工件，把 type 以 xingyuan/ 开头且未标记的事件行补上 `"ignorable": true`
- * 后原子替换原文件。读取端本来就支持该字段：不认识的带标事件被安全跳过且
- * **不会被过滤**——事件数据原封保留在日志中，卡片回放能力随之保留。
+ * 本模块在激活期扫描 $DSH_HOME/sessions，按工件版本分两种处理：
+ * - 当前版本工件：补标模式——xingyuan/* 未标记事件行补 `"ignorable": true`；
+ * - 历史版本工件：去毒模式——xingyuan/* 事件行替换为官方惰性事件 hook/invoked
+ *   （seq/time 不变），迁移链即可安全穿过、会话照常打开；代价是该会话历史卡片
+ *   事件不再回放（业务数据在 sqlite，不丢失）。仅当目录内无当前版本工件时才动
+ *   历史工件（dsh 只按最新代读取，旧代已不被消费）。
  *
  * 安全约束（改前必读，勿删）：
  * - 不含星愿事件的会话文件零写入（字节与 mtime 均不变）；
- * - 只有星愿事件行被重序列化（仅追加一个字段），其余行原样保留字节；
- *   行序与 seq 由构造保证不变（本模块从不增删移动任何行）；
+ * - 只有星愿事件行被重序列化（补标仅追加字段；去毒仅换 type/data），其余行原样
+ *   保留字节；行序与 seq 由构造保证不变（本模块从不增删移动任何行）；
  * - 首次改写前把原件备份到 <home>/xingyuan/session-backups/<项目目录>/，
  *   每会话保留最近 maxBackupPerSession 份；
  * - 任何看不懂的情况一律整文件跳过不动：撕裂尾、坏帧、header 版本不符、
@@ -28,7 +33,8 @@
  *   （历史上一次实现曾把整个文件重压成单帧导致宿主启动崩溃，已由本模块的
  *   relayout-only 路径兜底自愈），即使无需补标也会重写为合法布局。
  * - SESSION_FORMAT_VERSION 取自 @deepseek-ai/dsh-session。升级 dsh 时必须核对
- *   本模块的前提与布局契约仍然成立。
+ *   本模块的前提与布局契约仍然成立（尤其迁移链是否改为接受 ignorable 历史事件——
+ *   若接受，去毒模式可回归补标）。
  */
 
 import { constants as zlibConstants, zstdCompress, zstdDecompressSync } from 'node:zlib'
@@ -44,6 +50,22 @@ const zstdCompressAsync = promisify(zstdCompress)
 const XINGYUAN_EVENT_PREFIX = 'xingyuan/'
 /** 工件内明文的防御性上限（远超个人部署可能的会话体积）。 */
 const MAX_PLAINTEXT_BYTES = 512 * 1024 * 1024
+
+/**
+ * 去毒模式下替换星愿事件的官方惰性事件类型与载荷：hook/invoked 只做日志记录，
+ * 跨 v0/v1/v2 迁移边无任何关系约束，是最安全的中性载体（payload 语义校验要求
+ * turn≥0、point/handlerId 非空、dialect ∈ {claude-code, codex}）。
+ * handlerId 保留可追溯的替换来源，便于人工审计。
+ */
+const NEUTRAL_EVENT_TYPE = 'hook/invoked'
+function neutralEvent(seq: unknown, time: unknown, headerId: string): string {
+  return JSON.stringify({
+    type: NEUTRAL_EVENT_TYPE,
+    seq,
+    time,
+    data: { turn: 1, point: 'PreToolUse', dialect: 'codex', handlerId: `xingyuan-repair:${headerId}:${String(seq)}` },
+  })
+}
 
 /**
  * 每会话自愈标记文件名（放在会话目录内，dsh 不扫描它）。用于把启动期自愈从
@@ -165,22 +187,31 @@ async function selfVerify(container: Buffer, expectedPlaintext: Buffer): Promise
 
 // ===== 日志行级补标 =====
 
+/**
+ * mark：当前格式，为星愿事件补 `ignorable: true`（数据保留、卡片可回放）；
+ * neutralize：历史格式，把星愿事件替换为官方惰性事件，让迁移链可穿过。
+ */
+type PatchMode = 'mark' | 'neutralize'
+
 interface PatchOutcome {
   kind: 'patched' | 'clean'
   plaintext: Buffer
-  /** 本次新增补标的事件数（仅 ign 缺失时才 +1；已标记事件不计入）。 */
+  /** mark 模式新增补标的事件数（已标记事件不计入）。 */
   eventsMarked: number
-  /** 文件内星愿事件总数（已标记 + 本次新增），供 clean 分支回填标记。 */
+  /** neutralize 模式替换为惰性事件的星愿事件数。 */
+  eventsNeutralized: number
+  /** 文件内星愿事件总数（已标记 + 本次处理），供 clean 分支回填标记。 */
   totalMarked: number
 }
 type PatchFailure = { kind: 'skip'; reason: SkipReason; detail: string }
 
 /**
- * 对工件明文做行级补标。首行必须是本构建可读的 session header；之后每个完整行
- * 必须能解析为对象（任何一行解析失败都整体放弃）。只有 xingyuan/* 且未标记的行
- * 会被重序列化，其余行保持原字节。撕裂尾（无换行的最后一段）按原样保留。
+ * 对工件明文做行级处理。首行必须是 session header 且版本与工件名一致
+ * （mark 要求当前版本；neutralize 要求历史版本）。之后每个完整行必须能解析为
+ * 对象（任何一行解析失败都整体放弃）。只有星愿事件行会被重序列化，其余行保持
+ * 原字节。撕裂尾（无换行的最后一段）按原样保留。
  */
-function patchPlaintext(plaintext: Buffer): PatchOutcome | PatchFailure {
+function patchPlaintext(plaintext: Buffer, mode: PatchMode, artifactVersion: number): PatchOutcome | PatchFailure {
   if (plaintext.length > MAX_PLAINTEXT_BYTES) return skip('oversized', `${plaintext.length} bytes`)
   const headerEnd = plaintext.indexOf(10)
   if (headerEnd === -1) return skip('format', 'no header line')
@@ -191,23 +222,27 @@ function patchPlaintext(plaintext: Buffer): PatchOutcome | PatchFailure {
     return skip('format', 'header line is not valid JSON')
   }
   const headerRecord = header as Record<string, unknown> | null
+  const expectedVersion = mode === 'mark' ? SESSION_FORMAT_VERSION : artifactVersion
   if (
     headerRecord === null || typeof headerRecord !== 'object' ||
     headerRecord['type'] !== 'session' ||
-    headerRecord['version'] !== SESSION_FORMAT_VERSION ||
+    headerRecord['version'] !== expectedVersion ||
+    (mode === 'neutralize' && expectedVersion >= SESSION_FORMAT_VERSION) ||
     typeof headerRecord['id'] !== 'string' || headerRecord['id'] === ''
   ) {
-    return skip('format', `header version=${String(headerRecord?.['version'])} expect=${SESSION_FORMAT_VERSION}`)
+    return skip('format', `header version=${String(headerRecord?.['version'])} expect=${expectedVersion}`)
   }
+  const headerId = headerRecord['id']
 
   const chunks: Buffer[] = [plaintext.subarray(0, headerEnd + 1)]
   let eventsMarked = 0
+  let eventsNeutralized = 0
   let totalMarked = 0
   let cursor = headerEnd + 1
   let lineNumber = 1
   for (;;) {
     const newline = plaintext.indexOf(10, cursor)
-    // 无换行的尾段是撕裂尾或尚未落盘的部分记录：交给 dsh 自己的截断修复，不在补标范围
+    // 无换行的尾段是撕裂尾或尚未落盘的部分记录：交给 dsh 自己的截断修复，不在处理范围
     if (newline === -1) {
       chunks.push(plaintext.subarray(cursor))
       break
@@ -225,8 +260,12 @@ function patchPlaintext(plaintext: Buffer): PatchOutcome | PatchFailure {
     if (record === null || typeof record !== 'object' || typeof record['type'] !== 'string') {
       return skip('unparsable', 'event line is not an object with a type field')
     }
-    if (record['type'].startsWith(XINGYUAN_EVENT_PREFIX)) {
-      totalMarked += 1
+    if (!record['type'].startsWith(XINGYUAN_EVENT_PREFIX)) {
+      chunks.push(rawLine, Buffer.from('\n', 'utf8'))
+      continue
+    }
+    totalMarked += 1
+    if (mode === 'mark') {
       if (record['ignorable'] !== true) {
         record['ignorable'] = true
         eventsMarked += 1
@@ -235,12 +274,21 @@ function patchPlaintext(plaintext: Buffer): PatchOutcome | PatchFailure {
         // 已是 ignorable：不触发补标（patched 判定只看 eventsMarked），只累计总数供回填
         chunks.push(rawLine, Buffer.from('\n', 'utf8'))
       }
-    } else {
-      chunks.push(rawLine, Buffer.from('\n', 'utf8'))
+      continue
     }
+    // neutralize：seq/time 必须可原样承载，否则整文件放弃（宁可跳过不可伪造坐标）
+    const seq = record['seq']
+    const time = record['time']
+    if (!Number.isSafeInteger(seq) || !Number.isSafeInteger(time)) {
+      return skip('unparsable', `xingyuan event line ${lineNumber} lacks safe integer seq/time`)
+    }
+    eventsNeutralized += 1
+    chunks.push(Buffer.from(neutralEvent(seq, time, headerId), 'utf8'), Buffer.from('\n', 'utf8'))
   }
-  if (eventsMarked === 0) return { kind: 'clean', plaintext, eventsMarked: 0, totalMarked }
-  return { kind: 'patched', plaintext: Buffer.concat(chunks), eventsMarked, totalMarked }
+  if (eventsMarked === 0 && eventsNeutralized === 0) {
+    return { kind: 'clean', plaintext, eventsMarked: 0, eventsNeutralized: 0, totalMarked }
+  }
+  return { kind: 'patched', plaintext: Buffer.concat(chunks), eventsMarked, eventsNeutralized, totalMarked }
 }
 
 function skip(reason: SkipReason, detail: string): PatchFailure {
@@ -299,8 +347,10 @@ export interface RepairReport {
   scanned: number
   /** 实际改写的会话文件数。 */
   patched: number
-  /** 补上 ignorable 标记的事件总数。 */
+  /** 补上 ignorable 标记的事件总数（当前格式工件）。 */
   eventsMarked: number
+  /** 旧格式工件中替换为惰性事件的星愿事件总数（迁移链拒绝未知历史事件）。 */
+  neutralized: number
   skipped: Partial<Record<SkipReason, number>>
   warnings: string[]
 }
@@ -316,15 +366,10 @@ export interface RepairOptions {
   log?: (message: string) => void
 }
 
-const SESSION_ARTIFACTS: Array<{ filename: string; compressed: boolean }> = [
-  { filename: 'session.jsonl.zstd', compressed: true },
-  { filename: 'session.jsonl', compressed: false },
-]
-
 /** 激活期自愈入口：永不抛出，异常折算进 report（warnings/skipped.error）。 */
 export async function repairSessionLogs(options: RepairOptions = {}): Promise<RepairReport> {
   const log = options.log ?? (() => {})
-  const report: RepairReport = { scanned: 0, patched: 0, eventsMarked: 0, skipped: {}, warnings: [] }
+  const report: RepairReport = { scanned: 0, patched: 0, eventsMarked: 0, neutralized: 0, skipped: {}, warnings: [] }
   const sessionsRoot = join(options.dshHome ?? resolveDshHome(), 'sessions')
   const liveIds = safeLiveIds(options.listLiveSessionIds)
   if (!existsSync(sessionsRoot)) return report
@@ -367,9 +412,12 @@ export async function repairSessionLogs(options: RepairOptions = {}): Promise<Re
         if (outcome.kind === 'patched') {
           report.patched += 1
           report.eventsMarked += outcome.eventsMarked
+          report.neutralized += outcome.eventsNeutralized
           log(outcome.relayoutOnly
             ? `[xingyuan] 已修复会话 ${outcome.sessionId} 的工件帧布局（首帧须为单行 header）`
-            : `[xingyuan] 已为会话 ${outcome.sessionId} 补标 ${outcome.eventsMarked} 条卡片事件（ignorable）`)
+            : outcome.eventsNeutralized > 0
+              ? `[xingyuan] 会话 ${outcome.sessionId} 为旧格式：${outcome.eventsNeutralized} 条卡片事件已替换为惰性事件以便 dsh 迁移（卡片不再回放）`
+              : `[xingyuan] 已为会话 ${outcome.sessionId} 补标 ${outcome.eventsMarked} 条卡片事件（ignorable）`)
         } else if (outcome.kind === 'clean') {
           report.eventsMarked += outcome.eventsMarked
         } else if (outcome.kind === 'skipped') {
@@ -387,15 +435,47 @@ export async function repairSessionLogs(options: RepairOptions = {}): Promise<Re
 
 interface ArtifactRef {
   path: string
+  /** 工件名中的格式代（v0 无版本段，按 0 计）。 */
+  version: number
   compressed: boolean
 }
 
+/**
+ * 解析官方工件名：`session.jsonl[.zstd]`（v0）或 `session.v<N>.jsonl[.zstd]`（N>0）。
+ * 非规范名（大写 v、前导零、v0 带版本段、迁移临时文件等）与高于当前版本的代
+ * 一律不认（口径同 dsh 的 parseGenerationLogFilename）。
+ */
+function parseArtifactName(name: string): { version: number; compressed: boolean } | undefined {
+  const match = /^session(?:\.v([1-9]\d*))?\.jsonl(\.zstd)?$/.exec(name)
+  if (match === null) return undefined
+  const version = match[1] === undefined ? 0 : Number(match[1])
+  if (!Number.isSafeInteger(version) || version > SESSION_FORMAT_VERSION) return undefined
+  return { version, compressed: match[2] !== undefined }
+}
+
+/**
+ * 选目录内最高代的合法工件（dsh 只按最新代读取/迁移）：当前版本走补标，
+ * 更低版本走去毒，旧代在被更高代遮蔽时不处理（零写入原则）。同代并存时
+ * 优先压缩工件（与旧版选择顺序一致）。
+ */
 async function locateArtifact(sessionDir: string): Promise<ArtifactRef | undefined> {
-  for (const candidate of SESSION_ARTIFACTS) {
-    const path = join(sessionDir, candidate.filename)
-    if (existsSync(path)) return { path, compressed: candidate.compressed }
+  let entries: string[]
+  try {
+    entries = await readdir(sessionDir)
+  } catch {
+    return undefined
   }
-  return undefined
+  let best: ArtifactRef | undefined
+  for (const name of entries) {
+    const parsed = parseArtifactName(name)
+    if (parsed === undefined) continue
+    if (best !== undefined) {
+      if (parsed.version < best.version) continue
+      if (parsed.version === best.version && (best.compressed || !parsed.compressed)) continue
+    }
+    best = { path: join(sessionDir, name), version: parsed.version, compressed: parsed.compressed }
+  }
+  return best
 }
 
 // ===== 自愈标记（增量跳过）=====
@@ -428,7 +508,7 @@ async function writeMarker(sessionDir: string, marker: Marker): Promise<void> {
 }
 
 type Outcome =
-  | { kind: 'patched'; sessionId: string; eventsMarked: number; relayoutOnly?: boolean; totalMarked: number }
+  | { kind: 'patched'; sessionId: string; eventsMarked: number; eventsNeutralized: number; relayoutOnly?: boolean; totalMarked: number }
   | { kind: 'clean'; eventsMarked: number; totalMarked: number }
   | { kind: 'skipped'; reason?: SkipReason; detail?: string }
 
@@ -466,7 +546,11 @@ async function repairOneFile(
     plaintext = raw
   }
 
-  const outcome = patchPlaintext(plaintext)
+  const outcome = patchPlaintext(
+    plaintext,
+    artifact.version === SESSION_FORMAT_VERSION ? 'mark' : 'neutralize',
+    artifact.version,
+  )
   if (outcome.kind === 'skip') return { kind: 'skipped', reason: outcome.reason, detail: outcome.detail }
   // 布局非法时即使无需补标也要重写为合法容器（其余情况才允许 clean 跳过）
   if (outcome.kind === 'clean' && !layoutBroken) {
@@ -510,8 +594,15 @@ async function repairOneFile(
     return { kind: 'skipped', reason: 'busy', detail: error instanceof Error ? error.message : String(error) }
   }
   await pruneBackups(dirnameOf(backupPath), `${sessionId}-`, maxBackupPerSession)
-  await writeMarker(dirnameOf(artifact.path), { artifactBytes: nextBytes.length, eventsMarked: outcome.totalMarked })
-  return { kind: 'patched', sessionId, eventsMarked: outcome.eventsMarked, totalMarked: outcome.totalMarked, relayoutOnly: outcome.kind === 'clean' }
+  // neutralize 后文件内不再有星愿事件：标记计数归零，避免下次启动虚报「已补标」
+  await writeMarker(dirnameOf(artifact.path), {
+    artifactBytes: nextBytes.length,
+    eventsMarked: outcome.eventsNeutralized > 0 ? 0 : outcome.totalMarked,
+  })
+  if (outcome.eventsNeutralized > 0) {
+    return { kind: 'patched', sessionId, eventsMarked: 0, eventsNeutralized: outcome.eventsNeutralized, totalMarked: outcome.totalMarked }
+  }
+  return { kind: 'patched', sessionId, eventsMarked: outcome.eventsMarked, eventsNeutralized: 0, totalMarked: outcome.totalMarked, relayoutOnly: outcome.kind === 'clean' }
 }
 
 function dirnameOf(path: string): string {
