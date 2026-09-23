@@ -5,9 +5,9 @@
  * 领取/修改/记忆保存默认免确认，可在设置开启）。删除（含批量）始终确认；
  * 教练风格、画像与微行动步进不设门闩——与设置页文案同一口径。
  *
- * 语言口径（rc.2 平台事实）：宿主不向 host 侧插件暴露用户界面语言（client 半侧的
+ * 语言口径（0.1.7 复核仍成立的平台事实）：宿主不向 host 侧插件暴露用户界面语言（client 半侧的
  * locale 服务是浏览器专属 seam，工具执行期读不到），故确认卡文案按对话偏好
- * xingyuan-pref.confirmLang 选择（设置 → 星愿 → 对话偏好，默认中文），不猜测。
+ * confirmLang（bundle 主行的 volatile 字段，设置 → 星愿 → 对话偏好，默认中文）选择，不猜测。
  */
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { Context } from '@deepseek-ai/cordis'

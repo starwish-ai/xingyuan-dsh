@@ -5,6 +5,62 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5-alpha.1] - 2026-09-23
+
+### Changed
+- **dsh 0.1.7-alpha.2 compatibility (breaking)**: the host rewrote its settings subsystem
+  and removed `ctx.settings.installSection` (host) plus the whole `ctx.settingsScope`
+  service (client), with no compatibility layer. Editable preferences are now the
+  `.volatile()`-marked fields of a profile row's `Config` schema, projected per **row id**
+  and read/written through `ctx.configForms.get(id)`. The six XingYuan preferences moved
+  onto the existing `xy-bundle` row (technical fields stay non-volatile and therefore out
+  of the form); the settings page now registers through the new `configForms.whileServed`,
+  and the host suppresses its auto-generated page via `settings.configure({ auto: false })`.
+  Peers narrowed to `^0.1.7-alpha.2`; note that dsh profiles set `autoInstallPeers: false`,
+  so this documents intent rather than gating an incompatible install — verify on a real
+  host before assuming a version will work.
+- **Preferences no longer live in `~/.dsh/settings.yaml`** — they persist in the active
+  profile patch (`~/.dsh/profiles/<profile>/cordis.patch.yml`). Backing up
+  `~/.dsh/xingyuan/` still covers all business data but no longer covers preferences.
+- Voluntary simplification: `ConfigForm.set()` reports whether the Host accepted the
+  write, so the client-side post-write snapshot comparison and its write-sequence fence
+  are gone; the shared form instance and its write queue are owned by the provider.
+
+### Fixed
+- **Session view tabs come back on dsh 0.1.6+**: dsh 0.1.6 removed `current` from the
+  client session-list snapshot, so the tab-visibility controller could no longer tell
+  which session was on screen and treated every session as non-XingYuan — in the default
+  "follow session" mode all six view tabs silently stopped registering, with no error and
+  a clean `typecheck`. The "current session" lookup is now a pure selector in
+  `tab-policy.ts` reading `retainedBy.mainView`, tested against the real host row shape.
+- **The sessions dependency is declared rather than inherited**: the client half lists
+  `sessions` in its `inject` and `@deepseek-ai/dsh-api-session-controller` in
+  `dsh.client.inject`, instead of relying on the compose edge that
+  `dsh-client-ui-conversation` happens to contribute.
+- **XingYuan preferences reset on upgrade, acknowledged**: the host's legacy import only
+  accepts a section with a matching Loader entry, so the old `xingyuan-pref` /
+  `xingyuan-ui` sections were refused and left in the renamed `settings.yaml.imported`.
+  Values fall back to schema defaults; no migration is written (deliberate choice).
+- Session-log self-heal premises re-verified against format v4: `ignorable` is still
+  honoured for current-format artifacts, `hook/invoked` still crosses every migration
+  edge, and v3→v4 now accepts ignorable unknowns (renaming them to `plugin:<type>`)
+  while v0→v1 / v1→v2 / v2→v3 still refuse all unknown historical events.
+- **v3 session logs are no longer detoxed away**: the self-heal boundary used to be
+  "is this the current format?", so when the host moved to v4 every existing v3
+  artifact flipped into the destructive branch and its `xingyuan/*` card events would
+  have been overwritten with placeholder events on next start — permanently, though the
+  payload was still recoverable. The boundary is now "does this generation's migration
+  edge accept `ignorable`?" (v3 and up are marked, v2 and below are detoxed), pinned by
+  tests that run the real official v3→v4 chain. Note the honest limit: after a v3 log is
+  migrated, its events carry a `plugin:` prefix and XingYuan's card renderer does not
+  match that, so those historical cards still do not replay — marking keeps the payload
+  so they can be restored later, detoxing destroys it.
+- **A hand-edited bad `hiddenTabs` value no longer takes the whole plugin down**: the
+  field moved onto the shared `xy-bundle` row, where a strict enum made an unknown value
+  throw during Config parsing — killing storage, routes and preset publishing, not just
+  that one preference. The element type is now a tolerant string, and unknown or
+  duplicate entries are dropped at the read boundary by `normalizeHiddenTabs()`.
+
 ## [0.6.4] - 2026-09-11
 
 ### Changed

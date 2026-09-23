@@ -8,15 +8,17 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+// 纯类型导入：只取 dsh-settings 对 Context.settings 的声明合并，不留运行时 import
+import type {} from '@deepseek-ai/dsh-settings'
 import { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { makeXingyuanStore, xingyuanDomainSpec } from './domain.js'
-import { installPrefSettings } from './pref-settings.js'
+import { PrefSettingsFields, readPrefSettings } from './pref-settings.js'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { registerXingyuanRoutes } from './routes/index.js'
 import { ensurePresetRoot } from './preset-root.js'
 import { repairSessionLogs } from './session-log-repair.js'
 import { sweepOrphans } from './consistency-sweep.js'
-import { installUiSettings } from './ui-settings.js'
+import { UiSettingsFields } from './ui-settings.js'
 
 export { xingyuanDomainSpec, DOMAIN_VERSION, COACH_STYLES } from './domain.js'
 export type { CoachStyle, WishRecord, TaskRecord, CheckinRecord, MemoryRecord, XingyuanStore } from './domain.js'
@@ -24,30 +26,38 @@ export type { CoachStyle, WishRecord, TaskRecord, CheckinRecord, MemoryRecord, X
 /** Cordis 插件名。 */
 export const name = 'xingyuan'
 
-/** 插件配置。 */
-export interface Config {
+/**
+ * 主行配置字段表 = 技术参数（非 volatile，改之重启本行）+ 两组成员偏好
+ * （volatile，改之原地生效且被宿主投影成「设置 → 星愿」的可编辑表单）。
+ * 偏好字段表在 pref-settings.ts / ui-settings.ts 各自持有，此处只做组装。
+ */
+const configFields = {
   /** 区间查询默认天数窗。 */
-  rangeDefaultDays: number
+  rangeDefaultDays: z.number().default(7),
   /** 区间查询天数窗上限。 */
-  rangeMaxDays: number
+  rangeMaxDays: z.number().default(31),
   /** 记忆列表单页条数（分页端点缺省 limit）。 */
-  memoryListLimit: number
+  memoryListLimit: z.number().default(500),
   /**
-   * 激活期会话日志自愈（默认开）：当前格式日志补 `"ignorable": true` 标记，
-   * 旧格式日志的 xingyuan/* 事件替换为官方便可迁移的惰性事件（详见
-   * session-log-repair.ts 头注；dsh 0.1.5 起历史迁移链拒绝未知事件）。
+   * 激活期会话日志自愈（默认开）：迁移边接受 ignorable 的那一侧（v3 起，含当前代）
+   * 补 `"ignorable": true` 标记，更旧代的星愿事件替换为官方惰性事件（详见
+   * session-log-repair.ts 头注；v0→v1/v1→v2/v2→v3 三条边拒绝未知历史事件）。
    * 不含星愿事件的文件零写入。
    */
-  repairSessionLogs: boolean
+  repairSessionLogs: z.boolean().default(true),
+  ...PrefSettingsFields,
+  ...UiSettingsFields,
 }
 
-/** 配置 schema（默认值写进 schema）。 */
-export const Config: z<Config> = z.object({
-  rangeDefaultDays: z.number().default(7),
-  rangeMaxDays: z.number().default(31),
-  memoryListLimit: z.number().default(500),
-  repairSessionLogs: z.boolean().default(true),
-})
+/** 配置 schema（默认值写进 schema；volatile 标记即「界面可改、改了不重启」）。 */
+export const Config = z.object(configFields)
+
+/**
+ * 解析后的配置形状，直接从字段表推出——不另写一份 interface，
+ * 免得 schema 与类型各自漂移。volatile 字段在此是 `Volatile<T>` 引用，
+ * 读当前值须 `.get()`。
+ */
+export type Config = Schemastery.ObjectT<typeof configFields>
 
 /** 依赖：storageDomain（领域设施）、webServer（页面路由）、sessions（活会话枚举）、
  *  sqlite 后端生命周期键（官方 storage 契约：数据形式提供方注入它，使激活不与
@@ -63,12 +73,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     disposed = true
     if (domain) await domain.close()
   })
-  // 界面偏好命名空间（标签页显隐）常驻注册：不依赖 settings 服务存在，服务挂载后自动生效
-  installUiSettings(ctx)
-  // 对话偏好命名空间（二次确认 + 记忆注入上限）常驻注册：与界面偏好同款时序。
-  // 返回的读取 thunk 由领域服务持有，preset 层经 ctx.xingyuan.prefs() 读取——
-  // 命名空间必须常驻，否则整页可见而数据随 preset 懒加载缺席，写入静默失败。
-  const readPrefs = installPrefSettings(ctx)
+  // 偏好读取 thunk：每次调用现取 volatile 引用的当前值。它由领域服务持有，
+  // preset 层经 ctx.xingyuan.prefs() 读取。偏好挂在常驻主行上，故不存在
+  // 「整页可见而数据缺席」的时序问题（来龙去脉见 src/pref-settings.ts 头注）。
+  const readPrefs = () => readPrefSettings(config)
+  // 本插件自带「设置 → 星愿」整页，关掉宿主对这一行的自动生成页
+  ctx.inject(['settings'], (inv) => inv.effect(() => inv.settings.configure({ auto: false }, ctx.fiber)))
   // preset 发布成功后再开领域；两步就绪后才 provide，注入方（preset 子树）由
   // cordis inject 语义等待本行激活完成
   await ensurePresetRoot()

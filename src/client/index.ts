@@ -5,7 +5,7 @@
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ConversationNodeDefinition } from '@deepseek-ai/dsh-client-ui-conversation/client'
-// settingsScope 服务与 settings.section 槽的类型声明合并位（dsh 0.1.2 起归 ui-settings 包持有）
+// configForms 服务与 settings.section 槽的类型声明合并位（0.1.7 起 settingsScope 已撤除）
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
 // ctx.slots 服务声明位（SlotRegistry，0.1.2 起归 ui-renderer 持有）
@@ -16,9 +16,13 @@ import { STYLE_TEXT } from './styles.js'
 import { CARD_VIEWS } from './cards.js'
 import type { XyState } from './types.js'
 import { installTabVisibility } from './tab-visibility.js'
-import { SettingsSection, type PrefScopeLike, type UiScopeLike } from './pages/settings.js'
+import { SettingsSection } from './pages/settings.js'
+import { SETTINGS_ENTRY_ID, type SettingsFormValue } from '../pref-policy.js'
 
-export const inject = ['slots', 'settingsScope', 'uiConversation']
+// `sessions` 显式声明：标签页显隐要读会话列表快照（tab-visibility.ts 经 ctx.get 取，
+// 原因见那里的撞名说明）。不声明也能拿到——ui-conversation 自带 sessions 依赖边，
+// 但那是继承来的运气；声明后本插件的 apply 会等它就绪，上游撤边即响亮失败而非静默失效。
+export const inject = ['sessions', 'slots', 'configForms', 'uiConversation']
 
 // dsh 0.1.2 起三个声明合并位重新归口：ChatNodeDataMap 在 ui-chat，
 // ConversationStepDataMap 在 ui-conversation（client 子路径），runtime 包消失。
@@ -121,16 +125,16 @@ export function apply(ctx: ClientContext): void {
   // label 用 thunk 跟随当前语言；locale 声明让壳在语言切换时刷新标签行。
   ctx.slots.inject('conversation.view', () => installTabVisibility(ctx))
 
-  // 星愿设置整页（设置 → 星愿）：教练风格/画像（星愿库）+ 二次确认开关与注入上限
-  // （bundle 常驻命名空间 xingyuan-pref）+ 标签页显隐（bundle 常驻命名空间 xingyuan-ui）。
-  // 两个偏好命名空间都挂在常驻层：整页由本文件无条件注册，命名空间若随 preset 懒加载
-  // 缺席，就会出现「整页可见但两项写不进去且静默失败」。
-  ctx.slots.inject('settings.section', () => {
-    const prefscope = ctx.settingsScope.bind({ namespace: 'xingyuan-pref' }) as unknown as PrefScopeLike
-    const uiscope = ctx.settingsScope.bind({ namespace: 'xingyuan-ui' }) as unknown as UiScopeLike
+  // 星愿设置整页（设置 → 星愿）：教练风格/画像走星愿库 HTTP 面；写操作确认、
+  // 对话偏好、标签页显隐同挂 bundle 主行的 volatile 配置表单（0.1.7 起「可编辑设置
+  // = 行配置里标了 volatile 的字段」，见 src/pref-settings.ts 头注）。
+  // whileServed 让整页跟随该行的实际组装：bundle 没装或没激活时整页不留痕迹——
+  // 旧版整页无条件渲染，缺席只能由注册方自己判并呈现。
+  ctx.effect(() => ctx.configForms.whileServed([SETTINGS_ENTRY_ID], () => ctx.slots.inject('settings.section', () => {
+    const form = ctx.configForms.get<SettingsFormValue>(SETTINGS_ENTRY_ID)
     return ctx.slots.register(
       { name: 'settings.section', id: 'xingyuan', order: 60, label: () => t('settings.tabLabel'), locale: XY_NS },
-      () => SettingsSection({ scope: prefscope, uiscope }),
+      () => SettingsSection({ form }),
     )
-  })
+  })))
 }

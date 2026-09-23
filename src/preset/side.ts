@@ -3,10 +3,11 @@
  * 本文件由 presets/xingyuan/agent.cordis.yml 以裸包名子路径装载；发布服务必须留在
  * isolate realm（本插件只向 ctx 注册贡献，不 provide 服务，天然合规）。
  *
- * 对话偏好（写操作二次确认 / 记忆注入上限）不在本层提供：设置整页由 bundle client
- * 层常驻注册，而 preset 挂载按 preset 常驻却懒加载——首次开星愿会话前命名空间缺席，
- * 整页可见而数据不在，写入静默失败。两项已迁至 bundle 层常驻命名空间 xingyuan-pref
- * （src/pref-settings.ts），本层经 ctx.xingyuan.prefs() 读取。
+ * 对话偏好（写操作二次确认 / 记忆注入上限 / 确认卡语言 / 标签页显隐）不在本层提供：
+ * 设置整页由 bundle client 层常驻注册，而 preset 挂载是懒加载的——重启后未开过星愿
+ * 会话时本层根本不存在，整页可见而数据缺席。0.1.7 起偏好落在 bundle 主行 `xy-bundle`
+ * 的 volatile Config 字段上（字段表 src/pref-settings.ts 与 src/ui-settings.ts），
+ * 本层经 ctx.xingyuan.prefs() 读取当前解析值。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -51,7 +52,7 @@ export const Config: z<Config> = z.object({
 })
 
 export function apply(ctx: Context & { xingyuan: XingyuanStore }, config: Config): void {
-  // 对话偏好：bundle 层常驻命名空间的读取 thunk，每次调用取当前解析值
+  // 对话偏好：bundle 主行 volatile Config 的读取 thunk，每次调用取当前解析值
   const prefs = (): PrefSettings => ctx.xingyuan.prefs()
   // 组合层参数进程内不变，直接取 entry config；对话偏好用 getter，保证热改即时生效
   const toolsConfig: ToolsConfig = {

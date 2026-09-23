@@ -79,7 +79,7 @@ export interface Config {
   confirmWrites: boolean
   /** 总开关开启时各确认类目的明细开关（getter 热改即时生效，见 pref-policy CONFIRM_OPS）。 */
   confirmOps: Record<ConfirmOp, boolean>
-  /** 确认卡（卡头/按钮/问题文案）的显示语言（对话偏好 xingyuan-pref，getter 热改即时生效）。 */
+  /** 确认卡（卡头/按钮/问题文案）的显示语言（bundle 主行 volatile 字段，getter 热改即时生效）。 */
   confirmLang: ConfirmLang
 }
 

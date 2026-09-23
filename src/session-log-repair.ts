@@ -3,19 +3,32 @@
  *
  * 背景：dsh 会话持久化读取端按「本仓库生成的官方事件类型白名单」拒绝未知事件；
  * 仓库外插件事件按构造不在名单内，而写入端（Session.append）至今没有 ignorable
- * 标记通道。0.1.5-rc.2 的规则分两档：
- * - 当前格式（v3，工件名 session.v3.jsonl[.zstd]）：读取端认 `ignorable: true`，
- *   不认识的带标事件被安全跳过且数据原样保留；
- * - 历史格式迁移（v0/v1/v2 → v3）：迁移链**拒绝一切未知历史事件，ignorable
- *   也不例外**（官方 alpha-historical-unknown-event-refusal 决策）——旧日志里的
- *   xingyuan/* 事件会让整个会话冷加载失败，且不产出 v3 后继、源文件原样保留。
+ * 标记通道。**接受规则按迁移边分档，且随宿主换代在变**（下列事实逐条取自各
+ * dsh-session-format-vN-to-vM 的 lib/index.js，勿凭印象改）：
+ * - 当前格式（版本 = SESSION_FORMAT_VERSION，工件名 session.v{N}.jsonl[.zstd]）：
+ *   读取端认 `ignorable: true`，不认识的带标事件被安全跳过且数据原样保留；
+ * - **v3 → v4 迁移边同样接受 ignorable 未知事件**：把它们重命名为
+ *   `plugin:<type>` 并保留载荷与坐标（`namespaceV3OpaqueEvent` 在严格拒绝之前先放行）；
+ * - **v0→v1 / v1→v2 / v2→v3 三条边拒绝一切未知历史事件，ignorable 也不例外**
+ *   （官方 alpha-historical-unknown-event-refusal 决策；v0→v1 的报错原文即
+ *   「refuses unknown historical events even when ignorable」）——这些代里的
+ *   xingyuan/* 事件会让整个会话冷加载失败，且不产出后继、源文件原样保留。
  *
- * 本模块在激活期扫描 $DSH_HOME/sessions，按工件版本分两种处理：
- * - 当前版本工件：补标模式——xingyuan/* 未标记事件行补 `"ignorable": true`；
- * - 历史版本工件：去毒模式——xingyuan/* 事件行替换为官方惰性事件 hook/invoked
- *   （seq/time 不变），迁移链即可安全穿过、会话照常打开；代价是该会话历史卡片
- *   事件不再回放（业务数据在 sqlite，不丢失）。仅当目录内无当前版本工件时才动
- *   历史工件（dsh 只按最新代读取，旧代已不被消费）。
+ * 本模块在激活期扫描 $DSH_HOME/sessions，按**工件版本是否落在 ignorable 被接受的
+ * 那一侧**（见 {@link IGNORABLE_AWARE_FORMAT_VERSION}）分两种处理：
+ * - ignorable 感知工件（当前版本与被 v3→v4 这类宽容边接住的旧代）：补标模式——
+ *   xingyuan/* 未标记事件行补 `"ignorable": true`，事件载荷与坐标全保留；
+ * - 更旧代（其迁移边拒绝未知事件）：去毒模式——xingyuan/* 事件行替换为官方惰性
+ *   事件 hook/invoked（seq/time 不变），迁移链即可安全穿过、会话照常打开；代价是
+ *   该会话历史卡片事件不再回放（业务数据在 sqlite，不丢失）。仅当目录内无更高代
+ *   工件时才动低代（dsh 只按最新代读取，旧代已不被消费）。
+ *
+ * **补标 ≠ 卡片当场还能渲染**（2026-09-23 实测口径，勿再写成「回放能力保留」）：
+ * 客户端按裸 `xingyuan/*` 类型匹配卡片（src/client/index.ts 的 KIND_BY_EVENT），而
+ * v3→v4 迁移边会把带标未知事件重命名为 `plugin:xingyuan/*`（官方
+ * namespaceV3OpaqueEvent），所以**跨代迁移后的旧会话卡片不再渲染**。补标相对去毒的
+ * 实际收益是「载荷仍在日志里、上游开放映射或本插件登记前缀类型后可即行恢复」；
+ * 停留在当前代不再迁移的工件则确实逐条回放（类型不变）。
  *
  * 安全约束（改前必读，勿删）：
  * - 不含星愿事件的会话文件零写入（字节与 mtime 均不变）；
@@ -33,8 +46,9 @@
  *   （历史上一次实现曾把整个文件重压成单帧导致宿主启动崩溃，已由本模块的
  *   relayout-only 路径兜底自愈），即使无需补标也会重写为合法布局。
  * - SESSION_FORMAT_VERSION 取自 @deepseek-ai/dsh-session。升级 dsh 时必须核对
- *   本模块的前提与布局契约仍然成立（尤其迁移链是否改为接受 ignorable 历史事件——
- *   若接受，去毒模式可回归补标）。
+ *   本模块的前提与布局契约仍然成立，尤其**新迁移边是否接受 ignorable 未知事件**：
+ *   接受则可接受的下界就要上移（去毒面随之收窄），拒绝则须下移。判错方向的代价不
+ *   对称——多去毒一次即永久销毁该会话的卡片回放，少去毒一次则会话冷加载失败。
  */
 
 import { constants as zlibConstants, zstdCompress, zstdDecompressSync } from 'node:zlib'
@@ -48,6 +62,16 @@ const zstdCompressAsync = promisify(zstdCompress)
 
 /** 星愿事件类型前缀（events.ts 声明合并的全部 kind）。 */
 const XINGYUAN_EVENT_PREFIX = 'xingyuan/'
+/**
+ * 「迁移链接受 ignorable 未知事件」的最低工件版本——补标 / 去毒的分界。
+ *
+ * 取值口径见头注：v3→v4 边已在严格拒绝前放行 ignorable（重命名为 `plugin:<type>`、
+ * 载荷与坐标原样保留），故 v3 工件补标即可穿过；v0/v1/v2 的边一律拒绝，只能去毒。
+ * **与 SESSION_FORMAT_VERSION 解耦**：当前代永远落在本界之上（v4 ≥ v3），
+ * 因此「当前代 = 补标」仍成立，但反过来不成立——被版本升级误判成去毒目标、
+ * 从而销毁可保留数据的正是那批 v3 旧工件（2026-09-23 修掉的即为此）。
+ */
+const IGNORABLE_AWARE_FORMAT_VERSION = 3
 /** 工件内明文的防御性上限（远超个人部署可能的会话体积）。 */
 const MAX_PLAINTEXT_BYTES = 512 * 1024 * 1024
 
@@ -188,8 +212,9 @@ async function selfVerify(container: Buffer, expectedPlaintext: Buffer): Promise
 // ===== 日志行级补标 =====
 
 /**
- * mark：当前格式，为星愿事件补 `ignorable: true`（数据保留、卡片可回放）；
- * neutralize：历史格式，把星愿事件替换为官方惰性事件，让迁移链可穿过。
+ * mark：ignorable 感知工件（{@link IGNORABLE_AWARE_FORMAT_VERSION} 及以上），为星愿事件
+ * 补 `ignorable: true`（载荷保留、迁移边会把它带进后继代；跨代后是否仍渲染见头注）；
+ * neutralize：迁移链拒绝未知事件的更旧代，把星愿事件替换为官方惰性事件让链穿过。
  */
 type PatchMode = 'mark' | 'neutralize'
 
@@ -206,9 +231,10 @@ interface PatchOutcome {
 type PatchFailure = { kind: 'skip'; reason: SkipReason; detail: string }
 
 /**
- * 对工件明文做行级处理。首行必须是 session header 且版本与工件名一致
- * （mark 要求当前版本；neutralize 要求历史版本）。之后每个完整行必须能解析为
- * 对象（任何一行解析失败都整体放弃）。只有星愿事件行会被重序列化，其余行保持
+ * 对工件明文做行级处理。首行必须是 session header 且版本与工件名一致；模式还须与
+ * 该版本的 ignorable 接受性一致（mark 只对界及以上有意义，neutralize 只对界以下必要
+ * ——走错一侧等于白改或错删，故此处响亮拒绝而不是将错就错）。之后每个完整行必须能
+ * 解析为对象（任何一行解析失败都整体放弃）。只有星愿事件行会被重序列化，其余行保持
  * 原字节。撕裂尾（无换行的最后一段）按原样保留。
  */
 function patchPlaintext(plaintext: Buffer, mode: PatchMode, artifactVersion: number): PatchOutcome | PatchFailure {
@@ -222,15 +248,16 @@ function patchPlaintext(plaintext: Buffer, mode: PatchMode, artifactVersion: num
     return skip('format', 'header line is not valid JSON')
   }
   const headerRecord = header as Record<string, unknown> | null
-  const expectedVersion = mode === 'mark' ? SESSION_FORMAT_VERSION : artifactVersion
+  const expectedVersion = artifactVersion
+  const ignorableAware = artifactVersion >= IGNORABLE_AWARE_FORMAT_VERSION
   if (
     headerRecord === null || typeof headerRecord !== 'object' ||
     headerRecord['type'] !== 'session' ||
     headerRecord['version'] !== expectedVersion ||
-    (mode === 'neutralize' && expectedVersion >= SESSION_FORMAT_VERSION) ||
+    (mode === 'mark') !== ignorableAware ||
     typeof headerRecord['id'] !== 'string' || headerRecord['id'] === ''
   ) {
-    return skip('format', `header version=${String(headerRecord?.['version'])} expect=${expectedVersion}`)
+    return skip('format', `header version=${String(headerRecord?.['version'])} expect=${expectedVersion} mode=${mode}`)
   }
   const headerId = headerRecord['id']
 
@@ -347,9 +374,9 @@ export interface RepairReport {
   scanned: number
   /** 实际改写的会话文件数。 */
   patched: number
-  /** 补上 ignorable 标记的事件总数（当前格式工件）。 */
+  /** 补上 ignorable 标记的事件总数（ignorable 感知工件）。 */
   eventsMarked: number
-  /** 旧格式工件中替换为惰性事件的星愿事件总数（迁移链拒绝未知历史事件）。 */
+  /** 迁移链拒绝未知事件的那批旧代工件中，替换为惰性事件的星愿事件总数。 */
   neutralized: number
   skipped: Partial<Record<SkipReason, number>>
   warnings: string[]
@@ -454,8 +481,9 @@ function parseArtifactName(name: string): { version: number; compressed: boolean
 }
 
 /**
- * 选目录内最高代的合法工件（dsh 只按最新代读取/迁移）：当前版本走补标，
- * 更低版本走去毒，旧代在被更高代遮蔽时不处理（零写入原则）。同代并存时
+ * 选目录内最高代的合法工件（dsh 只按最新代读取/迁移）：{@link
+ * IGNORABLE_AWARE_FORMAT_VERSION} 及以上走补标，界以下走去毒，旧代在被更高代遮蔽时
+ * 不处理（零写入原则）。同代并存时
  * 优先压缩工件（与旧版选择顺序一致）。
  */
 async function locateArtifact(sessionDir: string): Promise<ArtifactRef | undefined> {
@@ -546,9 +574,11 @@ async function repairOneFile(
     plaintext = raw
   }
 
+  // 分界看「该代迁移边是否接受 ignorable」而非「是否当前代」：v3 工件补标即可被
+  // v3→v4 边带进后继代（卡片数据保留），只有更旧代才需要去毒。
   const outcome = patchPlaintext(
     plaintext,
-    artifact.version === SESSION_FORMAT_VERSION ? 'mark' : 'neutralize',
+    artifact.version >= IGNORABLE_AWARE_FORMAT_VERSION ? 'mark' : 'neutralize',
     artifact.version,
   )
   if (outcome.kind === 'skip') return { kind: 'skipped', reason: outcome.reason, detail: outcome.detail }

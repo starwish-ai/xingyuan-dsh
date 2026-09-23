@@ -153,7 +153,7 @@ export type MemoryRecord = TableValue<(typeof xingyuanDomainSpec.tables)['memori
 export interface XingyuanStore {
   readonly spec: typeof xingyuanDomainSpec
   readonly domain: Domain<typeof xingyuanDomainSpec>
-  /** 对话偏好：bundle 层常驻命名空间的解析值（非领域数据），每次调用读当前值。 */
+  /** 对话偏好：bundle 主行 volatile Config 的当前解析值（非领域数据），每次调用现取。 */
   prefs(): PrefSettings
   newId(): string
   checkinKey(taskId: string, date: string): string

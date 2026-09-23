@@ -1,15 +1,35 @@
 # 星愿 Dsh 插件开发文档
 
 > 本文档描述独立项目 `@starwish-ai/xingyuan-dsh` 的架构、核心机制与开发规范，面向后续在本仓库上迭代的开发者。
-> 接口基线：DeepSeek Harness（下称 dsh）`0.1.5-rc.2`。dsh 处于技术预览期，API 可能变动；
+> 接口基线：DeepSeek Harness（下称 dsh）`0.1.7-alpha.2`。dsh 处于技术预览期，API 可能变动；
 > 升级依赖版本前先核对官方 release notes 与 §12 参考文档。
-> （0.1.5-rc.2 迁移要点：**会话格式升 v3**，工件改名 `session.v3.jsonl[.zstd]`（v0 仍是
-> `session.jsonl`），读取端对当前格式仍认 `ignorable`，但 **v0/v1/v2 → v3 迁移链拒绝一切
-> 未知历史事件（ignorable 也不例外）**——session-log-repair 因此新增「去毒模式」（见 §5.6）；
-> 系统提示词 section 号重排（宿主内容移到 10000+，插件固有 5–115 号现在自然排在宿主说明之前，
-> 无需改动）；`ctx.agent` 移除（插件只用 `exec.agent`，不受影响）；PTC 词汇
-> `tool/code-dispatch` → `tool/ptc-dispatch`、预设 `code` → `ptc`（插件未用）；settings/
-> storage-domain/tools/user-questions/client 三处声明合并位均无破坏性变化。
+> **client 半侧的宿主包连 peer 范围都没有**：`@deepseek-ai/dsh-api-session-controller`
+> 之类只作为 **devDependencies 精确锁基线版本**（peer 列表里没有它们），运行时那一版
+> 完全由用户装的 dsh CLI 决定。于是 typecheck 校验的未必是用户跑的那一版，也没有任何版本
+> 约束会拦下不兼容升级；宿主撤除字段只能靠真机验证发现（2026-09-22 的标签页静默失效即此，见 §5.11）。
+> （0.1.7-alpha.2 迁移要点（**破坏性**，本仓库已跟进）：**settings 子系统整体重写**——
+> `ctx.settings.installSection`（host）与 `ctx.settingsScope`（client）**全部撤除、无兼容层**；
+> 可编辑项改为「profile 行 Config 里标了 `.volatile()` 的字段」，host 侧 `ctx.settings` 变成
+> `SettingsForms`（describe/update/replace/mutate/configure），client 侧改为
+> `ctx.configForms.get(行 id)`；**用户偏好不再存 `~/.dsh/settings.yaml`，改存
+> `~/.dsh/profiles/<profile>/cordis.patch.yml`**（旧 settings.yaml 被宿主改名
+> `settings.yaml.imported`，其中星愿两节因无对应 Loader 行而未被导入 → 偏好重置为默认，见 §5.8）；
+> `settings.plugin.item` 槽没了，改 `plugins.item`；新增 `configForms.whileServed` 注册接缝。
+> 同版本**会话格式升 v4**（`session.v4.jsonl[.zstd]`）：v3 从此算历史代；**v3→v4 迁移边接受
+> ignorable 未知事件**（重命名为 `plugin:<type>`、数据保留），而 v0→v1/v1→v2/v2→v3 仍拒绝一切
+> 未知历史事件——去毒模式对 ≤v2 仍然必需，见 §5.6。`retainedBy.mainView`、`slots`/
+> `uiConversation`/`locale` 契约、storage-domain 与自带 sqlite 后端、tools/system-prompt/
+> user-questions 声明合并位未变（2026-09-23 逐项核对 + 真机验证）。
+> 0.1.6-alpha.2 迁移要点（用户侧曾运行，基线已越过）：**client 侧会话列表快照
+> `SessionListState` 撤除 `current`/`currentAddress`**，「当前会话」改由 `SessionSummary`
+> 上必填的 `retainedBy.mainView` 引用计数表达（官方读法
+> `Object.values(byId).find(s => (s.retainedBy.mainView ?? 0) > 0)`）；`SessionSummary.completed`
+> 一并撤除。`agentPreset` 投影键未变（0.1.7 仍挂在 `SessionSummary.projectionValues` 上）。
+> 0.1.5-rc.2 迁移要点（历史）：**会话格式升 v3**，工件改名 `session.v3.jsonl[.zstd]`（v0 仍是
+> `session.jsonl`），读取端对当前格式认 `ignorable`；系统提示词 section 号重排（宿主内容移到
+> 10000+，插件固有 5–115 号现在自然排在宿主说明之前，无需改动）；`ctx.agent` 移除（插件只用
+> `exec.agent`，不受影响）；PTC 词汇 `tool/code-dispatch` → `tool/ptc-dispatch`、预设
+> `code` → `ptc`（插件未用）。
 > 0.1.2-rc.1 迁移要点（历史）：settings 收进 `ctx.settings.installSection`；`dsh-client-runtime`
 > 包消失，`ChatNodeDataMap` 移入 ui-chat、`ctx.conversationEvents` → `ctx.uiConversation.events`。）
 
@@ -34,7 +54,7 @@ agent 选择器出现「星愿」即安装成功。
 | 数据持久化 | 自带 sqlite 后端，`~/.dsh/xingyuan/xingyuan.sqlite` |
 
 技术栈：TypeScript（Node ≥22.5）+ Cordis 插件框架 + React 18（client 半侧）
-+ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/dsh-*` 锁定 `^0.1.5-rc.2`；
++ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/dsh-*` 锁定 `^0.1.7-alpha.2`；
   `@deepseek-ai/cordis` 跟随宿主 4.x（独立版本线）；`@deepseek-ai/schemastery`
   为 `*`，跟随宿主。
 
@@ -81,10 +101,10 @@ XingYuan-Dsh/
 │   └── preset.yml          # 展示元信息（name/description）
 ├── src/
 │   ├── index.ts            # bundle 常驻入口：发布 preset → 开领域 → provide('xingyuan') → 注册路由
-│   ├── tab-policy.ts       # 标签页显隐纯策略与常量（host/client 共用，见 §5.11）
-│   ├── pref-policy.ts      # 对话偏好纯策略与常量（host/client 共用，见 §5.8）
-│   ├── pref-settings.ts    # bundle 层对话偏好命名空间 xingyuan-pref（二次确认/注入上限）
-│   ├── ui-settings.ts      # bundle 层界面偏好命名空间 xingyuan-ui（标签页显隐常驻可调）
+│   ├── tab-policy.ts       # 标签页显隐纯策略与常量 + 「当前会话」取法（host/client 共用，见 §5.11）
+│   ├── pref-policy.ts      # 对话偏好纯策略与常量 + 表单行 id 绑定（host/client 共用，见 §5.8）
+│   ├── pref-settings.ts    # 对话偏好字段表（volatile）+ 配置→偏好读取映射（二次确认/注入上限/确认卡语言）
+│   ├── ui-settings.ts      # 界面偏好字段表（volatile）：标签页显隐三态 + 单标签勾选
 │   ├── domain.ts           # defineDomain 四张表 + global schema + XingyuanStore 服务
 │   ├── sqlite.ts           # 自带 sqlite 存储后端（StorageBackend 契约实现）
 │   ├── store.ts            # 业务层（愿望/任务/打卡用例，工具面与路由面共用收口）
@@ -100,7 +120,7 @@ XingYuan-Dsh/
 │   ├── types.ts            # 包根类型再导出（domain 记录 + events 事件类型；./types 子路径单一产物）
 │   ├── routes/             # /xingyuan/* HTTP 面（index/api/config/errors/pages-html）
 │   └── preset/             # ↓ 只挂在 preset 层 ↓
-│       ├── side.ts         # preset 侧入口：设置节安装 + 工具/提示词注册
+│       ├── side.ts         # preset 侧入口：工具/提示词注册 + 偏好读取（偏好不在此层）
 │       ├── tools.ts        # 45 个模型工具
 │       ├── prompts.ts      # 11 段系统提示词 + 动态上下文
 │       ├── hitl.ts         # userQuestions 确认封装（文案语言随 confirmLang 偏好）
@@ -410,7 +430,7 @@ ctx.tools.register(defineTool({
 - **确认卡语言（confirmLang，默认 zh）**：平台事实（rc.2 实测）——宿主不向 host 侧
   插件暴露用户界面语言（locale 服务是 client 半侧浏览器专属 seam，工具执行期读不到；
   ask() 载荷也无 i18n 字段）。因此确认卡卡头/按钮/问题文案的语言由对话偏好
-  `xingyuan-pref.confirmLang` 显式选择（设置页提供 zh/en 两档，默认中文），不能自动
+  `confirmLang` 显式选择（设置页提供 zh/en 两档，默认中文），不能自动
   跟随界面语言。label 是 ask() 答案协议的匹配键：确认判定必须与渲染用同一份 label
   （hitl.ts CONFIRM_LABELS 成对维护）。上游若开放 locale seam 应回归自动跟随。
 
@@ -432,9 +452,9 @@ ctx.tools.register(defineTool({
 | `xingyuan/micro` | started/stepped/restarted/finished + 步骤数组 + currentStepNumber |
 
 client 半侧注册三处声明合并位 + 一个 Definition 工厂（0.1.2-rc.1 起重排：`dsh-client-runtime`
-包消失，`ClientContext` 即 cordis `Context`；`ctx.slots` 由 ui-renderer、`ctx.settingsScope`
-由 ui-settings、`ctx.sessions` 由 api-session-controller、`ctx.locale` 由 dsh-client-locale 的
-类型声明合并位提供，client 源码以纯类型 import 引入）：
+包消失，`ClientContext` 即 cordis `Context`；`ctx.slots` 由 ui-renderer、`ctx.configForms`
+由 ui-settings（0.1.7 起取代 `ctx.settingsScope`）、`ctx.sessions` 由 api-session-controller、
+`ctx.locale` 由 dsh-client-locale 的类型声明合并位提供，client 源码以纯类型 import 引入）：
 
 ```ts
 // src/client/index.ts —— 三个官方类型合并点缺一不可
@@ -465,19 +485,36 @@ import 全部行、apply 正常执行）；官方 ui-schedule 同款形态可作
 
 **冷读拒绝与会话日志自愈（session-log-repair.ts，必读）**：dsh 会话持久化读取端按
 「本仓库生成的官方事件类型白名单」拒绝未知事件，仓库外插件事件按构造不在名单内；
-写入端 `Session.append` 至今没有 ignorable 标记通道。0.1.5-rc.2 的规则分两档：
-**当前格式（v3）**读取端认 `"ignorable": true`（带标事件安全跳过、数据原样保留）；
-**历史格式迁移（v0/v1/v2 → v3）**则拒绝一切未知历史事件，**ignorable 也不例外**
+写入端 `Session.append` 至今没有 ignorable 标记通道。规则按代际分三档（**当前格式 = v4**，
+0.1.7 起；「哪一代是当前格式」由 `SESSION_FORMAT_VERSION` 驱动，而「ignorable 从哪一代起
+被接受」是本模块另立的 `IGNORABLE_AWARE_FORMAT_VERSION = 3`——**两个数不是一回事，
+升级时都要核对**，见下文分界）：
+**当前格式工件**读取端认 `"ignorable": true`（带标事件安全跳过、数据原样保留）；
+**v3 → v4 迁移边**已改为**接受** ignorable 未知事件——重命名为 `plugin:<type>` 并保留
+载荷（`dsh-session-format-v3-to-v4` 的 `namespaceV3OpaqueEvent` 在严格拒绝之前先放行）；
+**v0→v1 / v1→v2 / v2→v3 三条边**仍拒绝一切未知历史事件，**ignorable 也不例外**
 （官方 alpha-historical-unknown-event-refusal 决策：迁移边无法证明不透明载荷里的
-seq/生命周期引用仍然安全；拒绝时不产出 v3 后继、源文件原样保留）。bundle 层激活期
+seq/生命周期引用仍然安全；拒绝时不产出后继、源文件原样保留）。bundle 层激活期
 按工件版本执行**会话日志自愈**（工件名 `session.v{N}.jsonl[.zstd]`，v0 无版本段；
-只处理目录内最高代，旧代被遮蔽时零写入）：
-- **当前版本工件 → 补标模式**：给 `xingyuan/*` 事件行补 `"ignorable": true` 后原子写回，
-  事件数据原封保留、卡片回放能力保留；
-- **历史版本工件 → 去毒模式**：把 `xingyuan/*` 事件行替换为官方惰性事件
+只处理目录内最高代，旧代被遮蔽时零写入）。**分界不是「是否当前代」，而是「该代迁移边
+是否接受 ignorable」**（`IGNORABLE_AWARE_FORMAT_VERSION = 3`）：
+- **v3 及以上的工件（含当前代）→ 补标模式**：给 `xingyuan/*` 事件行补 `"ignorable": true`
+  后原子写回，**事件载荷与坐标原封保留**——v3→v4 边会把带标未知事件重命名为
+  `plugin:xingyuan/*` 带进后继代，所以**升代后的 v3 旧工件仍属补标面**而不是去毒面。
+  但**别把「保留数据」读成「卡片还能回放」**：客户端 `KIND_BY_EVENT` 按裸
+  `xingyuan/*` 匹配，迁移后的 `plugin:` 前缀不命中，故跨代旧会话的卡片当下不再渲染
+  （停留在当前代、不再被迁移的工件才逐条回放）。补标的实义是**载荷仍在日志里**，
+  上游开放插件事件映射、或本插件登记前缀类型后即可即行恢复；去毒则是把载荷整个
+  换成惰性事件，**不可恢复**。
+- **v2 及更早的工件 → 去毒模式**：把 `xingyuan/*` 事件行替换为官方惰性事件
   `hook/invoked`（seq/time 不变，payload 满足各迁移边的语义校验），官方迁移链即可
   安全穿过、会话照常打开；代价是该会话历史卡片事件不再回放（业务数据在 sqlite，
   不丢失；备份保留原件）。
+  > **踩坑实录（2026-09-23）**：初版分界写成 `version === SESSION_FORMAT_VERSION`，
+  > 宿主升到 v4 后所有 v3 工件当场改判为去毒目标——**下次启动即永久销毁**本可保留的
+  > 卡片事件。`patchPlaintext` 现同时校验「模式 × 工件版本」自洽，两侧走错一侧即跳过，
+  > 并由 `test/session-log-repair.test.ts` 的 v3 组用例（含「官方链保留为 plugin: 前缀」
+  > 与「夹具合法性对照」）锁死。
 安全边界：不含星愿事件的文件零写入；文件内非星愿行逐字节不变；改写前备份至
 `~/.dsh/xingyuan/session-backups/`（每会话留 3 份）；撕裂尾/坏帧/版本与工件名不符/
 解析失败/活会话一律整文件跳过。**增量跳过**：每个已处理会话在目录内写
@@ -487,8 +524,10 @@ seq/生命周期引用仍然安全；拒绝时不产出 v3 后继、源文件原
 header（dsh 的 `assertZstdHeaderFrame`/`listArtifacts` 启动期强制）——写回时按
 「帧 0 = header、其余事件行第二帧」重建并自检，读入的容器首帧非单行（历史整文件
 单帧的错误产物）即使无需补标也重写为合法布局。
-升级 dsh 前先核对该模块头注的前提是否仍成立；若上游迁移链改为接受 ignorable
-历史事件（或开放 ignorable 写入通道/事件注册面），去毒模式应回归补标并撤下替换。
+升级 dsh 前先核对该模块头注的前提是否仍成立，尤其是**新迁移边是否接受 ignorable**：
+接受则把 `IGNORABLE_AWARE_FORMAT_VERSION` 上移、去毒面收窄；拒绝则下移。判错方向代价
+不对称——多去毒一次即永久销毁该会话卡片回放，少去毒一次则会话冷加载失败。若上游开放
+ignorable 写入通道或插件事件注册面，整套自愈应回归官方机制并撤下补标/去毒。
 
 ### 5.7 系统提示词与动态上下文（preset/prompts.ts）
 
@@ -508,44 +547,61 @@ wish-guide/task-guide/memory-guide/config-guide/chart-guide/reminder-guide(110�
 关键行为准则已写入 identity/constraints：执行操作类工具后必须一句话明确告知结果；
 预工具叙述在工具回合结束丢弃属于 dsh 轮次流程天然行为，无需额外处理。
 
-### 5.8 设置页（设置 → 星愿）与两个常驻命名空间
+### 5.8 设置页（设置 → 星愿）与主行 volatile 配置
 
-设置整页由 client 半侧 `slots.inject('settings.section')` **无条件注册**，常驻可见；
-页内五张面板卡（教练风格 / 昵称与画像 / 写操作确认 / 对话偏好 / 标签页显示）
-的数据来源分成两类：
+> **dsh 0.1.7 把 settings 子系统整体重写了**，本节按新模型写。旧模型（插件向宿主
+> `installSection` 注册命名空间 + client 侧 `ctx.settingsScope.bind`）在 0.1.7 里
+> **已彻底撤除、无兼容层**（全树 grep `installSection`/`settingsScope` 零命中）。
+> 网上能找到的 0.1.5/0.1.6 时期资料一律不再适用。
 
-| 分节 | 数据源 | 命名空间 |
+新模型一句话：**「用户可改的设置」= 某条 profile 行的 `Config` schema 里标了
+`.volatile()` 的字段**。宿主 `settings.describe()` 按**行 id** 把它们投影成表单
+（非 volatile 字段根本不进表单），client 侧经 `ctx.configForms.get(行 id)` 读写。
+
+设置整页由 client 半侧注册，页内五张面板卡的数据来源分两类：
+
+| 分节 | 数据源 | 位置 |
 |---|---|---|
 | 教练风格 / 昵称与画像 | 星愿数据库 global 单例，经 `/xingyuan/api/profile` | — |
-| 写操作确认 / 对话偏好（记忆注入上限 / 确认卡语言） | **bundle 层常驻**命名空间 `xingyuan-pref` | `src/pref-settings.ts` |
-| 标签页显示 | **bundle 层常驻**命名空间 `xingyuan-ui` | `src/ui-settings.ts` |
+| 写操作确认 / 对话偏好（记忆注入上限 / 确认卡语言） | 主行 `xy-bundle` 的 volatile 字段 | 字段表 `src/pref-settings.ts` |
+| 标签页显示 | 同上（同一张表单的另两个字段） | 字段表 `src/ui-settings.ts` |
 
-- **偏好必须常驻**（踩过的坑，勿改回去）：settings 子系统明载「注册绑定调用方 fiber，
-  dispose 该 fiber 即移除 namespace」。preset 挂载虽是按 preset 常驻，但**懒加载**——
-  首次开星愿会话才建立。此前两项偏好挂在 preset 层，于是每次 dsh 重启后、
-  开过星愿会话之前，整页可见而命名空间缺席，两项 unavailable 且写入静默失败
-  （`scope.set()` 失败是 resolve 而非 reject），表现为「点了弹回原样、没有任何提示」。
-  官方 cookbook 的 `settings.plugin.item` 卡片会按「Host 是否服务该命名空间」自动显隐，
-  **整页 `settings.section` 没有这层保护**——`slots.d.ts` 契约把失败呈现的责任
-  明确交给注册方。故选择让数据常驻以对齐常驻 UI，而非让 UI 跟随数据（那会让设置页
-  出现部分字段时有时无的割裂，且安全策略类设置「有时候找不到」不可接受）。
-- **preset 层不再注册 settings 命名空间**：`src/preset/side.ts` 的 `Config` 只剩无 UI 的
-  组合层参数，经 `ctx.xingyuan.prefs()` 读对话偏好（thunk，每次调用取当前解析值，
-  热改即时生效）。官方口径「组合配置仍留在 cordis.yml——namespace 只承载用户可编辑
-  子集」，无 UI 的字段本就不该占命名空间。
-- **判定新设置项归属的口径**：作用域属于「单次会话的能力」（工具参数、提示词行为、
-  skill）→ preset 层；属于「用户的全局偏好」（安全策略、界面、资源上限）→ bundle 常驻层。
-- client 侧：整页经 `ctx.settingsScope.bind({ namespace })` 读写，两个偏好命名空间各自
-  独立订阅；判定不可用的提示按「`mode==='memory'`（远程/临时）→ `status==='unavailable'`
-  （未就绪）→ `!writable`（只读）」顺序分支——顺序不可换，memory 模式下 status 同样是
-  unavailable。
-- **两个控件共用一个 scope = 共用一条写队列**：控制器以 `writeGeneration` 做栅栏，
-  一次写被更新的写取代时**只记 `pendingRevision`、不回折快照**，而被取代的旧写其
-  `.then` 又先于后继写执行——此时比对快照必然读到旧值。故写入结算后校验落盘
-  （`verifyWritten`）必须用组件内写序号判定"自己仍是队列里最后一次"，
-  且每个控件都要有 pending 守卫（缺守卫就会误报"保存未生效"）。见 settings.ts。
-- **`ctx.inject` 即使依赖已就绪也在后续微任务才回调**（实测）：注册命名空间的断言
-  须 await 一拍，不能写同步断言。见 test/pref-settings.test.ts。
+- **偏好为什么挂 bundle 主行而不是 preset 层（结论未变，理由换了形态）**：设置整页常驻
+  可见，而 preset 挂载是**懒加载**的——重启后、开过星愿会话之前那一层并不存在。旧模型靠
+  「命名空间注册在 bundle 层」达成常驻；新模型按行 id 索引表单，主行天然常驻，效果相同。
+  判定口径不变：作用域属「单次会话的能力」→ preset 层；属「用户的全局偏好」→ bundle 常驻行。
+  **preset 层的 Config 不得出现任何 volatile 字段**（`test/pref-settings.test.ts` 机械锁定）。
+- **`SETTINGS_ENTRY_ID`（`src/pref-policy.ts`，值 `'xy-bundle'`）与 `cordis.patch.yml`
+  的主行 `id:` 是一处纯字符串耦合**：宿主按行 id 索引表单，对不上时整页经
+  `configForms.whileServed([行 id])` **根本不注册**——设置里连「星愿」这一项都不出现
+  （含教练风格/画像两张走数据库的卡也一起消失），且无任何报错。这比 0.1.7 前「页面在、
+  显示未就绪」更安静，故与 §5.11 那次静默失效归为同一类坑，由测试对拍锁死。
+  主行 id 另受 §4 硬约束 1（不得等于 preset 目录名）限制。
+- **volatile 的语义收益**：改这些字段**不触发整行重启**（宿主走 `loader/volatile-update`
+  原地换引用），host 侧读当前值须 `.get()`；`readPrefSettings(config)` 每次调用现取，
+  工具与提示词下一次执行即生效。反过来，非 volatile 的技术参数（rangeDefaultDays 等 4 项）
+  改了会重启本行，且**不会出现在设置页里**。
+- **漏标 `.volatile()` 即字段从表单静默消失**（宿主 `volatileForm()` 只挑 volatile 子节点）。
+  新增偏好必须同时进字段表与主行 Config——`test/pref-settings.test.ts` 逐字段断言
+  `meta.volatile === true`，忘了标就红。
+- **整页注册改用 `configForms.whileServed([行 id], ...)`**（0.1.7 新增接缝）：该行没被
+  组装出来时整页不留痕迹。旧模型没有这层保护、失败呈现全靠注册方自己判（当年
+  `settings.plugin.item` 卡片才有自动显隐），现在官方给了正规接缝，外层仍套 `ctx.effect`。
+- **写后校验的绕路已撤**：`ConfigForm.set()` 现在返回 `Promise<boolean>`（true = 宿主接受；
+  false = 被拒或被跳过；传输失败才 reject），取代旧 scope「失败也是 resolve」的坑。
+  写队列与取代栅栏（`writeGeneration`/`pendingRevision`）归**宿主表单实例**所有
+  （同一行 id 只一个实例），组件里不再自写 `verifyWritten`/写序号，只留各控件的 pending
+  乐观态。见 `src/client/pages/settings.ts` 的 `writePref`。
+- **用户偏好的存储位置变了**：不再写 `~/.dsh/settings.yaml`（宿主已弃用该文件并改名
+  `settings.yaml.imported`），改写 **`~/.dsh/profiles/<profile>/cordis.patch.yml`** 里
+  对应行的 `config:` 节。后果一：**备份口径**——业务数据仍在 `~/.dsh/xingyuan/`，
+  但「偏好」现在属于 profile 文档；后果二：升级到 0.1.7 时旧星愿两节因无对应 Loader 行
+  而**未被导入**，用户此前自定义的偏好重置为 schema 默认（2026-09-23 实测确认）。
+- `ctx.settings.configure({ auto: false }, ctx.fiber)`：本插件自带整页，关掉宿主对这一行的
+  自动生成页（官方惯例，`dsh-client-locale` 等同款）。经 `ctx.inject(['settings'], inv => …)`
+  等 settings 服务就绪后调用。
+- **`ctx.inject` 即使依赖已就绪也在后续微任务才回调**（实测，仍然成立）：注册类断言
+  须 await 一拍，不能写同步断言。
 - 官方限制：设置卡本质是 schemastery 表单，无自定义按钮——引导闭环必须 chat-first，
   复杂交互（应用内确认对话框/toast）做在 client 半侧 `ui.ts`。
 - **工具描述是注册时烘焙的静态字符串**：dsh-tools 校验 `description` 必须是 string
@@ -675,28 +731,43 @@ accent 点缀孤点，形似渲染事故）。半透明衍生色一律在 styles
 ### 5.11 标签页显隐（设置 × 会话预设动态注册）
 
 六个会话视图标签不再无条件常驻：默认**跟随会话预设**（仅星愿预设的会话显示；
-0.1.2-rc.1 起读取口径 = sessions 列表行 `byId[current].projectionValues.agentPreset
-=== 'xingyuan'`——旧 `SessionSummary.agentPreset` 顶层字段已被移除，官方
-AgentPresetLabel 组件同口径），设置可切「始终显示 / 始终隐藏」并按标签勾选。
+读取口径 = 会话列表快照里「当前会话」那行的 `projectionValues.agentPreset
+=== 'xingyuan'`，官方 AgentPresetLabel 组件同口径），设置可切「始终显示 / 始终隐藏」并按标签勾选。
 
+- **「当前会话」在宿主换过两次位置**（`src/tab-policy.ts` 的
+  `currentSessionIsXingyuan` 是唯一收口）：0.1.2-rc.1 撤除 `SessionSummary.agentPreset`
+  顶层字段 → 改读 `projectionValues.agentPreset`；**0.1.6 撤除列表快照的 `current`
+  （选中路 id）** → 改读行上的 `retainedBy.mainView` 引用计数（>0 = 主视图正在看它，
+  多栏可命中多行，取任一）。基线越过 0.1.6 后 `current` 那一支已无宿主会产生，
+  故代码里**只留计数一支**（不留兼容分支——client 半侧已硬依赖 0.1.7 的 `configForms`，
+  旧宿主整半侧本就起不来，留分支等于养死代码）。
+  > **踩坑实录（2026-09-22）**：`current` 被撤除后本插件**编译全绿、运行静默失效**——
+  > 判定恒为「没有当前会话」，`follow` 模式下六个标签一个都不注册，且没有任何报错。
+  > 三层原因叠加：①仓库类型基线仍锁旧版，编译面里 `current` 依然存在；
+  > ②星愿读的是自己手写的结构收窄视图（可选属性），字段缺席合法；
+  > ③取不到会话与取到但不是星愿在代码里是同一个 `false`。
+  > 结论：**宿主换代只能靠真机验证，不能靠 typecheck**（§5.10 本地部署验证回路）；
+  > 结构收窄视图必须照宿主真实形状写（`retainedBy` 在宿主类型里是必填）并配对应用例。
 - **判定唯一口径**：`src/tab-policy.ts` 的 `visibleTabIds(mode, hiddenTabs,
   isXingyuanSession)` 纯函数——注册控制器、设置页回显、单测三方共用，禁止另写判定。
   三态语义：`follow` 星愿会话才显示 / `show` 任何会话都显示 / `hide` 任何会话不显示；
   `hiddenTabs` 在上述「显示」前提下剔除单标签（默认 `[]` = 全显示；脏值容错忽略）。
-- **设置宿主**：bundle 层命名空间 `xingyuan-ui`（`src/ui-settings.ts`，
-  `ctx.inject(['settings'], (inv) => inv.settings.installSection(ctx, NS, schema, defaults, hooks))`
-  等待 settings 服务挂载后注册，缺席自动不跑；0.1.2-rc.1 起旧独立函数
-  `installSettingsSection`/`settingsNamespace` 已删除，命名空间改为字面量字符串并由
-  新 API 的泛型文法校验。**注意服务属性守卫**：cordis 4.0.2 起，未在本 fiber 声明的
-  服务不得以 `ctx.<name>` 访问（抛 `cannot get property without inject`），故必须在
-  inject 回调形参 `inv` 上读 `inv.settings`，owner 位置才传插件自身的 `ctx`。）
-  字段 `tabVisibilityMode` + `hiddenTabs`，默认值写进 schema 与 `tab-policy` 常量同源。
-  挂在常驻层而非 preset 层：未选星愿也能调，且「全部隐藏」状态下开关仍可达。
-  > 更正（原注「preset 命名空间随星愿会话卸载而消失」不准确）：按官方 agent-presets
-  > 文档，preset 挂载是 **per-preset standing mount**——进程内只挂一次，**只随整棵树
-  > 卸载**，不随单个会话关闭而消失。真正的问题是它**懒加载**：首次开星愿会话才建立。
-  > 故准确表述为「dsh 重启后、开过星愿会话之前，preset 层命名空间不存在」，结论
-  > （必须挂常驻层）不变，且同样适用于对话偏好，见 §5.8。
+- **`ctx.sessions` 撞名，只能按事实面断言**：`dsh-session` 把 host 侧 `SessionStore`
+  合并进 `Context.sessions`，`dsh-api-session-controller` 又把 client 侧 `ISessions`
+  合并进同一个键；两半侧类型同在本仓库编译面时解析结果是 **host 那个**，
+  `ctx.sessions.list` 的类型因此是错的（`() => Session[]`）。故 tab-visibility 经
+  `ctx.get('sessions') as unknown as { list }` 收窄到 `SessionListFacts`。
+  服务依赖已在 `src/client/index.ts` 的 `inject` 显式声明（含 `sessions`），
+  不再依赖 ui-conversation 传递带来的组成边；`dsh.client.inject` 同步补上
+  `@deepseek-ai/dsh-api-session-controller` 行。控制器内不再写逐级可选链——
+  声明了即必已就绪，可选链只会把故障变成沉默。
+- **显隐设置的落点**：主行 `xy-bundle` 的两个 volatile 字段
+  `tabVisibilityMode` + `hiddenTabs`（字段表 `src/ui-settings.ts`，默认值与
+  `tab-policy` 的 `TAB_VISIBILITY_DEFAULTS` 同源），client 侧经
+  `ctx.configForms.get(SETTINGS_ENTRY_ID)` 读写——与设置页其它偏好同一张表单、
+  同一个宿主表单实例（0.1.7 前是独立命名空间 `xingyuan-ui` + `settingsScope.bind`，
+  该 API 已撤除，见 §5.8）。挂在常驻主行而非 preset 层的理由不变：未选星愿也能调，
+  且「全部隐藏」状态下开关仍可达。
 - **注册机制**（`src/client/tab-visibility.ts`）：`conversation.view` 标签环按
   「全部已注册 entries」投影标签、无 per-session 过滤，故按会话显隐只能动态维护
   注册表——控制器订阅「设置快照 × sessions 列表快照」，任一变化时 dispose 旧组、
@@ -787,10 +858,11 @@ wishProgress / wishAchievement / continuousCheckin / checkinTimeDistribution / w
 |---|---|
 | bundle 主行 Config | rangeDefaultDays(7)、rangeMaxDays(31)、memoryListLimit(500)、repairSessionLogs(true) |
 | preset side Config（无 Web 设置界面，仅组合层可调） | batchWishLimit(50)、batchTaskLimit(100)、chartTrendDays(14)、chartDistributionDays(30)、chartMaxDays(90)、chartRankLimit(10)、chartRankMax(20) |
-| bundle 对话偏好命名空间 xingyuan-pref（Web 设置页「对话偏好」卡） | confirmWrites(true)、confirmOps(六类目明细，默认=分层化前矩阵：创建/打卡/取消确认，领取/修改/记忆保存不确认)、memoryInjectLimit(40，5-200 整数，`step(1)` 让服务端也拒绝小数)、confirmLang('zh'，可选 zh/en)——见 §5.5/§5.8 |
-| bundle 界面偏好命名空间 xingyuan-ui（Web 设置页「标签页显示」卡） | tabVisibilityMode(follow)、hiddenTabs([])——schemastery 枚举用 const+union 表达，见 §5.11 |
+| bundle 主行 `xy-bundle` 的 volatile 字段（Web 设置页「写操作确认」「对话偏好」「标签页显示」三卡） | confirmWrites(true)、confirmOps(六类目明细，默认=分层化前矩阵：创建/打卡/取消确认，领取/修改/记忆保存不确认)、memoryInjectLimit(40，5-200 整数，`step(1)` 让服务端也拒绝小数)、confirmLang('zh'，可选 zh/en)、tabVisibilityMode(follow)、hiddenTabs([])——字段表在 pref-settings.ts / ui-settings.ts，行 id 绑定见 §5.8，显隐语义见 §5.11 |
 
-配置变更触发 HMR 热替换；不做任何跨重载的模块级单例状态。
+配置变更的生效路径分两条：**volatile 字段**（上表第三行）走宿主 `loader/volatile-update`
+原地换引用，不重启本行，读取端每次 `.get()` 现取；**非 volatile 字段**改了触发整行
+重启（HMR 热替换）。两条路径都不做跨重载的模块级单例状态。
 
 ## 9. 构建、测试与发布
 
@@ -819,8 +891,10 @@ pnpm test      # vitest run
   副标题∈映射∪数字模板）——服务端加词不同步映射即红。
 - **sqlite 后端门禁**（`sqlite-backend.test.ts`）：介质版本不符拒绝打开、global 槽
   损坏拒绝（malformed-medium）、写后冷读持久化——无迁移策略的安全底座。
-- **会话日志自愈回归**（`session-log-repair.test.ts`）：补标/去毒双模式、多代工件
-  只处理最新代、布局/撕裂/坏帧放弃矩阵，以及去毒产物真实穿过官方 v0→v3 迁移链
+- **会话日志自愈回归**（`session-log-repair.test.ts`）：补标/去毒双模式、补标面按
+  「迁移边是否接受 ignorable」分界（v3 组用例含官方 v3→v4 链实跑，验证卡片事件以
+  `plugin:` 前缀存活；另有「夹具合法性对照」用例防止该组断言因夹具本身不合法而假绿）、
+  多代工件只处理最新代、布局/撕裂/坏帧放弃矩阵，以及去毒产物真实穿过官方迁移链
   （经 `@deepseek-ai/dsh-session-format-catalog`，devDependency）。
 - **重挂载回归**（loader.test.ts 末例）：webServer 桩按宿主契约「重复 (kind,path) 抛错
   + 返回 disposer」，拔除 bundle 行再重建——路由注册必须经 ctx.effect（HMR/升级路径）。
@@ -855,8 +929,10 @@ npm provenance 开启）。
    设置可切「始终显示/始终隐藏」并按标签勾选；界面偏好命名空间常驻 bundle 层
    （未选星愿也可调，避免「全部隐藏后开关不可达」死锁，见 §5.11）。
 10. **用户偏好一律常驻 bundle 层**：设置整页常驻可见，故任何有 Web 设置界面的偏好
-    （安全策略、界面、资源上限）都必须注册在 bundle 层常驻命名空间，不得挂 preset
-    层——preset 挂载懒加载，会导致「重启后未开过星愿会话时偏好不可改且写入静默失败」。
+    （安全策略、界面、资源上限）都必须落在 **bundle 常驻组装行的 `.volatile()` 配置字段**
+    上，不得挂 preset 层——preset 挂载懒加载，会导致「重启后未开过星愿会话时偏好不可改
+    且写入静默失败」。0.1.7 前的形态是「bundle 层常驻命名空间」，现已收进主行 Config
+    （`SETTINGS_ENTRY_ID` ↔ `cordis.patch.yml` 行 id，见 §5.8），不变量本身不变。
     判定口径：作用域属「单次会话的能力」→ preset 层；属「用户的全局偏好」→ bundle 层
     （见 §5.8）。preset 层按需经服务（如 `ctx.xingyuan.prefs()`）读取常驻偏好。
 11. **承诺口径分层（2026-08 定；2026-09 修订——比率面并入承诺口径）**：未领取（pending）任务处于候选池，
@@ -908,15 +984,16 @@ npm provenance 开启）。
   DOMAIN_VERSION 并提供数据重导出方案。
 - 会话事件要求每 (kind,id) 仅一条 start——新事件类型沿用 whole-value 单事件模式最省心。
 - 外部插件会话事件在 dsh 读取白名单之外且无 ignorable 写入通道：依赖激活期
-  会话日志自愈兜底（§5.6）。当前格式（v3）靠补标 `ignorable`；**历史格式（v0/v1/v2）
-  的迁移链拒绝一切未知事件，只能去毒**——被去毒会话的历史卡片不再回放（README
+  会话日志自愈兜底（§5.6）。补标面 = 迁移边接受 ignorable 的那一侧（**v3 起，含当前代
+  v4**），靠补 `ignorable` 保留卡片数据；**v2 及更早的迁移链拒绝一切未知事件，只能去毒**
+  ——被去毒会话的历史卡片不再回放（README
   对话面正常，业务数据在 sqlite）。插件未运行期间写入的事件在下次启动前不可冷读；
   极端竞态（会话未被识别为活会话且恰在自愈写回窗口内落盘）最坏可丢失窗口内新
   写入的事件（备份只有改写前状态），一般情形是多报一次错、下次启动自愈。上游若开放
   ignorable 写入通道、事件注册面，或迁移链改为接受 ignorable 历史事件，
   回归官方机制并撤下补标/去毒。
-- 旧格式会话的**历史卡片不可回放**：dsh 0.1.5 历史迁移链拒绝未知事件（官方设计，
-  见 §5.6/§11 上一条），去毒是保「会话可打开」的代价；期望上游开放迁移白名单或
+- **v2 及更早**会话的**历史卡片不可回放**：那条迁移链拒绝未知事件（官方设计，v3 起已
+  接受 ignorable，见 §5.6），去毒是保「会话可打开」的代价；期望上游开放迁移白名单或
   插件事件注册面后恢复。勿当缺陷报。去毒只处理 `xingyuan/*` 命名空间——其他插件
   写入的历史事件需其作者自行处理。
 - **对话卡片会被「紧凑」转录模式折叠**：ui-chat 的 Turn Process 披露把已完成轮次
@@ -931,14 +1008,28 @@ npm provenance 开启）。
   环境，凡用它的属性按无效处理（空态插画曾因此整体隐形只剩孤立色点，已移除插画
   并全站改显式 rgba 令牌，见 styles.ts 头注）。
 - 主行 id 与 preset 目录名避让、roots 不能 patch 追加（§4 两个硬约束）。
-- 设置整页（`settings.section`）没有官方 `settings.plugin.item` 卡片那套「按命名空间
-  自动显隐」的保护：整页无条件渲染，注册方必须自己呈现不可用与失败态（§5.8）。
-  且官方 `scope.set()` 失败时是 **resolve 而非 reject**（内部 catch 后静默 recover），
-  `toastError` 不会自动触发——client 必须在写入结算后比对快照确认落盘。
-- 非回环连接（浏览器地址不是 `localhost` / `127.0.0.0/8` / `::1`）下，settings RPC 被
-  宿主降级为 memory 模式：所有偏好命名空间 `mode==='memory'`、不可写。这是 dsh 的安全
-  约束（settings RPCs are loopback-only），设置页只能提示，无法绕过。
-- dsh 技术预览期升级锁版本 `0.1.5-rc.2`；跨版本升级前核对 release notes 与排障索引。
+- 设置整页的可见性保护依赖 `configForms.whileServed`（0.1.7 新增）：宿主若再换这一接缝，
+  注册方须自行呈现不可用态。`ConfigForm.set()` 现在会如实回报接受与否（false = 被拒或被
+  跳过），但 **false 不区分「校验拒绝」与「被后继写取代」**，两者都给同一条提示。
+- **用户偏好不在 `~/.dsh/xingyuan/` 里**：0.1.7 起偏好存 profile 补丁文档
+  （`~/.dsh/profiles/<profile>/cordis.patch.yml` 的 `xy-bundle` 行 config），
+  `~/.dsh/settings.yaml` 已被宿主弃用并改名 `settings.yaml.imported`。故「备份即拷贝
+  `~/.dsh/xingyuan/`」只覆盖**业务数据**，不含偏好；换机要恢复偏好需另拷 profile。
+- **0.1.7 升级重置了所有星愿偏好**：宿主的 legacy import 只认「有对应 Loader 行」的节，
+  旧的 `xingyuan-pref` / `xingyuan-ui` 两节因无行而被拒（`No configurable plugin entry`），
+  用户自定义值留在 `settings.yaml.imported` 里成为死数据。有意接受重置（2026-09-23 决策），
+  不做迁移。
+- **基线越过 0.1.6 后不再兼容旧宿主**：client 半侧硬依赖 0.1.7 的 `configForms` 服务，
+  旧宿主上整半侧不激活。peer 范围已收到 `^0.1.7-alpha.2`，但**别把它当成闸门**：
+  用户 profile 的 `pnpm-workspace.yaml` 里写着 `autoInstallPeers: false`（2026-09-23 在
+  `~/.dsh/profiles/web/` 实测），宿主包由全局 dsh CLI 提供而非 profile 安装，因此装包时
+  既不安装也不校验这些 peer——不兼容仍只能靠真机验证发现（§5.11 的教训不变）。
+- 非回环连接（浏览器地址不是 `localhost` / `127.0.0.1/8` / `::1`）下，settings 写入被
+  宿主降级为 memory 模式（`ConfigFormSnapshot.mode === 'memory'`、`writable: false`，
+  `set()` 直接返回 false 不上 wire）。这是 dsh 的安全约束（settings RPCs are
+  loopback-only），设置页只能提示，无法绕过。
+- dsh 技术预览期升级锁版本 `0.1.7-alpha.2`（**alpha**：settings 与会话格式在两周内各换过一次）；
+  跨版本升级前核对 release notes 与排障索引，并按 §5.10 回路做真机验证。
 
 ## 12. 官方参考文档
 
@@ -1005,18 +1096,22 @@ conversation-node 篇目，旧文档引用为失实）
 | 症状 | 先查 |
 |---|---|
 | 装不上 / git 安装缺 lib / prepare 授权失败 | docs/user/develop/basic/publish |
+| **client 半侧整半侧不激活**（boot 报 `pending (waiting for service: settingsScope)`） | 宿主是 0.1.7 而插件按 ≤0.1.6 写：`settingsScope`/`installSection` 已彻底撤除，须迁到 `configForms`（§5.8）。第三方插件在 0.1.7 上普遍踩此坑（同机 `modsearch` 报 `scope.settings.register is not a function`） |
+| 设置里没有「星愿」这一项（整页缺席） | `SETTINGS_ENTRY_ID` 与 `cordis.patch.yml` 主行 `id:` 不一致 → `configForms.whileServed` 永不满足、整页不注册（§5.8，无报错）；`dsh --dump-config` 确认该行存在 |
+| 设置页显示「未就绪/只读」但宿主正常 | 该行存在但表单不可写：`status: loading/unavailable` 或 `mode: memory`（非回环连接）；个别字段不出现则是漏标 `.volatile()`（宿主只投影 volatile 字段） |
+| 设置改了不生效 / 弹回原样 | 0.1.7 起 `ConfigForm.set()` 返回 `Promise<boolean>`：false = 宿主拒绝或跳过（非回环连接 = memory 模式，永不落盘）；检查是否只处理了 reject |
 | 配置不生效 / 行被覆盖 | publish 的层顺序与「整行替换」语义；cordis.patch.yml |
 | 实际组合与预期不符 | `dsh --dump-config` 看最终层叠结果 |
 | 工具没出现在模型请求里 | subsystems/tools；preset 是否真的挂载（选了「星愿」吗；空白会话才能切） |
 | INVALID_ARGS / 参数被拒 | ValueSchemaSpec DSL 的 additionalProperties/enum 要求；tool-catalog |
 | 卡片不渲染 / 刷新后丢失 | subsystems/conversation（start 唯一、确定性回放）；三个声明合并位是否齐全 |
 | 会话事件没落盘 | exec.agent 是否存在（headless 无 agent 时 append 是 no-op） |
-| 旧会话打不开（`SessionFormatUnsupportedError` / unknown historical event） | dsh 0.1.5 迁移链拒绝外部历史事件：确认 bundle 已升级到含去毒模式的自愈模块（§5.6）；源文件未动，备份在 `~/.dsh/xingyuan/session-backups/` |
+| 旧会话打不开（`SessionFormatUnsupportedError` / unknown historical event） | **v2 及更早**的迁移链拒绝外部历史事件（v3 起接受 ignorable）：确认 bundle 已升级到含自愈模式的模块（§5.6）；源文件未动，备份在 `~/.dsh/xingyuan/session-backups/` |
 | 提醒没触发 / 周期提醒做不到 | subsystems/schedule（session-local、无日历规则、只装新建 live agent） |
 | 数据库打开报版本不符 | subsystems/storage；DOMAIN_VERSION 策略 |
 | preset 不出现 / mount 拒绝 | packages/preset/agent-presets/README.zh.md（realm 规则、roots 扫描时机） |
 | HMR 后状态丢失 / 注册残留 | lifecycle effect 清理；是否存在跨重载模块级单例 |
-| client 卡片/标签页没加载 | subsystems/client-modules（dsh.client 声明：inject 组成边 / external 非基座请求）+ 星愿行在 `window.__DSH_BOOT__` 的 entries 里有则 factory 已注册；设置页可见但视图标签缺席 → tab-visibility 的 `projectionValues.agentPreset` 判据（0.1.2 口径，见 §5.11） |
+| client 卡片/标签页没加载 | subsystems/client-modules（dsh.client 声明：inject 组成边 / external 非基座请求）+ 星愿行在 `window.__DSH_BOOT__` 的 entries 里有则 factory 已注册；**只有六个视图标签缺席、卡片与设置页都正常** → 「当前会话」判定取空，核对宿主代际的 `current` vs `retainedBy.mainView` 口径（§5.11，切「始终显示」可当场反证） |
 | `cannot get property "X" without inject` | cordis 4.0.2 服务属性守卫：只能在声明过 X 的 fiber 上以 `ctx.X` 访问——经 `ctx.inject(['X'], (inv) => inv.X...)` 的回调形参读（见 §5.11 设置宿主） |
-| 设置卡不显示 | cookbook/adding-a-settings-card（namespace 配对、双半侧导出） |
+| 设置卡不显示 | 0.1.7 起设置整页经 `configForms.whileServed([行 id])` 注册：先确认该行被组装出来（`dsh --dump-config`）、行 id 与 `SETTINGS_ENTRY_ID` 逐字一致（§5.8），再核对字段全部 `.volatile()`（宿主只投影 volatile 字段）。cookbook/adding-a-settings-card 是 0.1.6 前的 namespace 口径，已不适用 |
 | Key/模型问题 | user/guide/providers；subsystems/credentials |

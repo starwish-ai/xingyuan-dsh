@@ -506,7 +506,7 @@ button.xy-growth-col.xy-hover{box-shadow:inset 0 0 0 2px var(--xyd-accent-ring)}
 
 /* ===== 设置页 ===== */
 .xy-settings{display:flex;flex-direction:column;gap:16px;max-width:560px;color:var(--dsw-alias-label-primary);font-size:14px}
-/* 游离于卡片外的说明行（页级命名空间通知/页尾数据说明）随卡内文字对齐
+/* 游离于卡片外的说明行（页级表单不可用通知/页尾数据说明）随卡内文字对齐
  * （xy-panel 横向内边距 14px），不得贴容器左缘悬在列外 */
 .xy-settings>.xy-hint{padding:0 14px}
 /* 设置各分节自成面板卡；间距交给 xy-settings 的 gap，卡内子元素统一 10px 纵向节奏 */
@@ -537,7 +537,7 @@ label.xy-setrow{cursor:pointer}
 .xy-seg-btn.xy-on,.xy-seg-btn[aria-pressed='true']{background:var(--xyd-accent);border-color:transparent;color:var(--xyd-on-accent)}
 .xy-save-row{display:flex;align-items:center;gap:10px;margin-top:2px}
 .xy-toggle{width:38px;height:22px;appearance:none;border-radius:999px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);position:relative;cursor:pointer;transition:background .15s}
-/* 禁用即置灰（与 xy-btn/xy-input 同语法）：只读命名空间/写入在途的控件不得看起来仍可交互 */
+/* 禁用即置灰（与 xy-btn/xy-input 同语法）：只读表单/写入在途的控件不得看起来仍可交互 */
 .xy-toggle:disabled{opacity:.4;cursor:not-allowed}
 .xy-toggle:checked{background:var(--xyd-accent);border-color:transparent}
 .xy-toggle::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-label-primary);transition:transform .15s}

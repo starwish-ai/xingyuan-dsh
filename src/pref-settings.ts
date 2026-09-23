@@ -1,80 +1,81 @@
 /**
- * 星愿 bundle 层「对话偏好」设置命名空间（xingyuan-pref）：
- * 写操作二次确认（confirmWrites）与记忆注入上限（memoryInjectLimit）。
+ * 星愿「对话偏好」的字段定义与读取映射（confirmWrites / confirmOps /
+ * memoryInjectLimit / confirmLang），host/client 两半侧共用同一份字段表。
  *
- * 挂在 bundle 常驻层而非 preset 层的理由（本次根因，实测结论）：
- * 设置整页（settings.section）由 bundle client 层无条件注册、常驻可见；而 preset
- * 挂载是**按 preset 常驻但懒加载**的（官方 agent-presets：per-preset standing
- * mount，进程内只挂一次、只随整棵树卸载），首次开星愿会话才建立。于是每次 dsh
- * 重启后、开过星愿会话之前，整页可见而命名空间不存在：两项均 unavailable，
- * 写入静默失败（client scope.set() 失败是 resolve 而非 reject），表现为
- * 「点了弹回原样、没有任何提示」。
+ * dsh 0.1.7 起设置模型整体换了：**不再有「插件向宿主注册命名空间」这回事**
+ * （`settings.installSection` 与 client 侧 `settingsScope` 均已撤除）。可编辑项
+ * 就是 profile 行 Config schema 里标了 `.volatile()` 的字段——宿主 `settings.describe()`
+ * 按行 id 把它们投影成表单，客户端经 `ctx.configForms.get(行 id)` 读写。
+ * 故本模块只提供字段表与「配置引用 → 偏好快照」的映射，不再安装任何东西；
+ * 字段表由 src/index.ts 并入主行 Config（行 id 见 pref-policy 的 SETTINGS_ENTRY_ID）。
  *
- * 官方 cookbook 的 settings.plugin.item 卡片按「Host 是否服务该命名空间」自动显隐，
- * 整页 section 没有这层保护——slots.d.ts 契约把失败呈现的责任明确交给注册方。
- * 故此处让数据常驻以对齐常驻 UI，而非让 UI 跟随数据（那会让设置页出现
- * 部分字段时有时无的割裂，且安全策略类设置「有时候找不到」不可接受）。
+ * 偏好为什么落在 bundle 常驻行而不是 preset 层（结论未变、理由换了形态）：
+ * 设置整页由 client 半侧无条件注册、常驻可见，而 preset 挂载是懒加载的——
+ * 重启后、开过星愿会话之前那一层并不存在。0.1.7 的表单按 profile 行索引，
+ * 挂在主行 Config 上天然常驻，与常驻 UI 对齐（旧版靠「命名空间注册在 bundle 层」
+ * 达成同一目的）。
  *
- * dsh 0.1.2-rc.1 起 settings 子系统重排：命名空间安装收进服务面
- * `settings.installSection(owner, ns, schema, entry, hooks)`（独立函数
- * installSettingsSection/settingsNamespace 已删除）。本模块经 ctx.inject(['settings'],
- * (inv) => …) 等待 settings 服务挂载后在回调形参 inv 上访问（cordis 4.0.2 服务属性守卫：
- * 未声明依赖的 fiber 上读 ctx.settings 会抛），服务缺席（headless 等）时整段不运行，
- * bundle 激活不依赖它。
+ * volatile 的另一半收益：改这些字段不再触发整行重启（宿主走
+ * `loader/volatile-update` 原地换引用），工具与提示词每次执行现读即得新值。
  */
-import type { Context } from '@deepseek-ai/cordis'
+import type { Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-// 纯类型导入：只取 dsh-settings 对 Context.settings 的声明合并，不留运行时 import
-import type {} from '@deepseek-ai/dsh-settings'
 import {
   CONFIRM_LANGS,
   CONFIRM_OP_DEFAULTS,
   MEMORY_LIMIT_MAX,
   MEMORY_LIMIT_MIN,
   PREF_DEFAULTS,
+  type ConfirmLang,
+  type ConfirmOp,
   type PrefSettings,
 } from './pref-policy.js'
 
-/** 对话偏好命名空间（client 半侧 settingsScope 同名配对，勿改；小写连字符文法由新 API 类型校验）。 */
-export const PREF_NS = 'xingyuan-pref'
-
-/** 配置 schema（默认值写进 schema；step(1) 让服务端也拒绝小数，防手改文档/RPC 直写）。 */
-export const PrefSettingsSchema: z<PrefSettings> = z.object({
-  confirmWrites: z.boolean().default(PREF_DEFAULTS.confirmWrites),
-  // 确认类目明细：对象整体作为一个命名空间字段下发（客户端每次写合并后的完整对象）；
-  // 键与 pref-policy 的 CONFIRM_OPS 一一对应（测试对拍），旧存量值缺该键由 default 兜底
-  confirmOps: z.object({
-    create: z.boolean().default(CONFIRM_OP_DEFAULTS.create),
-    checkin: z.boolean().default(CONFIRM_OP_DEFAULTS.checkin),
-    cancelCheckin: z.boolean().default(CONFIRM_OP_DEFAULTS.cancelCheckin),
-    claim: z.boolean().default(CONFIRM_OP_DEFAULTS.claim),
-    update: z.boolean().default(CONFIRM_OP_DEFAULTS.update),
-    memorySave: z.boolean().default(CONFIRM_OP_DEFAULTS.memorySave),
-  }).default({ ...CONFIRM_OP_DEFAULTS }),
-  memoryInjectLimit: z.number().step(1).min(MEMORY_LIMIT_MIN).max(MEMORY_LIMIT_MAX)
-    .default(PREF_DEFAULTS.memoryInjectLimit),
-  // schemastery 无 z.enum，两值枚举用 const+union 表达（与 ui-settings 的显隐三态同款）
-  confirmLang: z.union(CONFIRM_LANGS.map((lang) => z.const(lang))).default(PREF_DEFAULTS.confirmLang),
-})
+/** 可配确认类目的字段字典（键与 pref-policy 的 CONFIRM_OPS 一一对应，测试对拍）。 */
+const confirmOpsDict = {
+  create: z.boolean().default(CONFIRM_OP_DEFAULTS.create),
+  checkin: z.boolean().default(CONFIRM_OP_DEFAULTS.checkin),
+  cancelCheckin: z.boolean().default(CONFIRM_OP_DEFAULTS.cancelCheckin),
+  claim: z.boolean().default(CONFIRM_OP_DEFAULTS.claim),
+  update: z.boolean().default(CONFIRM_OP_DEFAULTS.update),
+  memorySave: z.boolean().default(CONFIRM_OP_DEFAULTS.memorySave),
+}
 
 /**
- * bundle 层安装对话偏好命名空间，并返回偏好读取 thunk。
- *
- * thunk 每次调用都读「当前解析值」（schema 默认 → base → 用户层），故设置热改后
- * 下一次读取即生效，无需重建任何注册；settings 服务缺席时返回 PREF_DEFAULTS。
+ * 对话偏好字段表（全部 volatile：用户改完即生效，不重启承载它们的 bundle 行）。
+ * step(1) 让服务端也拒绝小数，防手改文档 / RPC 直写绕过界面。
  */
-export function installPrefSettings(ctx: Context): () => PrefSettings {
-  // 闭包局部，非模块级单例（AGENTS.md §8：不做任何跨重载的模块级单例状态）
-  let read = (): PrefSettings => PREF_DEFAULTS
-  // 回调形参 inv 才是声明了 settings 依赖的上下文：cordis 4.0.2 起，
-  // 未在当前 fiber 声明的服务属性不得访问（外层 ctx 直接读 ctx.settings 会
-  // 抛 "cannot get property without inject"），注册归属（owner）仍传插件 fiber。
-  ctx.inject(['settings'], (inv) => {
-    inv.settings.installSection(ctx, PREF_NS, PrefSettingsSchema, PREF_DEFAULTS, {
-      setSource: (current) => { read = current },
-      // 消费方（工具/提示词）每次执行即时读 thunk，无需在此重建任何东西
-      onChange: () => {},
-    })
-  })
-  return () => read()
+export const PrefSettingsFields = {
+  /** 写操作总开关：关闭时除锁定的删除类目外一律不弹确认卡。 */
+  confirmWrites: z.boolean().default(PREF_DEFAULTS.confirmWrites).volatile(),
+  /** 确认类目明细：整体作为一个字段下发（客户端每次写合并后的完整对象）。 */
+  confirmOps: z.object(confirmOpsDict).default({ ...CONFIRM_OP_DEFAULTS }).volatile(),
+  /** 每次对话自动注入上下文的记忆条数上限。 */
+  memoryInjectLimit: z.number().step(1).min(MEMORY_LIMIT_MIN).max(MEMORY_LIMIT_MAX)
+    .default(PREF_DEFAULTS.memoryInjectLimit).volatile(),
+  /** 对话内确认卡语言（平台不向 host 侧暴露界面语言，见 pref-policy 头注）。 */
+  confirmLang: z.union(CONFIRM_LANGS.map((lang) => z.const(lang))).default(PREF_DEFAULTS.confirmLang).volatile(),
+}
+
+/** 对话偏好字段的读取面（src/index.ts 的 Config 结构上满足它）。 */
+export interface PrefConfig {
+  readonly confirmWrites: Volatile<boolean>
+  readonly confirmOps: Volatile<Record<ConfirmOp, boolean>>
+  readonly memoryInjectLimit: Volatile<number>
+  readonly confirmLang: Volatile<ConfirmLang>
+}
+
+/**
+ * 读当前偏好快照：每次调用现取各引用的当前值。
+ *
+ * 引用本身由宿主原地更新，所以这里不缓存任何结果——工具与提示词的每次执行都
+ * 经此读一遍，设置热改后下一次执行即生效。
+ */
+export function readPrefSettings(config: PrefConfig): PrefSettings {
+  return {
+    confirmWrites: config.confirmWrites.get(),
+    confirmOps: config.confirmOps.get(),
+    memoryInjectLimit: config.memoryInjectLimit.get(),
+    confirmLang: config.confirmLang.get(),
+  }
 }

@@ -27,8 +27,9 @@
 
 ## 安装
 
-> 需要 DeepSeek Harness `0.1.5-rc.2`（peer 依赖按该版本锁定；升级 dsh 前先核对
-> [AGENTS.md](./AGENTS.md) 的升级要点）。
+> 需要 DeepSeek Harness `0.1.7-alpha.2`（peer 依赖按该版本锁定；0.1.7 重写了设置子系统，
+> 更早的宿主上本插件的 client 半侧不会激活。升级 dsh 前先核对 [AGENTS.md](./AGENTS.md)
+> 的升级要点）。
 
 ```sh
 dsh plugin --profile web add @starwish-ai/xingyuan-dsh
@@ -39,6 +40,9 @@ dsh plugin --profile web add @starwish-ai/xingyuan-dsh
 ## 数据与备份
 
 业务数据存于 `~/.dsh/xingyuan/xingyuan.sqlite`，卸载 / 升级均存活，备份只需拷贝该目录。
+设置页里的**偏好**自 dsh 0.1.7 起改存 profile 文档
+（`~/.dsh/profiles/<profile>/cordis.patch.yml` 的本插件行），不在上面的目录里——换机要
+恢复偏好需额外拷贝该文件。
 
 ## 设置（Web GUI → 设置 → 星愿）
 

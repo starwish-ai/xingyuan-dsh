@@ -1,163 +1,144 @@
 /**
- * 对话偏好命名空间的回归锁（P0b）。
+ * 主行偏好配置的回归锁。
  *
- * 锁三条不变量，对应「设置页常驻可见、偏好却在 preset 层缺席」这次 P0 的三个面：
- * 1. bundle 层在 settings 服务可用时**立即**注册 `xingyuan-pref`（不依赖 preset 挂载）。
- * 2. 读取 thunk 每次取当前解析值——设置热改后无需重建任何注册即生效。
- * 3. 分层不变量：**设置页绑定的任何命名空间，都不得由 preset 层注册**。
- *    这是本次根因的抽象形态，比"禁止某个具体字段放在 preset 层"更耐久——
- *    按 AGENTS.md §5.8 的判定口径，会话级能力仍可挂 preset 层，但凡出现在
- *    常驻设置页里的必须是 bundle 层常驻命名空间。
- *
- * 说明：本文件只测宿主半侧。服务桩仅实现 `ctx.settings.installSection`（0.1.2 起的
- * 服务面安装法）真正被调用的一面（记录注册 + 经 setSource 暴露解析值），不继承
- * `SettingsProvider`，避免把测试绑死在 dsh 的 Service 生命周期上。
+ * dsh 0.1.7 把设置模型换了：不再有「插件注册命名空间」，可编辑项 = profile 行
+ * Config 里标了 `.volatile()` 的字段，客户端按**行 id** 取表单。于是原来那三条
+ * 不变量换了形态，本文件逐一对应锁住：
+ * 1. 偏好读取每次现取 volatile 引用——热改后下一次执行即生效（旧：setSource 热改）。
+ * 2. 每个偏好字段都真的带 volatile——漏标即从表单里消失，且不会有任何报错
+ *    （宿主按 volatile 投影表单，非 volatile 字段根本不进 describe()）。
+ * 3. 客户端绑定的行 id 确实存在于 bundle 补丁里——这是一处纯字符串耦合
+ *    （cordis.patch.yml 的 `id:` ↔ pref-policy 的 SETTINGS_ENTRY_ID），
+ *    对不上时整页只会显示「未就绪」，与 0.1.6 那次静默失效同一类坑。
+ * 4. 分层不变量（AGENTS.md §10 决策 10）的新形态：设置页要写的行必须由 bundle
+ *    常驻层组装；preset 层不得声明任何可编辑配置行（它懒加载，重启后未开星愿
+ *    会话之前根本不存在）。
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { Context, type Fiber } from '@deepseek-ai/cordis'
-import { afterEach, describe, expect, it } from 'vitest'
-import { PREF_DEFAULTS, type PrefSettings } from '../src/pref-policy.js'
-import { installPrefSettings, PREF_NS } from '../src/pref-settings.js'
+import { describe, expect, it } from 'vitest'
+import { TAB_VISIBILITY_DEFAULTS, normalizeHiddenTabs } from '../src/tab-policy.js'
+import { PREF_DEFAULTS, SETTINGS_ENTRY_ID, type ConfirmLang, type ConfirmOp } from '../src/pref-policy.js'
+import { PrefSettingsFields, readPrefSettings } from '../src/pref-settings.js'
+import { UiSettingsFields } from '../src/ui-settings.js'
+import { Config } from '../src/index.js'
 
-/** settings 服务桩：记录注册请求，并可改写 scope 的解析值以模拟热改。 */
-function settingsStub(initial: Record<string, unknown> = {}) {
-  const registered: string[] = []
-  let value: Record<string, unknown> = initial
-  return {
-    registered,
-    /** 模拟用户在设置页改值（Host 层解析后的结果）。 */
-    setResolved(next: Record<string, unknown>): void { value = next },
-    /** 新服务面桩：installSection 真实行为 = register + setSource(scope.get)。 */
-    installSection(_owner: unknown, ns: unknown, _schema: unknown, _entry: unknown, hooks: {
-      setSource: (current: () => Record<string, unknown>) => void
-      onChange: () => void
-    }): void {
-      registered.push(String(ns))
-      hooks.setSource(() => value)
-      hooks.onChange()
-    },
+/** 可编辑偏好字段的全集（新增偏好必须同时进这张表与主行 Config，漏一项即红）。 */
+const EDITABLE_FIELDS = [
+  'confirmWrites',
+  'confirmOps',
+  'memoryInjectLimit',
+  'confirmLang',
+  'tabVisibilityMode',
+  'hiddenTabs',
+] as const
+
+describe('readPrefSettings（对话偏好读取面）', () => {
+  /** 可变引用桩：宿主原地换值即体现为 get() 返回新值。 */
+  function refs(initial: {
+    confirmWrites: boolean
+    confirmOps: Record<ConfirmOp, boolean>
+    memoryInjectLimit: number
+    confirmLang: ConfirmLang
+  }) {
+    let value = initial
+    return {
+      config: {
+        confirmWrites: { get: () => value.confirmWrites },
+        confirmOps: { get: () => value.confirmOps },
+        memoryInjectLimit: { get: () => value.memoryInjectLimit },
+        confirmLang: { get: () => value.confirmLang },
+      },
+      set(next: Partial<typeof value>): void { value = { ...value, ...next } },
+    }
   }
-}
 
-interface Harness {
-  fiber: Fiber
-  read: () => PrefSettings
-  settings: ReturnType<typeof settingsStub>
-}
-
-/**
- * 以插件行装载安装函数（而非裸函数调用）：拿到 Fiber 才能逐例 dispose，
- * 且 `ctx.inject` 无论依赖是否已就绪都在后续微任务才回调——故返回后须 await 一拍。
- */
-function mount(settings?: ReturnType<typeof settingsStub>): Harness {
-  const ctx = new Context()
-  if (settings !== undefined) ctx.provide('settings', settings)
-  let read: (() => PrefSettings) | undefined
-  const fiber = ctx.plugin((c: Context) => { read = installPrefSettings(c) })
-  return { fiber, read: () => read!(), settings: settings ?? settingsStub() }
-}
-
-/** 等一拍：注册回调在后续微任务才触发（实测结论，勿改成同步断言）。 */
-const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
-
-const harnesses: Harness[] = []
-afterEach(async () => {
-  while (harnesses.length > 0) await harnesses.pop()?.fiber.dispose()
-})
-
-describe('installPrefSettings（bundle 层常驻注册）', () => {
-  it('settings 服务可用时注册 xingyuan-pref，且不依赖 preset 挂载', async () => {
-    // 只跑 bundle 层的安装函数，未装载任何 preset——这正是 P0 的缺席场景
-    const h = mount(settingsStub())
-    harnesses.push(h)
-    await settle()
-
-    expect(PREF_NS).toBe('xingyuan-pref')
-    expect(h.settings.registered).toContain(PREF_NS)
-  })
-
-  it('读取 thunk 每次取当前解析值：设置热改即时生效，无需重建注册', async () => {
-    const h = mount(settingsStub({ ...PREF_DEFAULTS }))
-    harnesses.push(h)
-    await settle()
-    expect(h.read()).toEqual(PREF_DEFAULTS)
-
-    h.settings.setResolved({ confirmWrites: false, memoryInjectLimit: 7 })
-    expect(h.read().confirmWrites).toBe(false)
-    expect(h.read().memoryInjectLimit).toBe(7)
-  })
-
-  it('settings 服务缺席时回落 schema 默认且不抛错（headless 路径）', async () => {
-    const h = mount()
-    harnesses.push(h)
-    await settle()
-    expect(h.read()).toEqual(PREF_DEFAULTS)
+  it('每次调用现取引用：热改后无需重建任何注册即生效', () => {
+    const h = refs({ ...PREF_DEFAULTS })
+    expect(readPrefSettings(h.config)).toEqual(PREF_DEFAULTS)
+    h.set({ confirmWrites: false, memoryInjectLimit: 7 })
+    expect(readPrefSettings(h.config)).toMatchObject({ confirmWrites: false, memoryInjectLimit: 7 })
   })
 })
 
-describe('设置命名空间的分层不变量', () => {
-  const srcRoot = fileURLToPath(new URL('../src/', import.meta.url))
+describe('主行 Config 的表单投影', () => {
+  const dict = Config.dict as Record<string, { meta?: { volatile?: boolean } }>
 
-  /** 递归列出目录下所有 .ts 文件（相对 src/ 的路径）。 */
-  function listTs(relDir: string): string[] {
-    const abs = srcRoot + relDir
-    return readdirSync(abs).flatMap((entry) => {
-      const rel = `${relDir}${entry}`
-      return statSync(srcRoot + rel).isDirectory() ? listTs(`${rel}/`) : rel.endsWith('.ts') ? [rel] : []
-    })
-  }
-
-  /**
-   * 收集一个文件里所有「注册到 settings 的命名空间名」：
-   * `ctx.settings.installSection(owner, ns, ...)`（ns 为字面量或同文件的字符串常量）。
-   * 0.1.2 起旧 `settingsNamespace('x')` 独立函数已删除，注册面收进服务方法。
-   */
-  function collectRegistered(rel: string): string[] {
-    const text = readFileSync(srcRoot + rel, 'utf8')
-    const out: string[] = []
-    for (const m of text.matchAll(/installSection\(\s*[^,]+,\s*(?:'([^']+)'|([A-Za-z_]\w*))/g)) {
-      if (m[1] !== undefined) {
-        out.push(m[1])
-        continue
-      }
-      const def = new RegExp(`const ${m[2]}\\s*(?::[^=]+)?=\\s*'([^']+)'`).exec(text)
-      const name = def?.[1]
-      if (name !== undefined) out.push(name)
+  it('六个偏好字段全部标了 volatile——漏标即从设置页消失且无报错', () => {
+    for (const field of EDITABLE_FIELDS) {
+      expect(dict[field], `主行 Config 缺少字段 ${field}`).toBeDefined()
+      expect(dict[field]?.meta?.volatile, `${field} 未标 volatile`).toBe(true)
     }
-    return out
-  }
-
-  const BOUND = /settingsScope\.bind\(\s*\{\s*namespace:\s*'([^']+)'/g
-
-  /** 收集源码里 `bind({ namespace: 'x' })` 的绑定名。 */
-  function collectBound(rel: string): string[] {
-    const text = readFileSync(srcRoot + rel, 'utf8')
-    return [...text.matchAll(BOUND)].map((m) => m[1]).filter((ns): ns is string => ns !== undefined)
-  }
-
-  it('设置页绑定的命名空间无一由 preset 层注册', () => {
-    const presetFiles = listTs('preset/')
-    const clientFiles = listTs('client/')
-    expect(presetFiles.length).toBeGreaterThan(0)
-    expect(clientFiles.length).toBeGreaterThan(0)
-
-    // 设置页（常驻可见）实际绑定的命名空间
-    const bound = new Set(clientFiles.flatMap((rel) => collectBound(rel)))
-    expect(bound.size, '未从 client 层解析到任何绑定，正则可能已失效').toBeGreaterThan(0)
-
-    // preset 层注册的命名空间——懒加载，首次开星愿会话才存在
-    const byPreset = new Set(presetFiles.flatMap((rel) => collectRegistered(rel)))
-
-    // 交集必须为空：设置页常驻可见，其数据若来自 preset 层就会「整页可见而数据缺席」
-    expect([...bound].filter((ns) => byPreset.has(ns))).toEqual([])
   })
 
-  it('两个偏好命名空间都在 bundle 层注册', () => {
-    const bundleFiles = ['index.ts', 'ui-settings.ts', 'pref-settings.ts']
-    const registered = new Set(bundleFiles.flatMap((rel) => collectRegistered(rel)))
-    for (const ns of ['xingyuan-pref', 'xingyuan-ui']) {
-      expect(registered, `bundle 层未注册 ${ns}`).toContain(ns)
+  it('反向：主行 Config 的 volatile 字段恰为该清单——新增偏好未登记测试即红', () => {
+    // 只测「清单里的字段是 volatile」会漏掉反方向：新加一个 volatile 字段却不进清单，
+    // 上一条照样绿。设置页/控制器的表单形状（SettingsFormValue）也按清单维护，故两侧必须等集。
+    const volatile = Object.entries(dict)
+      .filter(([, field]) => field?.meta?.volatile === true)
+      .map(([key]) => key)
+      .sort()
+    expect(volatile).toEqual([...EDITABLE_FIELDS].sort())
+  })
+
+  it('技术参数保持非 volatile（改它们要走重启，不该出现在偏好表单里）', () => {
+    for (const field of ['rangeDefaultDays', 'rangeMaxDays', 'memoryListLimit', 'repairSessionLogs']) {
+      expect(dict[field]?.meta?.volatile, `${field} 不该是 volatile`).toBeFalsy()
     }
+  })
+
+  it('默认值写进 schema，与 pref-policy / tab-policy 的缺失常量同源', () => {
+    expect(PrefSettingsFields.confirmWrites.meta.default).toBe(PREF_DEFAULTS.confirmWrites)
+    expect(PrefSettingsFields.memoryInjectLimit.meta.default).toBe(PREF_DEFAULTS.memoryInjectLimit)
+    expect(PrefSettingsFields.confirmLang.meta.default).toBe(PREF_DEFAULTS.confirmLang)
+    expect(UiSettingsFields.tabVisibilityMode.meta.default).toBe(TAB_VISIBILITY_DEFAULTS.tabVisibilityMode)
+    expect(UiSettingsFields.hiddenTabs.meta.default).toEqual(TAB_VISIBILITY_DEFAULTS.hiddenTabs)
+  })
+
+  it('memoryInjectLimit 服务端也拒小数（step(1) 防手改文档 / RPC 直写绕过界面）', () => {
+    const parse = PrefSettingsFields.memoryInjectLimit
+    expect(() => parse(40.5 as never)).toThrow()
+    expect(() => parse(4 as never)).toThrow()
+    expect(() => parse(201 as never)).toThrow()
+    // volatile 字段解析出来是引用而非裸值——这正是「原地更新、不重启」的载体
+    expect(parse(40).get()).toBe(40)
+  })
+
+  it('手改补丁塞进脏 hiddenTabs 不得炸整条主行（Config 解析期必须通过）', () => {
+    // 回归锁：hiddenTabs 与存储/路由/preset 发布同挂本行，解析期抛错 = 整个插件不激活。
+    // 元素类型放宽为 string + 读取侧 normalize 之后，脏值只能让该偏好失灵，不能上炸。
+    const { hiddenTabs } = Config({ hiddenTabs: ['bogus', 'today'] }) as never as { hiddenTabs: { get(): unknown } }
+    expect(hiddenTabs.get()).toEqual(['bogus', 'today'])
+    expect(normalizeHiddenTabs(hiddenTabs.get())).toEqual(['today'])
+  })
+})
+
+describe('分层不变量（AGENTS.md §10 决策 10 的新形态）', () => {
+  it('preset 层的 Config 不含任何 volatile 字段——用户偏好不得挂在懒加载的会话级层', async () => {
+    const { Config: SideConfig } = await import('../src/preset/side.js')
+    const dict = (SideConfig as { dict: Record<string, { meta?: { volatile?: boolean } }> }).dict
+    const volatileFields = Object.entries(dict)
+      .filter(([, field]) => field?.meta?.volatile === true)
+      .map(([key]) => key)
+    expect(volatileFields, `preset 层承载了偏好字段：${volatileFields.join('/')}`).toEqual([])
+  })
+})
+
+describe('表单绑定的行 id（client ↔ cordis.patch.yml 的字符串耦合）', () => {
+  const patchText = readFileSync(fileURLToPath(new URL('../cordis.patch.yml', import.meta.url)), 'utf8')
+  const rowIds = [...patchText.matchAll(/^\s*-?\s*id:\s*([\w-]+)/gm)].map((m) => m[1])
+
+  it('SETTINGS_ENTRY_ID 确实是补丁里的一条行 id', () => {
+    expect(rowIds, `cordis.patch.yml 的行 id 为 ${rowIds.join('/')}`).toContain(SETTINGS_ENTRY_ID)
+  })
+
+  it('主行 id 不与任何 preset 目录名同名（同名会让会话挂载 preset 死锁，§4 硬约束 1）', () => {
+    // 读真实目录名而不是 grep agent.cordis.yml 的文本——后者恒含包名里的
+    // "xingyuan"，断言 `toContain('xingyuan')` 无论怎么改都会绿，属自欺。
+    const presetNames = readdirSync(fileURLToPath(new URL('../presets/', import.meta.url)), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+    expect(presetNames.length, 'presets/ 下没有目录，夹具布局已变').toBeGreaterThan(0)
+    expect(presetNames, `主行 id 与 preset 目录同名：${presetNames.join('/')}`).not.toContain(SETTINGS_ENTRY_ID)
   })
 })

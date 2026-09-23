@@ -2,15 +2,16 @@
  * 会话日志自愈回归（session-log-repair.ts）。
  *
  * 锁死的契约：
- * - 当前格式（v3）工件：只给 xingyuan/* 未标记事件行补 `"ignorable": true`，官方行逐字节不变；
- * - 旧格式（<v3）工件：xingyuan/* 事件行替换为惰性 hook/invoked（seq/time 不变），
+ * - 当前格式工件（版本 = SESSION_FORMAT_VERSION，随宿主换代）：只给 xingyuan/* 未标记事件行
+ *   补 `"ignorable": true`，官方行逐字节不变；
+ * - 历史格式工件（版本 < 当前）：xingyuan/* 事件行替换为惰性 hook/invoked（seq/time 不变），
  *   替换产物能被官方迁移链（dsh-session-format-catalog）迁移并回放；
  * - 干净文件（不含星愿事件）零写入；
  * - 目录内多代工件并存时只处理最新代（旧代被遮蔽，零写入）；
  * - 防御性放弃矩阵：撕裂尾 / 坏帧 / header 版本与工件名不符 / 行解析失败 / 活会话；
  * - 多帧拼接容器可读可改；明文 .jsonl 变体同样支持；
  * - 改写幂等（二次运行零改写）；首次改写前有备份且按会话裁剪保留数；
- * - 补标后的事件仍能被官方恢复管线（sessionFormatCatalog.createRestore）读回。
+ * - 补标后的事件仍能被官方恢复管线（createSessionFormatCatalogWithChildren().createRestore）读回。
  * 运行前置：无需 build（被测模块为纯 TS 源码直载），但依赖 Node ≥22.15 的 node:zlib zstd。
  */
 import { mkdtempSync } from 'node:fs'
@@ -20,7 +21,7 @@ import { readFile, stat, writeFile, mkdir } from 'node:fs/promises'
 import { zstdDecompressSync } from 'node:zlib'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
-import { sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog'
+import { createSessionFormatCatalogWithChildren } from '@deepseek-ai/dsh-session-format-catalog'
 import { compressZstdFrame, repairSessionLogs, resolveDshHome, scanZstdFrames } from '../src/session-log-repair.js'
 import { existsSync } from 'node:fs'
 
@@ -44,6 +45,40 @@ const legacyFilename = (compressed = true): string => `session.jsonl${compressed
 /** 旧格式（v0/v1）物理 header：isSeeded 由 seedLength 派生，不能显式出现。 */
 const legacyHeaderLine = (id: string): string =>
   JSON.stringify({ type: 'session', version: LEGACY, id, createdAt: 1756000000000, delegationDepth: 0 })
+
+/**
+ * 「ignorable 感知的旧代」夹具（v3）：v3→v4 迁移边在严格拒绝前先放行带标未知事件
+ * （重命名为 `plugin:<type>`、载荷与坐标原样保留），所以这一代只需补标、不该被去毒。
+ * 与 SESSION_FORMAT_VERSION 解耦，宿主再升代时本组用例照旧有效。
+ */
+const V3 = 3
+const v3HeaderLine = (id: string): string =>
+  JSON.stringify({ type: 'session', version: V3, id, createdAt: 1756000000000, isSeeded: false, delegationDepth: 0 })
+const v3Filename = (compressed = true): string => `session.v${V3}.jsonl${compressed ? '.zstd' : ''}`
+function buildV3Plaintext(sessionId: string, lines: string[]): Buffer {
+  return Buffer.from([v3HeaderLine(sessionId), ...lines].join('\n') + '\n', 'utf8')
+}
+
+/** 最小合法 v3 会话骨架（与 v0 骨架同构）；星愿行固定在 V3_XINGYUAN_INDEX。 */
+const V3_XINGYUAN_INDEX = 3
+function v3SessionLines(): string[] {
+  return [
+    eventLine('turn/start', 0, { turn: 1 }),
+    eventLine('step/start', 1, { turn: 1, step: 1 }),
+    officialLine(2),
+    xingyuanLine(3),
+    eventLine('step/end', 4, { turn: 1, step: 1 }),
+    eventLine('turn/end', 5, { turn: 1, reason: { kind: 'completed' } }),
+  ]
+}
+
+/**
+ * 同一骨架去掉星愿行并重编号（官方链要求 seq 与行号密集相等）——用于「夹具本身合法」
+ * 的对照：它必须能通过迁移链，否则下面「未补标即被拒绝」的用例只是在测夹具不合法。
+ */
+const v3OfficialLines = (): string[] => v3SessionLines()
+  .filter((_, i) => i !== V3_XINGYUAN_INDEX)
+  .map((line, i) => JSON.stringify({ ...(JSON.parse(line) as Record<string, unknown>), seq: i }))
 
 /** 当前格式物理 header：必须显式 isSeeded/delegationDepth。 */
 const currentHeaderLine = (id: string): string =>
@@ -103,10 +138,17 @@ async function writeZstdArtifact(projectDir: string, sessionId: string, chunks: 
 
 /** 用官方恢复管线（严格模式 + 当前词汇校验）读一个工件：迁移拒绝或读取失败即抛。 */
 function restoreArtifact(headerLine: string, rows: string[]): { header: { version: number }; events: Array<Record<string, unknown>> } {
-  const restore = sessionFormatCatalog.createRestore(JSON.parse(headerLine), { recovery: 'strict', validation: 'current' })
+  const restore = catalog.createRestore(JSON.parse(headerLine), { recovery: 'strict', validation: 'current' })
   for (const row of rows) restore.decodeRow(JSON.parse(row))
   return restore.finish() as unknown as { header: { version: number }; events: Array<Record<string, unknown>> }
 }
+
+/**
+ * dsh 0.1.7 的 v3→v4 迁移边要求显式提供「该父会话的历史子会话证据」（子会话 =
+ * subagent 子日志，真实宿主由 persistence 层读齐再绑定）。本文件的夹具没有子会话，
+ * 空数组就是"无子会话"的显式声明——缺这份证据时整条边直接拒绝迁移。
+ */
+const catalog = createSessionFormatCatalogWithChildren([])
 
 /** 断言容器首帧恰好一行 header（复刻官方 assertZstdHeaderFrame）。 */
 function expectHeaderFrame(container: Buffer, expectedHeader: string): void {
@@ -417,7 +459,7 @@ describe('会话日志自愈', () => {
     expect((await listBackups('p')).length).toBe(1)
   })
 
-  it('旧格式替换产物可被官方迁移链迁移（v0 → v3），卡片事件不再回放', async () => {
+  it('旧格式替换产物可被官方迁移链迁移到当前格式，卡片事件不再回放', async () => {
     const path = await writeZstdArtifact('p', 'session-migrate', [buildLegacyPlaintext('session-migrate', legacySessionLines())], legacyFilename())
     await repairSessionLogs({ dshHome: home })
     const rows = splitLines(await readPlaintext(path))
@@ -452,6 +494,53 @@ describe('会话日志自愈', () => {
     expect(report.patched).toBe(0)
     expect(report.neutralized).toBe(0)
     expect(await readFile(path)).toEqual(once)
+  })
+
+  // ===== ignorable 感知的旧代（v3）：补标面，不是去毒面 =====
+
+  /**
+   * 对照用例（先证明夹具合法）：纯官方行的 v3 工件必须能被官方链迁移到当前代。
+   * 缺这条对照时，下面「未补标被拒绝」的用例可能只是夹具本身不合法而在假阳性通过。
+   */
+  it('v3 官方行夹具可被官方链迁移到当前格式（对照：夹具合法）', async () => {
+    const rows = splitLines(buildV3Plaintext('session-v3-control', v3OfficialLines()))
+    const artifact = restoreArtifact(lineAt(rows, 0), rows.slice(1))
+    expect(artifact.header.version).toBe(CURRENT)
+  })
+
+  it('v3 工件走补标而非去毒：星愿事件数据原样保留', async () => {
+    const lines = v3SessionLines()
+    const path = await writeZstdArtifact('p', 'session-v3', [buildV3Plaintext('session-v3', lines)], v3Filename())
+    const report = await repairSessionLogs({ dshHome: home })
+    expect(report.eventsMarked).toBe(1)
+    expect(report.neutralized).toBe(0)
+
+    const after = splitLines(await readPlaintext(path))
+    // 官方行逐字节不变；星愿行只多出一个 ignorable 字段
+    for (const [i, line] of lines.entries()) {
+      if (i !== V3_XINGYUAN_INDEX) expect(lineAt(after, i + 1)).toBe(line)
+    }
+    const marked = JSON.parse(lineAt(after, V3_XINGYUAN_INDEX + 1)) as Record<string, unknown>
+    expect(marked['type']).toBe('xingyuan/wish')
+    expect(marked['ignorable']).toBe(true)
+    expect(marked['data']).toEqual({ op: 'created', wishId: 'w1' })
+  })
+
+  it('v3 补标产物经官方 v3→v4 链保留为 plugin: 前缀事件（卡片数据不销毁）', async () => {
+    const path = await writeZstdArtifact('p', 'session-v3-keep', [buildV3Plaintext('session-v3-keep', v3SessionLines())], v3Filename())
+    await repairSessionLogs({ dshHome: home })
+    const rows = splitLines(await readPlaintext(path))
+    const artifact = restoreArtifact(lineAt(rows, 0), rows.slice(1))
+    expect(artifact.header.version).toBe(CURRENT)
+    const kept = artifact.events.find((event) => String(event['type']).startsWith('plugin:xingyuan/'))
+    expect(kept).toBeDefined()
+    expect(kept?.['data']).toEqual({ op: 'created', wishId: 'w1' })
+    expect(kept?.['ignorable']).toBe(true)
+  })
+
+  it('v3 未补标的星愿事件会被官方链拒绝（补标仍是必需）', async () => {
+    const rows = splitLines(buildV3Plaintext('session-v3-raw', v3SessionLines()))
+    expect(() => restoreArtifact(lineAt(rows, 0), rows.slice(1))).toThrow(/unknown event type/)
   })
 
   it('目录内多代并存：只处理最新代（旧代被遮蔽，零写入）', async () => {
