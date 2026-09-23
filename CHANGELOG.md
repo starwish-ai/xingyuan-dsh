@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5-alpha.2] - 2026-09-23
+
+### Fixed
+- **The XingYuan agent preset is registered again on dsh 0.1.7** — the preset had
+  disappeared from the Agent Preset selector with no error and a clean `typecheck`.
+  dsh 0.1.7 removed host directory scanning for presets entirely: `$DSH_HOME/.agent-presets/<id>/`
+  (the `preset.yml` + `agent.cordis.yml` pair this bundle copied there at activation) is read
+  by nothing any more, and a preset is now a `@deepseek-ai/dsh-agent-preset` declaration row
+  carried by the bundle patch. The patch declares `preset-xingyuan` (preset id `xingyuan`,
+  the same string `tab-policy.ts` compares `agentPreset` against), `src/preset-root.ts` and
+  `presets/` are gone, and `test/preset-declaration.test.ts` locks both halves — it parses the
+  real patch and mounts its config through the actual host plugin, asserting the registry
+  receives the definition and the disposal deregisters it.
+
 ## [0.6.5-alpha.1] - 2026-09-23
 
 ### Changed
