@@ -1,4 +1,4 @@
-# 星愿 bundle 层：只插常驻行（存储后端 / HTTP 路由 / schedule）；preset 由 preset-root.ts 发布到用户根。
+# 星愿 bundle 层：只插常驻行（存储后端 / HTTP 路由 / schedule / Agent 预设声明）。
 # 语义：`- insert:` 插入新行；裸行按 id 整行替换既有配置（不深合并）。
 # DB 文件固定在 ~/.dsh/xingyuan/：插件卸载 / 升级数据均存活，禁止放入包安装目录。
 - insert:
@@ -7,12 +7,27 @@
       name: '@starwish-ai/xingyuan-dsh/sqlite'
       config:
         path: !!js "dshHomePath('xingyuan', 'xingyuan.sqlite')"
-    # 主行 id 不能与 preset 目录名同名（同为 'xingyuan' 时会话挂载 preset 会死锁），故加 xy- 前缀
+    # 主行 id 不能与 preset 声明行的行 id 或 config.id 同名，故加 xy- 前缀
     - id: xy-bundle
       name: '@starwish-ai/xingyuan-dsh'
     # 宿主默认组装不含 schedule 行，需补插以满足加载顺序要求
     - id: schedule
       name: '@deepseek-ai/dsh-schedule'
+    # Agent 预设「星愿」。dsh 0.1.7 起宿主不再扫描 $DSH_HOME/.agent-presets 目录——
+    # preset 就是这一行声明，激活期由 @deepseek-ai/dsh-agent-preset 提交给注册表。
+    # 行 id 按官方约定 preset-<config.id>；config.id 是会话落盘的预设身份，与
+    # src/tab-policy.ts 的 XINGYUAN_PRESET_ID 逐字同源（对拍 test/preset-declaration.test.ts，
+    # 少这一行则选择器静默不出现星愿、typecheck 全绿）。
+    - id: preset-xingyuan
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: xingyuan
+        name: 星愿
+        description: 愿望与任务管理助手：对话创建愿望/任务、机会日打卡、微行动、记忆与图表。
+        order: 100
+        plugins:
+          # 工具 / 提示词 / HITL 只挂 preset 层：未选择星愿的会话看不到它们
+          - name: '@starwish-ai/xingyuan-dsh/preset/side'
 # 领域路由：星愿领域走 sqlite 后端；其余领域维持 json（整行替换须重述 backend）
 - id: storage-domain
   name: '@deepseek-ai/dsh-storage-domain'

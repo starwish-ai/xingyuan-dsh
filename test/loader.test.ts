@@ -53,7 +53,7 @@ describe('loader 级组合启动', () => {
   }
 
   beforeAll(async () => {
-    // 隔离：preset 发布指向临时 DSH_HOME，不触碰真实用户目录
+    // 隔离：会话日志自愈扫 $DSH_HOME/sessions，指向临时目录即不触碰真实用户数据
     process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'xy-loader-'))
     ctx = new Context()
     // 宿主 boot 同款：baseUrl 挂 ctx 供裸包名解析；Loader 以插件行装载

@@ -98,7 +98,7 @@ function neutralEvent(seq: unknown, time: unknown, headerId: string): string {
  */
 const MARKER_NAME = '.xingyuan-repaired'
 
-// ===== dsh home 解析（口径同 preset-root.ts）=====
+// ===== dsh home 解析 =====
 
 /** $DSH_HOME 解析：环境变量优先，否则 ~/.dsh。 */
 export function resolveDshHome(): string {

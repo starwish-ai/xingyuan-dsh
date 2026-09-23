@@ -36,6 +36,10 @@ dsh plugin --profile web add @starwish-ai/xingyuan-dsh
 
 After starting the Web GUI, installation succeeded when "星愿" (XingYuan) appears in the agent picker.
 
+> Not in the picker? Upgrade to `0.6.5-alpha.2` or later — as of dsh 0.1.7 the host no longer
+> scans `~/.dsh/.agent-presets/`; presets are registered by a declaration row in the plugin
+> patch, so older releases of this bundle silently never show up.
+
 ## Data & Backup
 
 Business data lives at `~/.dsh/xingyuan/xingyuan.sqlite` and survives uninstall / upgrade; backup is just copying that directory.

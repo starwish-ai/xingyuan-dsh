@@ -1,10 +1,10 @@
 /**
  * 星愿 bundle 常驻入口：
- * 1) 激活期把包内 preset 发布到用户根（preset-root.ts）；
- * 2) 打开 xingyuan 领域并发布同名服务；
- * 3) 注册 /xingyuan/* 数据 API 与页面路由；
- * 4) 激活期对会话日志做自愈（当前格式补 ignorable、旧格式去毒，见 session-log-repair.ts）。
- * （sqlite 后端在独立行 '@starwish-ai/xingyuan-dsh/sqlite'，见 cordis.patch.yml。）
+ * 1) 打开 xingyuan 领域并发布同名服务；
+ * 2) 注册 /xingyuan/* 数据 API 与页面路由；
+ * 3) 激活期对会话日志做自愈（当前格式补 ignorable、旧格式去毒，见 session-log-repair.ts）。
+ * （sqlite 后端在独立行 '@starwish-ai/xingyuan-dsh/sqlite'，Agent 预设「星愿」在
+ *  preset-xingyuan 声明行，均见 cordis.patch.yml。）
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -15,7 +15,6 @@ import { makeXingyuanStore, xingyuanDomainSpec } from './domain.js'
 import { PrefSettingsFields, readPrefSettings } from './pref-settings.js'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { registerXingyuanRoutes } from './routes/index.js'
-import { ensurePresetRoot } from './preset-root.js'
 import { repairSessionLogs } from './session-log-repair.js'
 import { sweepOrphans } from './consistency-sweep.js'
 import { UiSettingsFields } from './ui-settings.js'
@@ -79,9 +78,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const readPrefs = () => readPrefSettings(config)
   // 本插件自带「设置 → 星愿」整页，关掉宿主对这一行的自动生成页
   ctx.inject(['settings'], (inv) => inv.effect(() => inv.settings.configure({ auto: false }, ctx.fiber)))
-  // preset 发布成功后再开领域；两步就绪后才 provide，注入方（preset 子树）由
-  // cordis inject 语义等待本行激活完成
-  await ensurePresetRoot()
+  // 领域打开后才 provide：注入方（preset 子树）由 cordis inject 语义等待本行
+  // 激活完成，早于 provide 的读侧会拿到 undefined
   const opened = await storageDomain.open(xingyuanDomainSpec)
   if (disposed) {
     void opened.close()

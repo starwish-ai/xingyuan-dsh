@@ -37,6 +37,12 @@ dsh plugin --profile web add @starwish-ai/xingyuan-dsh
 
 启动 Web GUI 后，agent 选择器出现「星愿」即安装成功。
 
+> 选择器里没有「星愿」？升级到本插件 `0.6.5-alpha.2` 以上——dsh 0.1.7 起宿主不再扫描
+> `~/.dsh/.agent-presets/` 目录，预设改由插件补丁里的声明行注册，旧版本会静默不出现。
+
+> 选择器里没有「星愿」？升级到本插件 `0.6.5-alpha.2` 以上——dsh 0.1.7 起宿主不再扫描
+> `~/.dsh/.agent-presets/` 目录，预设改由插件补丁里的声明行注册，旧版本会静默不出现。
+
 ## 数据与备份
 
 业务数据存于 `~/.dsh/xingyuan/xingyuan.sqlite`，卸载 / 升级均存活，备份只需拷贝该目录。

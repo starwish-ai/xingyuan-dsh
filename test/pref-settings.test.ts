@@ -14,10 +14,10 @@
  *    常驻层组装；preset 层不得声明任何可编辑配置行（它懒加载，重启后未开星愿
  *    会话之前根本不存在）。
  */
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { TAB_VISIBILITY_DEFAULTS, normalizeHiddenTabs } from '../src/tab-policy.js'
+import { TAB_VISIBILITY_DEFAULTS, XINGYUAN_PRESET_ID, normalizeHiddenTabs } from '../src/tab-policy.js'
 import { PREF_DEFAULTS, SETTINGS_ENTRY_ID, type ConfirmLang, type ConfirmOp } from '../src/pref-policy.js'
 import { PrefSettingsFields, readPrefSettings } from '../src/pref-settings.js'
 import { UiSettingsFields } from '../src/ui-settings.js'
@@ -132,13 +132,12 @@ describe('表单绑定的行 id（client ↔ cordis.patch.yml 的字符串耦合
     expect(rowIds, `cordis.patch.yml 的行 id 为 ${rowIds.join('/')}`).toContain(SETTINGS_ENTRY_ID)
   })
 
-  it('主行 id 不与任何 preset 目录名同名（同名会让会话挂载 preset 死锁，§4 硬约束 1）', () => {
-    // 读真实目录名而不是 grep agent.cordis.yml 的文本——后者恒含包名里的
-    // "xingyuan"，断言 `toContain('xingyuan')` 无论怎么改都会绿，属自欺。
-    const presetNames = readdirSync(fileURLToPath(new URL('../presets/', import.meta.url)), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-    expect(presetNames.length, 'presets/ 下没有目录，夹具布局已变').toBeGreaterThan(0)
-    expect(presetNames, `主行 id 与 preset 目录同名：${presetNames.join('/')}`).not.toContain(SETTINGS_ENTRY_ID)
+  it('主行 id 不与 preset 身份同名（同名会让会话挂载 preset 死锁，§4 硬约束 1）', () => {
+    // 0.1.7 起 preset 身份不再是 presets/ 下的目录名，而是补丁里 `preset-<id>` 声明行的
+    // config.id；该声明行存在、且 config.id 与 XINGYUAN_PRESET_ID 逐字同源，
+    // 由 test/preset-declaration.test.ts 按 YAML 解析对拍（本文件的 rowIds 正则分不清
+    // 行 id 与 config.id，故这里只锁「三个名字互不相等」这一条）。
+    expect(SETTINGS_ENTRY_ID).not.toBe(XINGYUAN_PRESET_ID)
+    expect(SETTINGS_ENTRY_ID).not.toBe(`preset-${XINGYUAN_PRESET_ID}`)
   })
 })

@@ -1,7 +1,7 @@
 /**
  * 星愿 preset 侧入口：工具与提示词只注册在 preset 层，不出现在未选择星愿的会话里。
- * 本文件由 presets/xingyuan/agent.cordis.yml 以裸包名子路径装载；发布服务必须留在
- * isolate realm（本插件只向 ctx 注册贡献，不 provide 服务，天然合规）。
+ * 本文件由 cordis.patch.yml 的 `preset-xingyuan` 声明行以裸包名子路径装载；
+ * 发布服务必须留在 isolate realm（本插件只向 ctx 注册贡献，不 provide 服务，天然合规）。
  *
  * 对话偏好（写操作二次确认 / 记忆注入上限 / 确认卡语言 / 标签页显隐）不在本层提供：
  * 设置整页由 bundle client 层常驻注册，而 preset 挂载是懒加载的——重启后未开过星愿

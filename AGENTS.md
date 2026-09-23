@@ -14,12 +14,19 @@
 > `ctx.configForms.get(行 id)`；**用户偏好不再存 `~/.dsh/settings.yaml`，改存
 > `~/.dsh/profiles/<profile>/cordis.patch.yml`**（旧 settings.yaml 被宿主改名
 > `settings.yaml.imported`，其中星愿两节因无对应 Loader 行而未被导入 → 偏好重置为默认，见 §5.8）；
-> `settings.plugin.item` 槽没了，改 `plugins.item`；新增 `configForms.whileServed` 注册接缝。
+> `settings.plugin.item` 槽没了，改 `plugins.item`；新增 `configForms.whileServed` 注册接缝；
+> **Agent Preset 注册机制换形**——宿主不再扫描任何 preset 目录（旧
+> `$DSH_HOME/.agent-presets/<id>/`（`preset.yml` + `agent.cordis.yml` 两文件）**无人再读**），
+> 一个 preset 就是 bundle 补丁里的**一行 `@deepseek-ai/dsh-agent-preset` 声明**，激活期由该插件
+> 提交给 `agentPresets` 注册表（详见 §4「Agent Preset 声明行」）。本仓库在 0.1.7 适配时漏核了
+> 这一项：`preset-root.ts` 继续往那个死目录复制，于是「Agent 预设」选择器里静默不出现星愿、
+> typecheck 全绿、运行零报错（2026-09-23 真机发现，与 §5.11 那次标签页失效同一类坑）。
 > 同版本**会话格式升 v4**（`session.v4.jsonl[.zstd]`）：v3 从此算历史代；**v3→v4 迁移边接受
 > ignorable 未知事件**（重命名为 `plugin:<type>`、数据保留），而 v0→v1/v1→v2/v2→v3 仍拒绝一切
 > 未知历史事件——去毒模式对 ≤v2 仍然必需，见 §5.6。`retainedBy.mainView`、`slots`/
 > `uiConversation`/`locale` 契约、storage-domain 与自带 sqlite 后端、tools/system-prompt/
-> user-questions 声明合并位未变（2026-09-23 逐项核对 + 真机验证）。
+> user-questions 声明合并位未变（2026-09-23 逐项核对 + 真机验证；**同批核对清单不含 preset 发布
+> 机制**，故有上一条的漏网——升级核对见 §12 排障索引的「preset 不出现」行）。
 > 0.1.6-alpha.2 迁移要点（用户侧曾运行，基线已越过）：**client 侧会话列表快照
 > `SessionListState` 撤除 `current`/`currentAddress`**，「当前会话」改由 `SessionSummary`
 > 上必填的 `retainedBy.mainView` 引用计数表达（官方读法
@@ -69,8 +76,8 @@ agent 选择器出现「星愿」即安装成功。
         dsh 进程（Node）
               ├─【bundle 层 · 常驻】自带 sqlite 后端行 + storage-domain 领域路由
               ├─【bundle 层 · 常驻】/xingyuan/* 页面与数据 API（src/routes/）
-              ├─【bundle 层 · 常驻】preset 发布到用户根（src/preset-root.ts）
-              └─【preset 层 · 选「星愿」才挂载】presets/xingyuan/agent.cordis.yml
+              ├─【bundle 层 · 常驻】preset-xingyuan 声明行 → 注册表里的「星愿」预设
+              └─【preset 层 · 选「星愿」才挂载】声明行的 plugins
                     → @starwish-ai/xingyuan-dsh/preset/side
                     （工具 + 11 段提示词 + HITL 确认 + 动态上下文）
 ```
@@ -84,7 +91,7 @@ agent 选择器出现「星愿」即安装成功。
 |---|---|---|
 | **Bundle 组合包** | npm 包，声明 `dsh.bundle.patch` 指向 `cordis.patch.yml`，`dsh plugin add` 安装 | `@starwish-ai/xingyuan-dsh` 本体 |
 | **Cordis 插件** | `apply(ctx, config)` + `inject` 依赖声明 + effect 自动清理副作用 | 一切代码的组织单元 |
-| **Agent Preset** | 会话级能力集合；目录含 `agent.cordis.yml`（具名插件行列表）+ 可选 `preset.yml`；id = 目录名 | 目录名 `xingyuan`；绑定星愿工具与提示词 |
+| **Agent Preset** | 会话级能力集合；0.1.7 起 = bundle 补丁里一行 `@deepseek-ai/dsh-agent-preset` 声明（`config.id` 是会话落盘的预设身份，`config.plugins` 是子插件行列表） | 行 `preset-xingyuan`、id `xingyuan`；绑定星愿工具与提示词 |
 | **Session Event** | 持久会话事件（`SessionEventMap`），模型可见即已记录，刷新可回放 | 承载 wish/task/checkin/chart/micro 业务事实 |
 | **Conversation Node** | client 半侧按事件渲染聊天卡片的扩展点 | 五类业务卡片 |
 | **storage domain** | `defineDomain` 声明表结构（zod），由存储后端落库 | 四张表 + global 单例 |
@@ -95,12 +102,9 @@ agent 选择器出现「星愿」即安装成功。
 ```
 XingYuan-Dsh/
 ├── package.json            # exports 子路径导出 + dsh.bundle/client 声明 + peer 锁版本
-├── cordis.patch.yml        # bundle 层组合补丁（见 §4）
-├── presets/xingyuan/
-│   ├── agent.cordis.yml    # preset 组装：单行 → @starwish-ai/xingyuan-dsh/preset/side
-│   └── preset.yml          # 展示元信息（name/description）
+├── cordis.patch.yml        # bundle 层组合补丁：sqlite 后端行 + 主行 + schedule + preset 声明行（见 §4）
 ├── src/
-│   ├── index.ts            # bundle 常驻入口：发布 preset → 开领域 → provide('xingyuan') → 注册路由
+│   ├── index.ts            # bundle 常驻入口：开领域 → provide('xingyuan') → 注册路由 → 日志自愈
 │   ├── tab-policy.ts       # 标签页显隐纯策略与常量 + 「当前会话」取法（host/client 共用，见 §5.11）
 │   ├── pref-policy.ts      # 对话偏好纯策略与常量 + 表单行 id 绑定（host/client 共用，见 §5.8）
 │   ├── pref-settings.ts    # 对话偏好字段表（volatile）+ 配置→偏好读取映射（二次确认/注入上限/确认卡语言）
@@ -114,7 +118,6 @@ XingYuan-Dsh/
 │   ├── cascade.ts          # 删除级联（愿望→任务→打卡→微行动→颜色覆盖）
 │   ├── category-color.ts   # 分类颜色解析（覆盖 > 显式 > 哈希兜底，22 键）
 │   ├── events.ts           # SessionEventMap 声明合并（纯类型导出，host/client 共用）
-│   ├── preset-root.ts      # 发布 preset 到 $DSH_HOME/.agent-presets/xingyuan（指纹幂等）
 │   ├── session-log-repair.ts # 会话日志自愈：为历史 xingyuan/* 事件补 ignorable 标记（激活期，见 §5.6）
 │   ├── consistency-sweep.ts # 启动一致性清扫：孤儿打卡/任务/悬挂微行动的级联补救（integrity.test.ts 锁定）
 │   ├── types.ts            # 包根类型再导出（domain 记录 + events 事件类型；./types 子路径单一产物）
@@ -144,12 +147,11 @@ XingYuan-Dsh/
 
 ## 4. 分层与组合
 
-三层职责：
+两层职责（第三层「preset 发布」在 0.1.7 没了——预设改由补丁里的声明行注册）：
 
 | 层 | 组合方式 | 内容 | 卸载行为 |
 |---|---|---|---|
-| bundle 常驻层 | `cordis.patch.yml` 补丁宿主组装 | sqlite 后端行、主插件行、schedule 行、storage-domain 领域路由 | `dsh plugin remove` 连依赖带层一起拔除 |
-| preset 发布 | 文件复制到用户根 | `presets/xingyuan/` 两文件 | 用户根残留目录不影响其他部署，可手动删除 |
+| bundle 常驻层 | `cordis.patch.yml` 补丁宿主组装 | sqlite 后端行、主插件行、schedule 行、**preset 声明行**、storage-domain 领域路由 | `dsh plugin remove` 连依赖带层一起拔除 |
 | preset 层 | 选「星愿」agent 时才挂载 | 工具/提示词/HITL | 未选则整层不存在 |
 
 ### cordis.patch.yml（现状）
@@ -165,6 +167,15 @@ XingYuan-Dsh/
       name: '@starwish-ai/xingyuan-dsh'
     - id: schedule                 # 宿主默认组装不含 schedule 行，需补插
       name: '@deepseek-ai/dsh-schedule'
+    - id: preset-xingyuan          # Agent 预设「星愿」声明行（见下节）
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: xingyuan
+        name: 星愿
+        description: 愿望与任务管理助手：……
+        order: 100
+        plugins:
+          - name: '@starwish-ai/xingyuan-dsh/preset/side'
 # 领域路由：星愿领域走 sqlite，其余领域维持 json（整行替换须重述 backend）
 - id: storage-domain
   name: '@deepseek-ai/dsh-storage-domain'
@@ -179,27 +190,49 @@ XingYuan-Dsh/
 > **升级检查单**（patch DSL 无条件插入/整行替换，升级 dsh 前逐条核对官方
 > `dsh-base`/`web-app` patch 原文）：1) 本补丁以 `insert:` 插入 `id: schedule` 行，
 > 若上游默认组装新增同名行，装配器对重复 id **响亮抛错**（整个 profile 起不来）；
-> 2) `storage-domain` 裸行整行替换——上游给该行 config 新增键会被本补丁静默丢弃，
+> 同一条也适用于 `preset-xingyuan`（官方内置预设是 `preset-standard`/`-ptc`/`-minimal`/
+> `-cordis`，改名才会撞）；2) `storage-domain` 裸行整行替换——上游给该行 config 新增键会被本补丁静默丢弃，
 > 且若其他 bundle 也路由 domain，后装者整值覆盖会使星愿数据落回 json 后端
 > （`~/.dsh/storages/`），备份口径随之变化。
 
-1. **主行 id 不能与 preset 目录名同名**。两者都叫 `xingyuan` 时会话挂载 preset 会死锁，
-   故主行 id 用 `xy-bundle` 加以区分。
+1. **主行 id 不能与 preset 身份同名**。`xy-bundle` 若也叫 `xingyuan`，会话挂载预设时
+   两条组装行互踩（死锁）。0.1.7 起预设身份的落点从目录名变成 `preset-xingyuan` 行的
+   `config.id`，避让口径不变：主行 `xy-bundle`、Loader 行 `preset-xingyuan`、
+   预设身份 `xingyuan` 三者互不相等（`test/pref-settings.test.ts` + `test/preset-declaration.test.ts` 对拍）。
 2. **DB 路径禁止放进包安装目录**——卸载/升级均可能清掉包目录；固定在 `~/.dsh/xingyuan/`
    才能保证数据存活。备份只需拷贝该目录。
 
-### preset 发布机制（preset-root.ts）
+### Agent Preset 声明行（0.1.7 起的唯一注册途径）
 
-为什么不通过 patch 把包内目录加进 agent-presets roots：CLI profile-boot 会用自带的
-SHIPPED_PRESET_ROOT **整体覆盖 agent-presets 行的 roots 键**，bundle 层无法追加根目录。
-因此采用「激活期把 preset 目录复制到用户根 `$DSH_HOME/.agent-presets/xingyuan`」：
+宿主 0.1.7 起**没有任何目录扫描**：`dsh-agent-preset-registry` 的定义集是内存 Map，
+只有 `@deepseek-ai/dsh-agent-preset` 那行插件在激活期 `ctx.agentPresets.register(config)`
+才写入。旧形态（激活期把 `presets/xingyuan/` 复制到 `$DSH_HOME/.agent-presets/xingyuan`，
+以文件指纹做幂等）**整体作废**——全树 grep `.agent-presets` 在宿主代码里零命中，
+官方 `dsh-agent-preset/skills/editing-cordis-compositions` 明写"Nothing reads that directory any more"。
 
-- 用户根是官方 roster 的常备扫描位（includeUserRoot 默认 true），复制即生效；
-- 以两份源文件内容的 sha256 指纹做 `.xingyuan-version` 标记，内容变才重拷，
-  HMR 重载零成本，升级自然幂等；
-- `agent.cordis.yml` 里的行用**裸包名子路径导出**
-  （`- name: '@starwish-ai/xingyuan-dsh/preset/side'`），模块解析跟随宿主组装基准，
-  与该文件被复制到哪里无关。
+声明行的字段口径（`@deepseek-ai/dsh-agent-preset` 的 Config）：
+
+| 字段 | 语义 | 星愿取值 |
+|---|---|---|
+| `id` | 会话落盘的预设身份（`agent-preset/selected` 事件里那个串），小写字母/数字/连字符 | `xingyuan`——与 `src/tab-policy.ts` 的 `XINGYUAN_PRESET_ID` 逐字同源 |
+| `plugins` | 该预设的**子插件行列表**（工具/提示词就挂在这里） | 单行 `@starwish-ai/xingyuan-dsh/preset/side` |
+| `name` / `description` | 选择器显示名与说明；**不写 `name` 会被当成内置预设** | `星愿` / 一句中文说明 |
+| `order` |  roster 位置 | 100 |
+
+Loader 行 id 用官方约定 `preset-<config.id>`（`plugin_manager` 的 `list_plugins` 按此行 id
+显示激活态）。子插件行写**裸包名子路径**，模块解析跟随宿主组装基准，与补丁来自哪个包无关。
+
+三条踩坑要点：
+
+- **静默失效**：这一行写错或没写，选择器就是不出现星愿，typecheck 全绿、运行零报错。
+  故 `test/preset-declaration.test.ts` 双面对拍——按 YAML 解析真实补丁（`!!js` 节点
+  读成宿主同形状的 `{__jsExpr}` 表达式包，不求值），并把取到的 config 交给**真实宿主插件**
+  `@deepseek-ai/dsh-agent-preset`（devDependency 精确锁基线）装载，断言注册表收到
+  `xingyuan` 且本行 dispose 后收到注销。
+- **升级核对**：宿主若再换这套机制（例如重开目录扫描或换包名），先按
+  §12 排障索引「preset 不出现」行核对，别默认本节仍然成立。
+- **用户根残留**：升级到本机制后，老用户机器上 `~/.dsh/.agent-presets/xingyuan/`
+  是死目录（无人读、不影响任何部署）。官方口径为手动删除，本插件**不写删除用户目录的代码**。
 
 ## 5. 核心机制
 
@@ -576,7 +609,7 @@ wish-guide/task-guide/memory-guide/config-guide/chart-guide/reminder-guide(110�
   `configForms.whileServed([行 id])` **根本不注册**——设置里连「星愿」这一项都不出现
   （含教练风格/画像两张走数据库的卡也一起消失），且无任何报错。这比 0.1.7 前「页面在、
   显示未就绪」更安静，故与 §5.11 那次静默失效归为同一类坑，由测试对拍锁死。
-  主行 id 另受 §4 硬约束 1（不得等于 preset 目录名）限制。
+  主行 id 另受 §4 硬约束 1（不得等于预设身份 `xingyuan`）限制。
 - **volatile 的语义收益**：改这些字段**不触发整行重启**（宿主走 `loader/volatile-update`
   原地换引用），host 侧读当前值须 `.get()`；`readPrefSettings(config)` 每次调用现取，
   工具与提示词下一次执行即生效。反过来，非 volatile 的技术参数（rangeDefaultDays 等 4 项）
@@ -881,6 +914,11 @@ pnpm test      # vitest run
 - **包装完整性门禁**：package.json exports 子路径与 dsh.bundle.patch 声明的每个目标
   文件必须存在于 lib/ 产物（`package-exports.test.ts`；./routes 曾指向不存在的
   lib/routes.js，外部子路径导入会失败而宿主运行时不走该子路径，故静默）。
+- **preset 注册门禁**（`preset-declaration.test.ts`）：按 YAML 解析真实 `cordis.patch.yml`
+  取 `preset-xingyuan` 声明行（`!!js` 读成宿主同形状的表达式包、不求值），再把它的 config
+  交给**真实宿主插件** `@deepseek-ai/dsh-agent-preset`（devDependency 精确锁基线）装载，
+  断言注册表收到预设身份 `xingyuan`、本行 dispose 后收到注销。声明行缺席时选择器里
+  就是不出现星愿且零报错（§4「Agent Preset 声明行」），所以这一门禁是唯一的防线。
 - 客户端页面纯函数回归：跨取数路径共用的构造函数（如记忆列表 URL）以
   「构造 → 服务端往返命中」闭环锁定（`client-pages.test.ts`）。
 - **样式兼容契约门禁**（`style-contract.test.ts`）：STYLE_TEXT 与 gen-mock 源码禁
@@ -1007,7 +1045,8 @@ npm provenance 开启）。
 - 客户端样式禁用 color-mix() 等新式取色函数：dsh 壳的浏览器矩阵里存在不支持的
   环境，凡用它的属性按无效处理（空态插画曾因此整体隐形只剩孤立色点，已移除插画
   并全站改显式 rgba 令牌，见 styles.ts 头注）。
-- 主行 id 与 preset 目录名避让、roots 不能 patch 追加（§4 两个硬约束）。
+- 主行 id / Loader 行 id / 预设身份三者避让（§4 硬约束 1）；预设只能靠补丁里的声明行注册，
+  宿主不提供任何目录扫描（0.1.7 前那套 `$DSH_HOME/.agent-presets/` 文件复制已作废）。
 - 设置整页的可见性保护依赖 `configForms.whileServed`（0.1.7 新增）：宿主若再换这一接缝，
   注册方须自行呈现不可用态。`ConfigForm.set()` 现在会如实回报接受与否（false = 被拒或被
   跳过），但 **false 不区分「校验拒绝」与「被后继写取代」**，两者都给同一条提示。
@@ -1087,7 +1126,11 @@ conversation-node 篇目，旧文档引用为失实）
 
 **Agent Preset 格式权威出处**
 
-`https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/preset/agent-presets/README.zh.md`
+`https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/preset/agent-preset/README.zh.md`
+（配套 `packages/preset/agent-preset-registry/README.zh.md`；声明行写法与旧目录迁移口径在
+该包随带的 skill `skills/editing-cordis-compositions/SKILL.md` 里——安装后可在
+`<dsh 安装目录>/node_modules/@deepseek-ai/dsh-agent-preset/skills/` 读到。
+旧路径 `packages/preset/agent-presets/README.zh.md`（目录扫描那套）已随机制作废。）
 
 （以上表格语境中 `…/` 代指 `https://github.com/deepseek-ai/deepseek-harness/blob/master/`。默认分支实测为 `master`，`main` 不存在——2026-08-29 经 GitHub API 核对。）
 
@@ -1109,7 +1152,7 @@ conversation-node 篇目，旧文档引用为失实）
 | 旧会话打不开（`SessionFormatUnsupportedError` / unknown historical event） | **v2 及更早**的迁移链拒绝外部历史事件（v3 起接受 ignorable）：确认 bundle 已升级到含自愈模式的模块（§5.6）；源文件未动，备份在 `~/.dsh/xingyuan/session-backups/` |
 | 提醒没触发 / 周期提醒做不到 | subsystems/schedule（session-local、无日历规则、只装新建 live agent） |
 | 数据库打开报版本不符 | subsystems/storage；DOMAIN_VERSION 策略 |
-| preset 不出现 / mount 拒绝 | packages/preset/agent-presets/README.zh.md（realm 规则、roots 扫描时机） |
+| preset 不出现 / mount 拒绝 | packages/preset/agent-preset/README.zh.md + 该包 skills/editing-cordis-compositions（**宿主不扫任何目录**，见 §4「Agent Preset 声明行」）。先查 `cordis.patch.yml` 里 `preset-xingyuan` 行在不在（`dsh --dump-config` / `plugin_manager list_plugins` 看该行激活态）；本地 `pnpm test` 的 `preset-declaration.test.ts` 会当场对拍这一行 |
 | HMR 后状态丢失 / 注册残留 | lifecycle effect 清理；是否存在跨重载模块级单例 |
 | client 卡片/标签页没加载 | subsystems/client-modules（dsh.client 声明：inject 组成边 / external 非基座请求）+ 星愿行在 `window.__DSH_BOOT__` 的 entries 里有则 factory 已注册；**只有六个视图标签缺席、卡片与设置页都正常** → 「当前会话」判定取空，核对宿主代际的 `current` vs `retainedBy.mainView` 口径（§5.11，切「始终显示」可当场反证） |
 | `cannot get property "X" without inject` | cordis 4.0.2 服务属性守卫：只能在声明过 X 的 fiber 上以 `ctx.X` 访问——经 `ctx.inject(['X'], (inv) => inv.X...)` 的回调形参读（见 §5.11 设置宿主） |

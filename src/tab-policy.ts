@@ -42,8 +42,12 @@ export interface SessionRowFacts {
   readonly projectionValues?: { readonly agentPreset?: unknown }
 }
 
-/** 星愿 preset 目录名，即宿主投影值 `agentPreset` 的取值（宿主侧同名见 preset-root.ts）。 */
-const XINGYUAN_PRESET_ID = 'xingyuan'
+/**
+ * 星愿 preset 身份：宿主会话投影值 `agentPreset` 的取值，与 bundle 补丁里
+ * `preset-xingyuan` 声明行的 `config.id` 是同一串纯字符串（对拍见 test/preset-declaration.test.ts）。
+ * 两者不一致时标签页跟随静默失效——判定取不到星愿与不是星愿在代码里是同一个 false。
+ */
+export const XINGYUAN_PRESET_ID = 'xingyuan'
 
 /**
  * 「用户当前看着的会话是不是星愿预设」。
