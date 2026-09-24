@@ -14,7 +14,7 @@
 import { createRequire } from 'node:module'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -45,7 +45,9 @@ describe('插件显示元数据符合宿主读取契约（icon + locale meta）'
     expect(icon!.startsWith('/') || /^[A-Za-z]:[\\/]/u.test(icon!), 'icon 不得是绝对路径').toBe(false)
     const file = resolve(pkgRoot, icon!)
     const inside = relative(pkgRoot, file)
-    expect(inside !== '' && !inside.startsWith(`..${sep}`) && !resolve(inside).startsWith(sep),
+    // 宿主的判据（package-meta.js iconOf）：realpath 后仍在清单目录内——
+    // 相对路径既不能是空（指回目录本身）、不能以 .. 越出、也不能是绝对路径
+    expect(inside !== '' && !inside.startsWith(`..${sep}`) && !isAbsolute(inside),
       `icon 必须留在包目录内：${icon}`).toBe(true)
     expect(MEDIA_TYPES).toContain(file.slice(file.lastIndexOf('.')).toLowerCase())
     const stat = statSync(file)
