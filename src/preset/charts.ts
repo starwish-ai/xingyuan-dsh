@@ -42,9 +42,14 @@ export interface ChartSpec {
   readonly data: readonly XingyuanChartDatum[]
 }
 
-const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const
+/** 图表内建中文词（导出供 test/chart-labels.test.ts 对拍客户端映射表）。 */
+export const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const
+/** 任务无所属愿望分类时的兜底分组名。 */
+export const UNCATEGORIZED_LABEL = '未分类'
+/** 任务未关联愿望时的兜底分组名。 */
+export const UNLINKED_LABEL = '未关联'
 
-const HOUR_BUCKETS: ReadonlyArray<{ readonly label: string; readonly from: number; readonly to: number }> = [
+export const HOUR_BUCKETS: ReadonlyArray<{ readonly label: string; readonly from: number; readonly to: number }> = [
   { label: '凌晨(0-5)', from: 0, to: 5 },
   { label: '早晨(6-8)', from: 6, to: 8 },
   { label: '上午(9-11)', from: 9, to: 11 },
@@ -128,7 +133,7 @@ function countByCategory(store: XingyuanStore, facts: CheckinFact[]): Map<string
   for (const wish of wishesOf(store)) wishCategory.set(wish.wishId, wish.categoryName)
   const counts = new Map<string, number>()
   for (const fact of facts) {
-    const category = wishCategory.get(taskWish.get(fact.taskId) ?? '') ?? '未分类'
+    const category = wishCategory.get(taskWish.get(fact.taskId) ?? '') ?? UNCATEGORIZED_LABEL
     counts.set(category, (counts.get(category) ?? 0) + 1)
   }
   return counts
@@ -330,7 +335,7 @@ function buildTailChart(
   if (key === 'taskDistribution') {
     const counts = new Map<string, number>()
     for (const task of tasksOf(store)) {
-      const label = task.wishId ? store.domain.table('wishes').get(task.wishId)?.title ?? '未关联' : '未关联'
+      const label = task.wishId ? store.domain.table('wishes').get(task.wishId)?.title ?? UNLINKED_LABEL : UNLINKED_LABEL
       counts.set(label, (counts.get(label) ?? 0) + 1)
     }
     if (!counts.size) return undefined

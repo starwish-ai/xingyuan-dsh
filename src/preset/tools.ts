@@ -54,7 +54,10 @@ import {
   updateTask,
   updateWish,
   ToolError,
+  validateCategoryName,
   validateEstimatedDate,
+  validateTaskName,
+  validateWishTitle,
 } from '../store.js'
 
 export const inject = ['tools', 'xingyuan', 'userQuestions']
@@ -410,8 +413,11 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     timeoutMs: 600_000,
     async execute(args, exec) {
       const today = todayIso()
-      // 落库前预检愿望字段（分类/日期校验与 store 同源）：确认卡被拒不产生半成品；
+      // 落库前预检愿望字段（分类/标题/日期校验与 store 同源）：确认卡被拒不产生半成品，
+      // 也不让用户白确认一次才发现字段不合法；
       // 推荐任务的字段失败发生在批准之后，如实回报（愿望本体与已成功任务保留）
+      validateWishTitle(args.title)
+      validateCategoryName(args.categoryName)
       validateEstimatedDate(args.estimatedCompletionDate, today)
       if ((args.tasks?.length ?? 0) > 3) throw new ToolError('推荐任务最多 3 个')
       if (confirmGate(config, 'create')) {
@@ -464,6 +470,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     timeoutMs: 600_000,
     async execute(args, exec) {
       const today = todayIso()
+      validateWishTitle(args.title)
+      validateCategoryName(args.categoryName)
       validateEstimatedDate(args.estimatedCompletionDate, today)
       if (confirmGate(config, 'create')) {
         const approved = await confirmAction(ctx, exec, bi(
@@ -647,6 +655,9 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       const exists = [...store.domain.table('wishes').entries()].some(([, w]) => w.categoryName === args.oldName)
         || store.domain.global.get().categoryColors?.[args.oldName] !== undefined
       if (!exists) throw new ToolError(`分类「${args.oldName}」不存在`)
+      // 新名口径先于确认：store.renameCategory 逐条落库，非法新名会在中途被写路径闸门
+      // 拒掉，留下「部分愿望已改名、颜色覆盖键未迁移」的半改状态且无回滚
+      validateCategoryName(args.newName)
       if (confirmGate(config, 'update')) {
         const approved = await confirmAction(ctx, exec, bi(
           `确认把分类「${args.oldName}」重命名为「${args.newName}」吗？原分类下的所有愿望将一并移动。`,
@@ -746,7 +757,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     name: 'create_task',
     description: '创建单个任务。何时使用：用户明确要求创建一个具体任务时使用。依赖关系：创建前必须先调用check_similar_tasks查重，确认无相似项后才可创建。'
       + '周期规则：weekly/monthly 的机会日从领取日起算（每 7 天/逐自然月推进），不绑定自然周星期几；用户要求固定星期几打卡时如实说明，不要默认能满足。'
-      + `输出：创建成功返回任务信息（任务ID、名称、截止日期、打卡周期）；不指定wish_id时任务不关联任何愿望。${CREATE_NOTE}`,
+      + `输出：创建成功返回任务信息（任务ID、名称、截止日期、打卡周期）；不指定 wishId 时任务不关联任何愿望。${CREATE_NOTE}`,
     parameters: {
       wishId: { type: 'string', description: '关联愿望ID，可选。取列表返回的真实值' },
       name: { type: 'string', required: true, description: '任务名称。1-100字符。示例：每天背单词30分钟' },
@@ -757,6 +768,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     output: TEXT_OUTPUT,
     timeoutMs: 600_000,
     async execute(args, exec) {
+      // 确认前预检任务名（与 store.validateTaskName 同源）：空名/超长不该先弹卡再报错
+      validateTaskName(args.name)
       if (confirmGate(config, 'create')) {
         const approved = await confirmAction(ctx, exec, bi(
           `确认创建任务「${args.name}」吗？\n打卡周期：${CYCLE_LABELS[args.checkInCycle]}${args.dueDate !== undefined ? `，截止 ${args.dueDate}` : ''}${args.wishId !== undefined ? `，关联愿望 ${store.domain.table('wishes').get(args.wishId)?.title ?? args.wishId}` : ''}`,

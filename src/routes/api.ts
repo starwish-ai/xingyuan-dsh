@@ -267,10 +267,8 @@ function rangePlans(deps: ApiDeps, start: string, end: string): Array<Record<str
 
 function calendarMonth(deps: ApiDeps, month?: string): Record<string, unknown> {
   const today = todayIso()
-  // month 形参语义校验：2026-13 这类字符串此前正则放行、Date 计算静默漂移到次年
-  if (month !== undefined && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-    throw new ActionError('bad_date', `月份格式错误，请使用 yyyy-MM：${month}`, { month })
-  }
+  // 年月格式与可查询年份窗口的判定收口在 store.monthRange（工具面/路由面同一份，
+  // 越界即 bad_date：极端年份会逐日物化数十万格并把进程挂死）
   const [start, end] = monthRange(month, today)
   // 月视图含首尾补齐的相邻月日子，由前端网格排布；这里给整月机会日事实
   const plans = planForRange(deps.store, start, end)
@@ -529,11 +527,9 @@ async function actionCreateWish(deps: ApiDeps, body: JsonBody): Promise<unknown>
 
 async function actionCreateTask(deps: ApiDeps, body: JsonBody): Promise<unknown> {
   requireFields(body, ['name', 'cycle'])
-  // 超长显式报错而非静默截断——与愿望标题（store 报错）同一口径，用户知情才可修正
-  const rawName = String(body.name).trim()
-  if (rawName === '') throw new ActionError('missing_field', '任务名不能为空', { field: 'name' })
-  if (rawName.length > 100) throw new ActionError('name_too_long', '任务名不能超过 100 字符（当前 ' + String(rawName.length) + ' 字）', { length: rawName.length })
-  const name = rawName
+  // 任务名的空/超长判定收口在 store.validateTaskName（工具面与页面面同一份、
+  // 同一 code：missing_field / name_too_long），此处不再自写一套
+  const name = String(body.name)
   const cycle = String(body.cycle)
   if (!(CYCLES as readonly string[]).includes(cycle)) {
     throw new ActionError('missing_field', `周期必须是：${CYCLES.join('/')}`, { field: 'cycle' })

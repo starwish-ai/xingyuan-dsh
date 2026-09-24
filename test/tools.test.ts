@@ -7,6 +7,9 @@
  * - 分类改名：global 颜色覆盖键随改名迁移（与页面动作同一口径）
  * - 写确认门闩：confirmWrites=false 时打卡不再弹卡；删除始终弹
  */
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { registerTools } from '../src/preset/tools.js'
@@ -366,13 +369,38 @@ describe('工具层：删除级联清理（打卡记录 + 微行动状态，不�
 })
 
 describe('工具面机械审计：HITL 超时与 ID 引用纪律（§5.4）', () => {
-  /** 会弹确认卡（读 userQuestions，可能阻塞 agent 回合）的全部工具。 */
+  /**
+   * 会弹确认卡（读 userQuestions，可能阻塞 agent 回合）的全部工具。
+   * 名单与下方源码推导逐字对拍——`complete_micro_step` 曾在名单里而代码从不弹卡
+   * （§5.5「微行动步进 = 口头即授权，不设门闩」），已按事实面移除。
+   */
   const HITL_WAITING = [
     'create_wish_with_tasks', 'create_wish', 'create_task', 'batch_create_tasks',
     'delete_wish', 'batch_delete_wishes', 'check_in_task', 'cancel_check_in_task',
     'delete_task', 'batch_delete_tasks', 'delete_memory',
-    'start_micro_action', 'complete_micro_step', 'restart_micro_action',
+    'update_wish', 'update_task', 'rename_wish_category', 'claim_task',
+    'save_memory', 'update_memory',
+    'start_micro_action', 'restart_micro_action',
   ] as const
+
+  /**
+   * 从源码机械推导「会阻塞的工具」= execute 里出现 confirmAction( 的那些。
+   * 手写名单会漏（本仓库曾漏 6 个），推导不会：新加工具若开始弹卡而未进名单，即红。
+   */
+  function blockingToolsFromSource(): string[] {
+    const text = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/preset/tools.ts'), 'utf8')
+    const blocks = text.split('defineTool({').slice(1)
+    const out: string[] = []
+    for (const block of blocks) {
+      const name = /^\s*name: '([a-z_]+)'/m.exec(block)?.[1]
+      if (name !== undefined && block.includes('confirmAction(')) out.push(name)
+    }
+    return out.sort()
+  }
+
+  it('阻塞工具名单与源码推导一致（双向：既不漏报也不虚报）', () => {
+    expect(blockingToolsFromSource()).toEqual([...HITL_WAITING].sort())
+  })
 
   it('HITL 等待类工具全部声明 timeoutMs=600_000（协作取消承诺）', () => {
     const store = memoryStore()

@@ -66,7 +66,7 @@ export function pageToday(res: ServerResponse, acceptEncoding?: string): void {
 </head><body><header><h1>今日待办</h1><nav><a href="/xingyuan/growth">成长</a><a href="/xingyuan/calendar">日历</a></nav></header>
 <main id="app"><p class="muted">加载中…</p></main>
 <script>
-async function post(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})});const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d}
+async function post(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json','x-xingyuan-write':'1'},body:JSON.stringify(body||{})});const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d}
 async function act(btn,taskId,date){
   btn.disabled=true;
   try{ await post('/xingyuan/api/action/checkin',{taskId,date}); load(); }

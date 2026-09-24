@@ -122,7 +122,8 @@ async function fetchWithTimeout(path: string, init: RequestInit): Promise<Respon
 export async function postJson<T = Record<string, unknown>>(path: string, body: Record<string, unknown>): Promise<T> {
   const response = await fetchWithTimeout(path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    // x-xingyuan-write：服务端跨站写闸门的凭证头（见 src/routes/index.ts 的说明），改名须同步
+    headers: { 'content-type': 'application/json', 'x-xingyuan-write': '1' },
     body: JSON.stringify(body),
   })
   return parsePayload<T>(response, () => t('common.actionFailed'))

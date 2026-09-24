@@ -27,8 +27,9 @@
 
 ## 安装
 
-> 需要 DeepSeek Harness `0.1.7-alpha.2`（peer 依赖按该版本锁定；0.1.7 重写了设置子系统，
-> 更早的宿主上本插件的 client 半侧不会激活。升级 dsh 前先核对 [AGENTS.md](./AGENTS.md)
+> 需要 DeepSeek Harness `0.1.7-rc.1`（peer 依赖按该版本锁定，含 client 半侧的宿主包；
+> 0.1.7 重写了设置子系统，更早的宿主上本插件的 client 半侧不会激活，且 rc.1 起
+> dsh 会按 peer 范围**拒绝加载**不兼容的插件包。升级 dsh 前先核对 [AGENTS.md](./AGENTS.md)
 > 的升级要点）。
 
 ```sh

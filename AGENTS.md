@@ -1,12 +1,29 @@
 # 星愿 Dsh 插件开发文档
 
 > 本文档描述独立项目 `@starwish-ai/xingyuan-dsh` 的架构、核心机制与开发规范，面向后续在本仓库上迭代的开发者。
-> 接口基线：DeepSeek Harness（下称 dsh）`0.1.7-alpha.2`。dsh 处于技术预览期，API 可能变动；
+> 接口基线：DeepSeek Harness（下称 dsh）`0.1.7-rc.1`。dsh 处于技术预览期，API 可能变动；
 > 升级依赖版本前先核对官方 release notes 与 §12 参考文档。
-> **client 半侧的宿主包连 peer 范围都没有**：`@deepseek-ai/dsh-api-session-controller`
-> 之类只作为 **devDependencies 精确锁基线版本**（peer 列表里没有它们），运行时那一版
-> 完全由用户装的 dsh CLI 决定。于是 typecheck 校验的未必是用户跑的那一版，也没有任何版本
-> 约束会拦下不兼容升级；宿主撤除字段只能靠真机验证发现（2026-09-22 的标签页静默失效即此，见 §5.11）。
+> （0.1.7-rc.1 增量要点（**本仓库已跟进**，2026-09-24 逐包按字节比对 + 真机核对）：宿主新增
+> **DSH peer 兼容闸门**——`dsh-app-boot` 的 `evaluatePluginCompatibility` 对包**声明出来的**
+> `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` peer 跑 `semver.satisfies(宿主版本, 范围, {includePrerelease:true})`，
+> 不符者**整包静默跳过**（真机可见第三方包因此消失），豁免走 profile 的 `compatibility.json` +
+> `dsh plugin allow-version <pkg@ver> --dsh-version <rt> --accept-risk`。这使「peer 不是闸门、
+> 不兼容只能靠真机发现」的旧结论作废（见 §11 已改写）；也正因为闸门只认声明，
+> **client 半侧 6 个宿主包已补进 peerDependencies**（连同补丁点名的 dsh-agent-preset / dsh-schedule，
+> 共 16 个 dsh-* peer；`test/host-baseline.test.ts` 三面互锁）。其余面为零变化：
+> 会话格式仍 v4（`SESSION_FORMAT_VERSION = 4`、v3→v4 边仍保留 ignorable）、settings 子系统、
+> preset 声明行、tools/system-prompt/user-questions/storage/webserver 的 lib **逐字节相同**；
+> 真正改了的只有 client 侧三包，其中语义变化两处：**「每 (kind,id) 仅一条 start」不变量被宿主撤除**
+> （重复 start 不再抛错，最早的 start 建 State、后来的走 update），以及 transcriptView 变
+> 四档 `compact/standard/detailed/verbose` 且默认由 compact 改 **standard**——但**只有 verbose 才
+> 不折叠**（`foldCompletedTurns:false` 仅 verbose 一档），见 §11 已改写的措辞。
+> **client 半侧的宿主包在 0.1.7-rc.1 之前连 peer 范围都没有**：`@deepseek-ai/dsh-api-session-controller`
+> 之类只作为 **devDependencies 精确锁基线版本**，运行时那一版完全由用户装的 dsh CLI 决定——
+> 于是 typecheck 校验的未必是用户跑的那一版，也没有任何版本约束拦下不兼容升级
+> （2026-09-22 的标签页静默失效即此，见 §5.11）。**现已补进 peerDependencies**（optional，
+> 免终端型 profile 报无谓的 unmet peer；rc.1 的闸门不看 optional 标记，保护不因此减弱），
+> 声明面/钉版/实装三者由 `test/host-baseline.test.ts` 互锁。但**peer 闸门只挡版本不匹配，
+> 挡不住「同版本号不同行为」**，字段撤除类故障仍只能靠真机验证发现（§5.10 的部署回路）。
 > （0.1.7-alpha.2 迁移要点（**破坏性**，本仓库已跟进）：**settings 子系统整体重写**——
 > `ctx.settings.installSection`（host）与 `ctx.settingsScope`（client）**全部撤除、无兼容层**；
 > 可编辑项改为「profile 行 Config 里标了 `.volatile()` 的字段」，host 侧 `ctx.settings` 变成
@@ -61,7 +78,9 @@ agent 选择器出现「星愿」即安装成功。
 | 数据持久化 | 自带 sqlite 后端，`~/.dsh/xingyuan/xingyuan.sqlite` |
 
 技术栈：TypeScript（Node ≥22.5）+ Cordis 插件框架 + React 18（client 半侧）
-+ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/dsh-*` 锁定 `^0.1.7-alpha.2`；
++ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/dsh-*` 锁定 `^0.1.7-rc.1`
+  （host 侧 8 + client 半侧 6 + 补丁点名的 dsh-agent-preset / dsh-schedule，共 16 个；
+  rc.1 的兼容闸门只看声明出来的 peer，见 §11）；
   `@deepseek-ai/cordis` 跟随宿主 4.x（独立版本线）；`@deepseek-ai/schemastery`
   为 `*`，跟随宿主。
 
@@ -471,7 +490,8 @@ ctx.tools.register(defineTool({
 
 星愿采用 **whole-value 单事件模式**：每条事件携带完整展示状态，一张事件一张卡片，
 内部 id 直接用 `event.seq`，天然满足「每 (kind,id) 仅一条 start」的不变量，
-无需 start/delta 配对与确定性拼接逻辑。
+无需 start/delta 配对与确定性拼接逻辑。（0.1.7-rc.1 起宿主已**不再强制**该不变量，
+见 §11；本模式仍是首选，理由变成「一张事件一张卡」的简单性而非合规性。）
 
 五个事件 kind（生产方 `events.ts` 声明合并，host 侧经 `exec.agent.session.append(kind, data)`
 发出；卡片在同进程内存的会话里实时渲染，跨重启的回放依赖下述自愈机制）：
@@ -551,8 +571,13 @@ seq/生命周期引用仍然安全；拒绝时不产出后继、源文件原样�
 安全边界：不含星愿事件的文件零写入；文件内非星愿行逐字节不变；改写前备份至
 `~/.dsh/xingyuan/session-backups/`（每会话留 3 份）；撕裂尾/坏帧/版本与工件名不符/
 解析失败/活会话一律整文件跳过。**增量跳过**：每个已处理会话在目录内写
-`.xingyuan-repaired` 标记（记工件字节数 + 事件总数），下次启动 stat + 读 40 字节
-标记即可跳过，避免全量解压的启动拖慢（实际 <10ms）；工件字节数变化（新事件落盘）
+`.xingyuan-repaired` 标记（记工件字节数 + 事件总数 + **工件格式代 + 当次处置模式**），下次启动 stat + 读
+标记即可跳过，避免全量解压的启动拖慢（实际 <10ms）。**判定身份必须一起记**：处置方式由
+「该代迁移边是否接受 ignorable」决定，而升宿主时按要求上下移 `IGNORABLE_AWARE_FORMAT_VERSION`——
+只比字节数时，边界移动后（或目录里换成另一代同名同尺寸工件）旧标记会把本该改判的文件
+静默跳过；补标↔去毒判错的代价不对称（去毒不可恢复），故代次或模式不符即重扫，
+旧格式标记（缺这两字段）一律视为过期重扫，重扫幂等，多花一次解压换判定正确。
+工件字节数变化（新事件落盘）
 或标记损坏时自动重扫并刷新。**压缩工件布局硬约束**：zstd 容器首帧必须恰好一行
 header（dsh 的 `assertZstdHeaderFrame`/`listArtifacts` 启动期强制）——写回时按
 「帧 0 = header、其余事件行第二帧」重建并自检，读入的容器首帧非单行（历史整文件
@@ -657,13 +682,25 @@ wish-guide/task-guide/memory-guide/config-guide/chart-guide/reminder-guide(110�
 （code 供客户端本地化）；其余 Error 按 400 返回领域校验消息，带稳定 code 的领域错误
 原样透传。请求体上限 64KB。
 
+**跨站写闸门（0.6.5 加固）**：所有 `POST /xingyuan/api/action/*` 必须带自定义头
+`x-xingyuan-write: 1`，缺失即 403 + code `write_gate_required`（**先于请求体解析**，
+未授权者连 413/400 都探不到）。理由：dsh 的 web 服务监听本机端口，而浏览器发跨源
+「简单请求」（form / text-plain）**不触发 CORS 预检**即可打到写动作——宿主不给这类
+响应发 CORS 头，攻击者读不到回包但副作用已发生；`/api/action/memory-clear` 是
+零必填字段的破坏性动作，因此不能只靠「id 是随机 UUID 猜不到」兜底。自定义头强制
+预检、宿主不放行即挡在门外；两个客户端面（GUI 的 `src/client/api.ts` 与直开备用页
+`pages-html.ts` 的内联 `post()`）都显式带头，头名三处字面量由
+`test/routes-shell.test.ts` 对拍防漂移。不校验 Referer（可伪造，代理/隐私模式失真）。
+
 ### 5.10 客户端半侧开发纪律（视觉与验证踩坑沉淀）
 
-**activeLocale 依赖 rc.2 实测快照字段**：宿主发布的 LocaleFace 契约只声明
-`getSnapshot(): { revision }` 与 `bind(ns)`，语言判定所需的 `snapshot.active`
-不在类型面内但运行时存在（i18n.ts 内有实测记录与 unknown 收窄兜底）；en 格式化
-链路（Intl 日期/复数/标点分隔符）全部经 `activeLocale()`，该字段缺席时静默回落
-zh——升级 dsh 后若发现「英文正文配中文日期」即此处前提失效。
+**activeLocale 依赖快照 `active` 字段**：语言判定经 `ctx.locale.getSnapshot().active`。
+0.1.7-rc.1 复核更正本仓库旧记录：该字段**在 `@deepseek-ai/dsh-client-locale` 的发布类型里
+就有**（`LocaleSnapshot.active: LocaleId`，`lib/types/client/index.d.ts:49-51`），
+「不在类型面内」只对 `@deepseek-ai/dsh-client-ui-slots` 那份窄 `LocaleFace` 成立——
+`i18n.ts` 的 `as { active?: unknown }` 兜底因此是多余的保守（保留无害，可在下次触碰该文件时
+收窄为直接读类型）。en 格式化链路（Intl 日期/复数/标点分隔符）全部经 `activeLocale()`，
+该字段缺席时静默回落 zh——升级 dsh 后若发现「英文正文配中文日期」即此处前提失效。
 
 **API 请求 URL 拼接**：带 query 参数的请求一律 `URLSearchParams` 统一构造，
 禁止手工字符串拼接；同资源的多条取数路径（首屏 / 加载更多）必须共用同一个
@@ -760,6 +797,26 @@ accent 点缀孤点，形似渲染事故）。半透明衍生色一律在 styles
 → 重启 `dsh web` → 浏览器强刷（Ctrl+F5，client JS 有缓存）。注意：
 `dsh plugin add/update` 会用 npm 版覆盖该副本；数据无虞，库固定在
 `~/.dsh/xingyuan/`（§4 硬约束 2）。
+
+**宿主官方实践规则（0.1.7-rc.1 起随包发布，星愿按此自查）**：
+`@deepseek-ai/dsh-agent-preset/skills/cordis-plugin-development/references/practices.md`
+（rc.1 新增）+ 同目录 `ui-plugin.md` / `verification.md` / `SKILL.md` 的验收清单。
+星愿**已合规**的硬项：client 产物运行时只 `require('react')`，**不以任何模块方式加载宿主
+Client 包**（practices.md 的头号禁令；`dsh.client.inject` 条目是官方允许的激活顺序声明）；
+`styles.ts` 引用宿主 `--dsw-alias-*` 令牌（用到的令牌在宿主全部存在，浅/深成对由
+`style-contract.test.ts` 锁）；`pages-html.ts` 的直开页**不是**被 iframe 嵌进 GUI 的宿主 HTML
+（全仓 `iframe` 零命中），是另一条无 GUI 场景的备用出口。
+**有意偏离、留痕待议**的两处：① `src/client/ui.ts` 的 toast 与确认框是命令式
+`document.body.append`，而 practices.md 要求「不在组件外写 DOM / 不 append 到 document.body」，
+官方落点是 `shell.overlay` 槽（宿主自己的重命名对话框、终端清理提示都渲染在那里）——
+现方案能跑且经 `ctx.effect` 清理，风险是 z-index/焦点与宿主 overlay 抢层，改造需把两者
+重写成 React 组件；② `src/client/hooks.ts` 沿祖先链最多 16 层写行内 `scrollbarGutter`、
+并用 `querySelector('.xy-page')` 找滚动容器（治滚动条 15px 抖动与跨标签残留滚动位），
+同属「在组件外写 DOM」，宿主结构一变即失效。**验证口径**：官方
+`verification.md` 明写「mock 页截图不是对运行插件的验证」，故 §5.10 的 `debug/gen-mock.ts`
+回路只能当离线第一道核对（且其替身令牌值与宿主真值有出入），改版的最终结论必须在
+真连的 dsh 页面里按 SKILL.md 清单核对（浅/深两主题、并排宿主同类页、控制台无
+`slot entry crashed`）。
 
 ### 5.11 标签页显隐（设置 × 会话预设动态注册）
 
@@ -914,6 +971,26 @@ pnpm test      # vitest run
 - **包装完整性门禁**：package.json exports 子路径与 dsh.bundle.patch 声明的每个目标
   文件必须存在于 lib/ 产物（`package-exports.test.ts`；./routes 曾指向不存在的
   lib/routes.js，外部子路径导入会失败而宿主运行时不走该子路径，故静默）。
+  通配目标（`./locale/*.json`）按「目录内每个实文件都被模式覆盖」判定，不按字面路径查存在。
+- **宿主版本闸门对拍**（`host-baseline.test.ts`）：声明面 ↔ 钉版 ↔ 实装三面互锁——每个
+  `@deepseek-ai/dsh*` peer 的范围必须被 devDependencies 钉住的那一版满足、node_modules
+  实装版本必须等于钉版（否则 typecheck 校的不是用户跑的那一版）、补丁 `name:` 与
+  `dsh.client.inject` 点名的宿主包必须全部进了 peer（漏一个就不受 rc.1 闸门保护）、
+  且不得虚标（每个 peer 需有源码 import / 补丁点名 / 对应服务键三选一的证据）。
+  0.1.7-rc.1 的闸门只认**声明出来的** peer，这张表就是「覆盖面 = 真实依赖面」的证明。
+- **显示元数据门禁**（`plugin-display-meta.test.ts`）：按宿主 `package-meta` 的实现参数
+  （语言 id 正则、icon 256 KiB/扩展名白名单/不得越出包目录、`${包名}/locale/en.json`
+  解析方式、语言文件须同目录）逐条对拍，并在临时 consumer 目录里**用 Node 真实解析**一次
+  （`node_modules` 链接指向本包）——宿主读不到时静默回落包名 + 默认图，故必须机械证明
+  exports/files/形状三者都对。
+- **写路径守卫门禁**（`write-guards.test.ts`）：宿主 `update` 缺键先抛 `DomainError('missing-key')`
+  且不调回调 → 本包必须换成带 code 的 `ToolError`；派生量同步遇缺键静默跳过；月视图
+  年份/月份越界即 `bad_date`（极端年份逐日物化数十万格会挂死进程）；任务名与分类改名
+  走 store 单一口径且**不留半改状态**。配套地，四个内存域桩（`memory-store.ts` 等）的
+  `update` 已改成缺键抛 `missing-key`——桩与宿主语义分裂曾让「记录不存在」分支
+  在测试里可达而真机不可达（§5.11 同一类坑）。
+- **HTTP 壳跨站写闸门**（`routes-shell.test.ts`）：POST 缺 `x-xingyuan-write` 头即 403
+  且**先于请求体解析**；头名三处字面量一致（服务端常量 ↔ GUI `api.ts` ↔ 备用页 `pages-html.ts`）。
 - **preset 注册门禁**（`preset-declaration.test.ts`）：按 YAML 解析真实 `cordis.patch.yml`
   取 `preset-xingyuan` 声明行（`!!js` 读成宿主同形状的表达式包、不求值），再把它的 config
   交给**真实宿主插件** `@deepseek-ai/dsh-agent-preset`（devDependency 精确锁基线）装载，
@@ -1020,7 +1097,12 @@ npm provenance 开启）。
   confirmLang 偏好显式选择；独立备用页 /xingyuan/* 维持中文单语（pages-html 头注）。
 - 存储无迁移机制：领域 schema 只能用 optional 字段做向后兼容增量；破坏性演进必须升
   DOMAIN_VERSION 并提供数据重导出方案。
-- 会话事件要求每 (kind,id) 仅一条 start——新事件类型沿用 whole-value 单事件模式最省心。
+- 会话事件沿用 whole-value 单事件模式最省心（一条事件一张卡、id=`event.seq` 天然唯一）。
+  **0.1.7-rc.1 起宿主不再强制「每 (kind,id) 仅一条 start」**：assembler 删掉了
+  `received more than one start Match` / `received a transient start Match` 两处抛错，
+  最早的 start（durable 或 transient）建 State、后来被标 start 的事件走 `update()`；
+  仍抛的只有「start 不是该 Context 的首个 match」。星愿设计不受影响（每事件一 id，
+  `update` 幂等），但**新事件类型不必再为「怕重复 start」而绕路**，可考虑增量更新卡。
 - 外部插件会话事件在 dsh 读取白名单之外且无 ignorable 写入通道：依赖激活期
   会话日志自愈兜底（§5.6）。补标面 = 迁移边接受 ignorable 的那一侧（**v3 起，含当前代
   v4**），靠补 `ignorable` 保留卡片数据；**v2 及更早的迁移链拒绝一切未知事件，只能去毒**
@@ -1034,13 +1116,17 @@ npm provenance 开启）。
   接受 ignorable，见 §5.6），去毒是保「会话可打开」的代价；期望上游开放迁移白名单或
   插件事件注册面后恢复。勿当缺陷报。去毒只处理 `xingyuan/*` 命名空间——其他插件
   写入的历史事件需其作者自行处理。
-- **对话卡片会被「紧凑」转录模式折叠**：ui-chat 的 Turn Process 披露把已完成轮次
+- **对话卡片会被「紧凑/标准」转录模式折叠**：ui-chat 的 Turn Process 披露把已完成轮次
   里落在过程窗口 `[processStartSeq, answerAnchorSeq)` 的**所有非白名单 kind 节点**
   （含 xingyuan 五类卡片）收进「N 次工具调用」条，默认收起；白名单
   （`TURN_PROCESS_INDEPENDENT_KINDS`：system-prompt/user/steering/turn-process/
   turn-error/turn-max-tokens/turn-tail）为 ui-chat 写死的内置集，**插件无豁免接缝**。
-  用户侧开关：设置 → 通用设置 → 「对话显示」→ 标准（命名空间 `ui-chat` 字段
-  `transcriptView`，默认 compact，属宿主设置，插件不得代改）；单轮可点披露条展开，
+  用户侧开关：设置 → 通用设置 → 「对话显示」——0.1.7-rc.1 起档位是
+  `compact / standard / detailed / verbose` 四档，默认由 compact 改 **standard**，
+  但策略表里**只有 `verbose` 才 `foldCompletedTurns:false`**（`dsh-client-ui-chat/lib/client.js`
+  的策略对象），所以「切到标准/详细」都**仍会**折叠卡片，只有「详尽」不折；
+  命名空间 `ui-chat` 字段 `transcriptView` 属宿主设置，插件不得代改；
+  单轮可点披露条展开，
   隐藏节点是 `hidden="until-found"`，浏览器页内查找会自动展开。勿当插件缺陷报。
 - 客户端样式禁用 color-mix() 等新式取色函数：dsh 壳的浏览器矩阵里存在不支持的
   环境，凡用它的属性按无效处理（空态插画曾因此整体隐形只剩孤立色点，已移除插画
@@ -1059,15 +1145,22 @@ npm provenance 开启）。
   用户自定义值留在 `settings.yaml.imported` 里成为死数据。有意接受重置（2026-09-23 决策），
   不做迁移。
 - **基线越过 0.1.6 后不再兼容旧宿主**：client 半侧硬依赖 0.1.7 的 `configForms` 服务，
-  旧宿主上整半侧不激活。peer 范围已收到 `^0.1.7-alpha.2`，但**别把它当成闸门**：
-  用户 profile 的 `pnpm-workspace.yaml` 里写着 `autoInstallPeers: false`（2026-09-23 在
-  `~/.dsh/profiles/web/` 实测），宿主包由全局 dsh CLI 提供而非 profile 安装，因此装包时
-  既不安装也不校验这些 peer——不兼容仍只能靠真机验证发现（§5.11 的教训不变）。
+  旧宿主上整半侧不激活。peer 范围已收到 `^0.1.7-rc.1`（含 client 半侧 6 包），
+  且 **0.1.7-rc.1 起它真的是闸门了**：dsh 在装配前用
+  `semver.satisfies(宿主版本, peer范围, {includePrerelease:true})` 校验包声明的每个
+  `@deepseek-ai/dsh*` peer，不符者**整包静默跳过**（豁免：profile 的 `compatibility.json`
+  + `dsh plugin allow-version <pkg@ver> --dsh-version <rt> --accept-risk`）。
+  旧结论「装包时既不安装也不校验这些 peer」只对 pnpm 那一层成立（profile 的
+  `pnpm-workspace.yaml` 仍写 `autoInstallPeers: false`，宿主包由全局 dsh CLI 提供），
+  宿主自己的兼容闸门与 pnpm 无关。两条边界要记住：① 闸门**只认声明出来的 peer**，
+  没声明的面（例如将来新引入的宿主包）不受保护；② 闸门只挡版本区间，
+  挡不住「同版本号不同行为」，字段撤除类故障仍需 §5.10 的真机回路发现（§5.11 的教训不变）。
 - 非回环连接（浏览器地址不是 `localhost` / `127.0.0.1/8` / `::1`）下，settings 写入被
   宿主降级为 memory 模式（`ConfigFormSnapshot.mode === 'memory'`、`writable: false`，
   `set()` 直接返回 false 不上 wire）。这是 dsh 的安全约束（settings RPCs are
   loopback-only），设置页只能提示，无法绕过。
-- dsh 技术预览期升级锁版本 `0.1.7-alpha.2`（**alpha**：settings 与会话格式在两周内各换过一次）；
+- dsh 技术预览期升级锁版本 `0.1.7-rc.1`（**rc**：settings 与会话格式曾在两周内各换过一次，
+  rc.1 相对 alpha.2 只动了 client 侧三包 + 装载器 + 新增兼容闸门，见文档头注）；
   跨版本升级前核对 release notes 与排障索引，并按 §5.10 回路做真机验证。
 
 ## 12. 官方参考文档
@@ -1124,6 +1217,17 @@ conversation-node 篇目，旧文档引用为失实）
 - Tool Schema 目录：`…/docs/tool-catalog.zh.md`
 - 持久化事件目录：`…/docs/persistence-catalog.zh.md`
 
+**插件实践与验收规则（0.1.7-rc.1 起随包发布，不在文档站而在安装副本里）**
+
+`<dsh 安装目录>/node_modules/@deepseek-ai/dsh-agent-preset/skills/cordis-plugin-development/`
+下的 `SKILL.md`（第 4 步的设计一致性验收清单）、`references/practices.md`
+（**rc.1 新增**：扩展点选择、会话状态、性能与 UI 的官方规则——「不要以模块方式加载宿主
+Client 包」「只用 `--dsw-alias-*` 令牌」「不在组件外写 DOM / 不 append document.body」
+「不要用新事件 type」都在这份里）、`references/ui-plugin.md`、`references/host-plugin.md`
+（bundle 清单与**显示元数据/图标**约定）、`references/verification.md`
+（**无浏览器控制时的验证边界**：mock 页截图不算对运行插件的验证）。
+星愿自查结论见 §5.10 末段（已合规项 + 两处有意偏离 + 验证口径）。
+
 **Agent Preset 格式权威出处**
 
 `https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/preset/agent-preset/README.zh.md`
@@ -1139,6 +1243,8 @@ conversation-node 篇目，旧文档引用为失实）
 | 症状 | 先查 |
 |---|---|
 | 装不上 / git 安装缺 lib / prepare 授权失败 | docs/user/develop/basic/publish |
+| **装/启阶段整包被跳过**（日志：`Plugin <pkg>@<ver> is incompatible with dsh <rt>: peerDependencies {...}`） | 0.1.7-rc.1 新增的 DSH peer 兼容闸门（`dsh-app-boot` 的 `evaluatePluginCompatibility`，semver 含 prerelease）。要么升级插件、要么按提示 `dsh plugin allow-version <pkg@ver> --dsh-version <rt> --accept-risk` 显式豁免（写进 profile 的 `compatibility.json`）；星愿侧防漂移见 `test/host-baseline.test.ts`（§9） |
+| 插件管理卡 / 设置页插件列表显示包名而非中文名、没有图标 | 显示元数据未导出：宿主**不激活插件**去读 `locale/en.json` 的 `meta.title`/`meta.description` 与 `package.json` 顶层 `icon`，解析不到即静默回落（`ERR_PACKAGE_PATH_NOT_EXPORTED` 也算「没有」）。检查 `exports` 是否暴露 `./locale/*.json` 与 `./package.json`、`files` 是否收录、locale 文件名是否语言 id——门禁 `test/plugin-display-meta.test.ts`（§9） |
 | **client 半侧整半侧不激活**（boot 报 `pending (waiting for service: settingsScope)`） | 宿主是 0.1.7 而插件按 ≤0.1.6 写：`settingsScope`/`installSection` 已彻底撤除，须迁到 `configForms`（§5.8）。第三方插件在 0.1.7 上普遍踩此坑（同机 `modsearch` 报 `scope.settings.register is not a function`） |
 | 设置里没有「星愿」这一项（整页缺席） | `SETTINGS_ENTRY_ID` 与 `cordis.patch.yml` 主行 `id:` 不一致 → `configForms.whileServed` 永不满足、整页不注册（§5.8，无报错）；`dsh --dump-config` 确认该行存在 |
 | 设置页显示「未就绪/只读」但宿主正常 | 该行存在但表单不可写：`status: loading/unavailable` 或 `mode: memory`（非回环连接）；个别字段不出现则是漏标 `.volatile()`（宿主只投影 volatile 字段） |

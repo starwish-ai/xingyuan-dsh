@@ -25,6 +25,8 @@ export type { RoutesConfig } from './config.js'
 
 /** 动作请求体上限（防误用；正常动作体 <1KB）。 */
 const BODY_MAX_BYTES = 64 * 1024
+/** 写请求闸门头名：三处字面量由 test/write-gate.test.ts 对拍，改名必同步。 */
+export const WRITE_GATE_HEADER = 'x-xingyuan-write'
 
 const GET_PAGES = new Set(['/', '/today', '/calendar', '/growth'])
 
@@ -61,6 +63,14 @@ async function route(deps: ApiDeps, req: IncomingMessage, res: ServerResponse): 
         return json(res, 200, getApi(deps, path, url))
       }
       if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+      // 跨站写拦截：本 API 只服务星愿自己的界面（GUI 与直开备用页，均同源并显式带头）。
+      // 浏览器发跨源「简单请求」（form / text-plain）不会触发预检即可打到本机端口，
+      // 宿主不给这类响应发 CORS 头——攻击者读不到回包，但副作用已经发生
+      // （/api/action/memory-clear 是零必填字段的破坏性动作）。自定义头强制预检，
+      // 宿主不放行即挡在门外；不校验 Referer（可伪造，且代理/隐私模式会失真）。
+      if (req.headers[WRITE_GATE_HEADER] !== '1') {
+        throw new HttpError(403, '缺少写操作请求头，已拒绝跨站写入', 'write_gate_required')
+      }
       const body = await readJsonBody(req)
       return json(res, 200, await postApi(deps, path, body))
     } catch (error) {

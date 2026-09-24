@@ -5,12 +5,17 @@
  * 注册捕获的 handler（与宿主 webServer.register 契约一致，不启动真实监听）。
  */
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { registerXingyuanRoutes } from '../src/routes/index.js'
 import type { RoutesConfig } from '../src/routes/config.js'
 import { memoryStore } from './memory-store.js'
 
 type RouteHandler = (req: IncomingMessage, res: ServerResponse) => void
+
+const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 /** 捕获 registerXingyuanRoutes 注册的 handler（宿主契约：register 返回 disposer）。 */
 function captureHandler(): RouteHandler {
@@ -27,12 +32,12 @@ function captureHandler(): RouteHandler {
   return captured
 }
 
-function mockReq(method: string, url: string, body?: string): IncomingMessage {
+function mockReq(method: string, url: string, body?: string, headers: Record<string, string> = {}): IncomingMessage {
   const chunks = body === undefined ? [] : [Buffer.from(body, 'utf8')]
   return {
     url,
     method,
-    headers: {},
+    headers,
     [Symbol.asyncIterator]: () => ({
       next: () => Promise.resolve(chunks.length > 0 ? { value: chunks.shift()!, done: false } : { value: undefined, done: true }),
     }),
@@ -58,9 +63,9 @@ function mockRes(): { res: ServerResponse; state: ResState; done: Promise<void> 
   return { res: res as unknown as ServerResponse, state, done }
 }
 
-async function call(handler: RouteHandler, method: string, url: string, body?: string): Promise<{ status: number | undefined; payload: Record<string, unknown> }> {
+async function call(handler: RouteHandler, method: string, url: string, body?: string, headers: Record<string, string> = {}): Promise<{ status: number | undefined; payload: Record<string, unknown> }> {
   const { res, state, done } = mockRes()
-  handler(mockReq(method, url, body), res)
+  handler(mockReq(method, url, body, headers), res)
   await Promise.race([done, new Promise((_, reject) => setTimeout(() => reject(new Error('响应未结束')), 2000))])
   return { status: state.status, payload: state.body === undefined ? {} : JSON.parse(state.body) as Record<string, unknown> }
 }
@@ -81,25 +86,25 @@ describe('HTTP 壳：错误协议分层（客户端本地化依赖的稳定契�
   })
 
   it('非法 JSON 请求体 → 400 + bad_json_body', async () => {
-    const { status, payload } = await call(handler, 'POST', '/xingyuan/api/action/checkin', '{oops')
+    const { status, payload } = await call(handler, 'POST', '/xingyuan/api/action/checkin', '{oops', { 'x-xingyuan-write': '1' })
     expect(status).toBe(400)
     expect(payload.code).toBe('bad_json_body')
   })
 
   it('非对象 JSON（数组/标量）→ 400 + bad_json_body', async () => {
-    const { status, payload } = await call(handler, 'POST', '/xingyuan/api/action/checkin', '[1,2]')
+    const { status, payload } = await call(handler, 'POST', '/xingyuan/api/action/checkin', '[1,2]', { 'x-xingyuan-write': '1' })
     expect(status).toBe(400)
     expect(payload.code).toBe('bad_json_body')
   })
 
   it('请求体超 64KB 中途截断 → 413 + payload_too_large', async () => {
-    const { status, payload } = await call(handler, 'POST', '/xingyuan/api/action/checkin', JSON.stringify({ pad: 'x'.repeat(70 * 1024) }))
+    const { status, payload } = await call(handler, 'POST', '/xingyuan/api/action/checkin', JSON.stringify({ pad: 'x'.repeat(70 * 1024) }), { 'x-xingyuan-write': '1' })
     expect(status).toBe(413)
     expect(payload.code).toBe('payload_too_large')
   })
 
   it('领域校验失败（缺必填字段）→ 400 + ActionError 稳定 code + params（客户端插值载体）', async () => {
-    const { status, payload } = await call(handler, 'POST', '/xingyuan/api/action/checkin', '{}')
+    const { status, payload } = await call(handler, 'POST', '/xingyuan/api/action/checkin', '{}', { 'x-xingyuan-write': '1' })
     expect(status).toBe(400)
     expect(payload.code).toBe('missing_field')
     expect(typeof payload.error).toBe('string')
@@ -109,7 +114,7 @@ describe('HTTP 壳：错误协议分层（客户端本地化依赖的稳定契�
   it('store.ToolError 携带稳定 code → 400 原样透传（客户端本地化的关键分支）', async () => {
     // 不存在的 taskId：performCheckIn 抛 ToolError('…', 'not_found')——非 ActionError 实例，
     // 走「带 code 领域错误透传」分支；删掉该分支时客户端错误码本地化整体退化
-    const { status, payload } = await call(handler, 'POST', '/xingyuan/api/action/checkin', JSON.stringify({ taskId: 'no-such-task' }))
+    const { status, payload } = await call(handler, 'POST', '/xingyuan/api/action/checkin', JSON.stringify({ taskId: 'no-such-task' }), { 'x-xingyuan-write': '1' })
     expect(status).toBe(400)
     expect(payload.code).toBe('not_found')
     expect((payload.params as Record<string, unknown> | undefined)?.taskId).toBe('no-such-task')
@@ -121,5 +126,39 @@ describe('HTTP 壳：错误协议分层（客户端本地化依赖的稳定契�
     const { status, payload } = await call(handler, 'GET', '/xingyuan/api/overview')
     expect(status).toBe(200)
     expect(typeof payload).toBe('object')
+  })
+})
+
+/**
+ * 跨站写闸门（0.6.5 安全加固）。
+ *
+ * 威胁模型：dsh 的 web 服务监听本机回环端口，浏览器发跨源「简单请求」
+ * （form / text-plain，不触发 CORS 预检）即可打到 /xingyuan/api/action/*；
+ * 宿主不给这类响应发 CORS 头，攻击者读不到回包，但**副作用已经发生**。
+ * /api/action/memory-clear 这类零必填字段的破坏性动作因此可被任意网页触发。
+ * 对策：写请求必须带自定义头（自定义头强制预检，宿主不放行即被挡），
+ * 同源的两个客户端（GUI 的 api.ts 与直开备用页 pages-html.ts）都显式带。
+ */
+describe('HTTP 壳：跨站写闸门', () => {
+  const handler = captureHandler()
+
+  it('POST 缺写操作头 → 403 + write_gate_required，请求体不被解析', async () => {
+    const { status, payload } = await call(handler, 'POST', '/xingyuan/api/action/memory-clear', '{"nickname":"x"}')
+    expect(status).toBe(403)
+    expect(payload.code).toBe('write_gate_required')
+  })
+
+  it('POST 带写操作头 → 正常进入动作面', async () => {
+    const { status, payload } = await call(handler, 'POST', '/xingyuan/api/action/profile', '{"nickname":"小明"}', { 'x-xingyuan-write': '1' })
+    expect(payload.error).not.toBe('缺少写操作请求头，已拒绝跨站写入')
+    expect(status).not.toBe(403)
+  })
+
+  it('闸门头名三处字面量一致（服务端与两个客户端面不得漂移）', () => {
+    const read = (path: string): string => readFileSync(join(pkgRoot, path), 'utf8')
+    const header = /WRITE_GATE_HEADER = '([^']+)'/.exec(read('src/routes/index.ts'))?.[1] ?? ''
+    expect(header.length, '服务端未定义闸门头常量').toBeGreaterThan(0)
+    expect(read('src/client/api.ts'), 'GUI 客户端未再发送闸门头').toContain(`'${header}': '1'`)
+    expect(read('src/routes/pages-html.ts'), '直开备用页未再发送闸门头').toContain(`'${header}':'1'`)
   })
 })

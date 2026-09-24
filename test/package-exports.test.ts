@@ -6,7 +6,7 @@
  * 宿主运行时不走该子路径故未暴露，外部按子路径导入则会直接失败——
  * 用测试锁死「导出声明 ↔ 产物」的一致性，防止再次漂移。
  */
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
@@ -28,6 +28,21 @@ describe('package.json 导出声明与构建产物一致', () => {
     expect(targets.length).toBeGreaterThan(0)
     for (const target of targets) {
       if (target === './package.json') continue
+      // 通配目标（如 ./locale/*.json）不能按字面路径存在性判：目录内每个实文件
+      // 都要落在该模式内，否则宿主按 `${包名}/locale/<语言>.json` 解析会撞
+      // ERR_PACKAGE_PATH_NOT_EXPORTED（插件显示元数据即静默丢失）。
+      if (target.includes('*')) {
+        const dir = target.split('/*')[0] ?? ''
+        const suffix = target.slice(target.indexOf('*') + 1)
+        const absolute = fileURLToPath(new URL(`../${dir.replace(/^\.\//, '')}/`, import.meta.url))
+        const pattern = new RegExp(`^${target.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`)
+        const files = readdirSync(absolute).filter((name) => name.endsWith(suffix))
+        expect(files.length, `通配目标目录内无匹配文件：${dir}`).toBeGreaterThan(0)
+        for (const name of files) {
+          expect(pattern.test(`${dir}/${name}`), `目录内文件未被模式覆盖：${dir}/${name}`).toBe(true)
+        }
+        continue
+      }
       const resolved = fileURLToPath(new URL(`../${target.replace(/^\.\//, '')}`, import.meta.url))
       expect(existsSync(resolved), `exports 目标不存在：${target}`).toBe(true)
     }

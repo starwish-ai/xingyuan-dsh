@@ -5,6 +5,103 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2026-09-24
+
+First stable line on the dsh 0.1.7 host contract. This release re-verifies the plugin
+against `0.1.7-rc.1` package by package, closes every defect that verification found, and
+adds the mechanical gates that let those classes of defect fail loudly next time.
+
+### Added
+- **Cross-site write gate on the HTTP surface.** Every `POST /xingyuan/api/action/*` now
+  requires the custom header `x-xingyuan-write: 1` and is rejected with `403` /
+  `write_gate_required` **before the request body is read**. dsh serves its web UI on a
+  local port, and a cross-origin *simple* request (form / `text-plain`) reaches a handler
+  without any CORS preflight — the attacker cannot read the response, but the side effect
+  happens, and `/api/action/memory-clear` takes no required fields at all. A custom header
+  forces the preflight the host does not grant. Both client surfaces (the GUI's `api.ts`
+  and the standalone pages' inline `post()`) send it, and `test/routes-shell.test.ts`
+  pins the header name across the three files.
+- **Plugin display metadata**, per the host's documented bundle convention
+  (`icon` in `package.json` plus `meta.title` / `meta.description` in `locale/en.json`
+  and `locale/zh.json`, both exported and packed): the Plugin Manager card and the
+  Settings plugin inventory used to fall back to the raw package name and default artwork,
+  silently. `test/plugin-display-meta.test.ts` now replays the host's own reader
+  (language-id filenames, 256 KiB / extension whitelist, package-relative icon path,
+  `${pkg}/locale/en.json` resolution) and resolves the resources through Node's real ESM
+  resolver from a temporary consumer directory.
+- **`test/host-baseline.test.ts`**: locks the declared peer range ↔ the pinned dev
+  dependency ↔ the version actually installed in `node_modules`, requires every host
+  package named by the bundle patch or by `dsh.client.inject` to be a declared peer, and
+  rejects peers that no source file, patch row or injected service justifies.
+- **`test/write-guards.test.ts`**: locks missing-record handling, the calendar
+  year/month window, and the single-source task-name and category-rename validation.
+
+### Changed
+- **Baseline moved to dsh `0.1.7-rc.1`.** Peer and dev dependencies are pinned to it, and
+  the six client-half host packages (`dsh-api-session-controller`, `dsh-client-locale`,
+  `dsh-client-ui-chat`, `dsh-client-ui-conversation`, `dsh-client-ui-settings`,
+  `dsh-client-ui-settings-plugins`) plus the two the patch composes
+  (`dsh-agent-preset`, `dsh-schedule`) are now **declared as peers**. rc.1 added a host
+  compatibility gate that skips a whole bundle whose declared `@deepseek-ai/dsh*` peers
+  do not satisfy the running version — the previous note that "peers are not a gate" is
+  obsolete, and the gate only protects what is declared. `cordis-plugin-loader` follows the
+  host at 1.0.5 and `cordis-plugin-include` at 1.0.9, so the composition engine under test
+  is the one users run (this is what caught the volatile-config rewrite below).
+- Documentation aligned with verified rc.1 facts: the peer gate above; `transcriptView`
+  now has four modes with `standard` as the default while **only `verbose` stops folding
+  completed turns** (earlier text pointed users at a mode that still folded the cards);
+  the "exactly one start per (kind,id)" invariant is no longer enforced by the host;
+  `LocaleSnapshot.active` is in the published types after all; and §5.10/§12 now record
+  the host's new official practice rules (`practices.md`, `SKILL.md` acceptance checklist,
+  `verification.md`'s "a screenshot of a mock page is not verification") together with the
+  two places where 星愿 knowingly deviates.
+
+### Fixed
+- **A typed URL could hang the whole dsh process.** `/xingyuan/api/calendar?month=0001-06`
+  computed the month end with `Date.UTC`, which maps years 0–99 to 1900–1999: the range
+  became `0001-06-01 … 1901-06-30` and the day-by-day planner materialised roughly 694k
+  days with a full table scan each. Month arithmetic no longer goes through `Date` at all,
+  and out-of-window years or impossible months now reject with `bad_date` from the single
+  store-side funnel (the route's own duplicate check is gone).
+- **Deleted-record failures reached users as uncoded English text.** The host's
+  `table.update()` throws `DomainError('missing-key')` *without calling the callback*, so
+  the `current === undefined` branches in `updateWish` / `updateTask` / `claimTask` were
+  unreachable in production: a concurrently deleted (or model-invented) id lost its
+  `not_found` code, and the tool reply / HTTP payload degraded to raw host prose. Mapping now
+  happens at the store funnel, and derived wish-progress sync skips a vanished wish instead
+  of failing a check-in that already persisted. The four in-memory test doubles were
+  rewritten to the host's semantics — they had been letting the dead branch look covered.
+- **`rename_wish_category` could leave a half-applied rename.** An invalid new name was
+  caught mid-loop by the write gate: the first N wishes were renamed, the rest were not,
+  and the category-colour key never migrated. The name is validated before the loop (and
+  before the confirmation card).
+- **Task names bypassed the store.** `create_task` / `update_task` accepted whitespace-only
+  and over-length names into the database, while the page path reported them with its own
+  codes. Validation now lives once in `store.validateTaskName`, both surfaces share its
+  codes, and names are trimmed on write.
+- **Confirmation cards appeared before validation** for the three creation tools, so users
+  could approve a wish or task that then failed on a field the tool could have checked up
+  front (title length, category name, task name).
+- **`create_task`'s description named a parameter that does not exist** (`wish_id` for
+  `wishId`), which invites an `INVALID_ARGS` round-trip when the model quotes it.
+- **Session-log self-repair could skip a file it now judges differently.** The incremental
+  `.xingyuan-repaired` marker stored only the artifact byte size, so moving
+  `IGNORABLE_AWARE_FORMAT_VERSION` (exactly what a host upgrade asks for) left already
+  processed artifacts untouched at identical size — a mark-needed file that now needs
+  neutralising, or the reverse, would be silently skipped and the session would fail to
+  cold-load. The marker now carries the artifact generation and the repair mode, and any
+  mismatch (or a pre-existing marker without them) forces a rescan.
+- **Two gates that could not fail.** The HITL tool audit list was hand-maintained and had
+  drifted (6 blocking tools missing, 1 listed that never confirms) — the list is now
+  derived from the source and compared both directions; and the chart vocabulary gate only
+  checked words the seed data happened to produce, so hour buckets, the weekday axis and
+  the two fallback group names were unwatched — those enumerations are now exported from
+  `charts.ts` and checked one by one.
+
+### Security
+- Cross-site write gate (see **Added**): closes un-preflighted cross-origin POSTs to the
+  local action API, including the zero-field destructive `memory-clear`.
+
 ## [0.6.5-alpha.2] - 2026-09-23
 
 ### Fixed

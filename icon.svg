@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="星愿">
+  <defs>
+    <linearGradient id="xy-tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a6fe0"/>
+      <stop offset="1" stop-color="#1e40af"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#xy-tile)"/>
+  <path d="M27 12c1.6 8.4 5.2 12 13.6 13.6-8.4 1.6-12 5.2-13.6 13.6-1.6-8.4-5.2-12-13.6-13.6C21.8 24 25.4 20.4 27 12Z" fill="#ffffff"/>
+  <path d="M45.5 33.5c.9 4.6 2.9 6.6 7.5 7.5-4.6.9-6.6 2.9-7.5 7.5-.9-4.6-2.9-6.6-7.5-7.5 4.6-.9 6.6-2.9 7.5-7.5Z" fill="#ffffff" opacity=".82"/>
+  <circle cx="17" cy="46" r="3.5" fill="#ffffff" opacity=".55"/>
+</svg>

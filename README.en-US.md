@@ -25,10 +25,11 @@ Tools are only mounted on sessions using the XingYuan preset; other sessions are
 
 ## Install
 
-> Requires DeepSeek Harness `0.1.7-alpha.2` (peer dependencies are pinned to that
-> release; 0.1.7 rewrote the settings subsystem, so on older hosts this plugin's
-> client half does not activate at all. Check the upgrade notes in
-> [AGENTS.md](./AGENTS.md) before bumping dsh).
+> Requires DeepSeek Harness `0.1.7-rc.1` (peer dependencies — including the host's
+> client-half packages — are pinned to that release; 0.1.7 rewrote the settings
+> subsystem, so on older hosts this plugin's client half does not activate at all,
+> and since rc.1 dsh refuses to load a bundle whose peer range does not match.
+> Check the upgrade notes in [AGENTS.md](./AGENTS.md) before bumping dsh).
 
 ```sh
 dsh plugin --profile web add @starwish-ai/xingyuan-dsh

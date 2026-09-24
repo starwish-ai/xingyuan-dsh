@@ -33,6 +33,9 @@ function rawMemoryDomain(): XingyuanStore['domain'] {
         put: async (key: string, value: unknown) => { map.set(key, value) },
         delete: async (key: string) => map.delete(key),
         update: async (key: string, fn: (current: unknown) => unknown) => {
+          // 宿主契约：dsh-storage-domain 的 update 缺键时先抛 DomainError('missing-key')、
+          // 根本不调用 fn——桩必须照此形状，否则「记录不存在」分支在测试里可达而真机不可达
+          if (!map.has(key)) throw Object.assign(new Error('no record ' + key + ' to update'), { code: 'missing-key' })
           const next = fn(map.get(key))
           map.set(key, next)
           return next

@@ -79,9 +79,43 @@ export function checkinCountIndex(store: XingyuanStore): Map<string, number> {
   return index
 }
 
+/**
+ * 域表 update 的存在性闸门（写路径共用）。
+ *
+ * 宿主 dsh-storage-domain 的 `update` 在缺键时**先抛 `DomainError('missing-key')`、
+ * 根本不调用回调**（domain.d.ts 的 @throws 契约 + 实现首行），所以回调里判
+ * `current === undefined` 在真实宿主上永不可达。不接这一层，「记录已被并发删除」
+ * 「id 是模型编的」这类路径就会以无 code 的英文异常抛给模型与页面——工具回包与
+ * HTTP 错误码全丢（本仓库口径是「稳定 code 供客户端本地化」，见 §5.9）。
+ *
+ * 用 thunk 包一层而不是改 update 的签名：保留原调用的上下文类型推导，
+ * 回调里的字面量联合（status/closedReason 等）不会在泛型边界上被拓宽。
+ */
+async function mapMissingKey<T>(run: () => Promise<T>, notFound: () => ToolError): Promise<T> {
+  try {
+    return await run()
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 'missing-key') throw notFound()
+    throw error
+  }
+}
+
+/** 同上，但缺键视为「该记录已不在」而静默跳过——派生量同步（愿望进度联动）用。 */
+async function ignoreMissingKey(run: () => Promise<unknown>): Promise<void> {
+  try {
+    await run()
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 'missing-key') return
+    throw error
+  }
+}
+
 /** 重算并写回任务状态/进度（打卡、取消打卡、更新、领取后调用）。 */
 export async function syncTaskProgress(store: XingyuanStore, taskId: string, today = todayIso()): Promise<Task> {
-  return store.domain.table('tasks').update(taskId, (task) => syncTaskValue(store, task, today))
+  return mapMissingKey(
+    () => store.domain.table('tasks').update(taskId, (task) => syncTaskValue(store, task, today)),
+    () => new ToolError(`任务不存在或已被删除：${taskId}`, 'not_found', { taskId }),
+  )
 }
 
 /** 纯函数版状态推进（供 update 内使用）；counts 为可选的预聚合打卡计数。 */
@@ -148,6 +182,25 @@ function cleanOptionalText(value: string | undefined | null): string | undefined
 }
 
 /** 愿望记录工厂（创建与更新共用；校验同源）。 */
+/**
+ * 愿望标题校验（写路径唯一口径）：去空白后非空、不超 50 字。
+ * 工具面在弹确认卡**之前**调用它，避免用户白确认一次才发现字段不合法。
+ */
+export function validateWishTitle(raw: string): string {
+  const title = raw.trim()
+  if (title === '') throw new ToolError('标题不能为空', 'missing_field', { field: 'title' })
+  if (title.length > 50) throw new ToolError('标题不能超过 50 字符（当前 ' + String(title.length) + ' 字）', 'title_too_long', { length: title.length })
+  return title
+}
+
+/** 任务名校验（写路径唯一口径）：去空白后非空、不超 100 字（与 domain 的 max(100) 同界）。 */
+export function validateTaskName(raw: string): string {
+  const name = raw.trim()
+  if (name === '') throw new ToolError('任务名称不能为空', 'missing_field', { field: 'name' })
+  if (name.length > 100) throw new ToolError('任务名不能超过 100 字符（当前 ' + String(name.length) + ' 字）', 'name_too_long', { length: name.length })
+  return name
+}
+
 function buildWishValue(
   store: XingyuanStore,
   base: Pick<WishRecord, 'wishId' | 'progress' | 'totalRequiredDays' | 'totalCompletedDays' | 'archived' | 'createdAt'>,
@@ -160,9 +213,7 @@ function buildWishValue(
   },
   today: string,
 ): WishRecord {
-  const title = input.title.trim()
-  if (title === '') throw new ToolError('标题不能为空', 'missing_field', { field: 'title' })
-  if (title.length > 50) throw new ToolError('标题不能超过 50 字符（当前 ' + String(title.length) + ' 字）', 'title_too_long', { length: title.length })
+  const title = validateWishTitle(input.title)
   const categoryName = validateCategoryName(input.categoryName)
   const colorKey = validateColorKey(input.colorKey)
   const description = cleanOptionalText(input.description)
@@ -211,8 +262,7 @@ export async function updateWish(
   patch: Partial<Pick<WishRecord, 'title' | 'description' | 'categoryName' | 'colorKey' | 'estimatedCompletionDate'>>,
   today = todayIso(),
 ): Promise<WishRecord> {
-  return store.domain.table('wishes').update(wishId, (existing) => {
-    if (existing === undefined) throw new ToolError(`愿望不存在：${wishId}`, 'not_found')
+  return mapMissingKey(() => store.domain.table('wishes').update(wishId, (existing) => {
     // 剥离三个可清空键，避免旧值经 base 展开混回清除后的记录
     const { colorKey: _oldColor, description: _oldDesc, estimatedCompletionDate: _oldEta, ...base } = existing
     const patchTitle = patch.title !== undefined ? patch.title : existing.title
@@ -231,7 +281,7 @@ export async function updateWish(
       description,
       estimatedCompletionDate,
     }, today)
-  })
+  }), () => new ToolError(`愿望不存在：${wishId}`, 'not_found', { wishId }))
 }
 
 /** 愿望进度聚合槽：required/completed 只累计已领取任务；pendingCount 候选数；claimedCount 已领取数。 */
@@ -295,13 +345,15 @@ export async function syncWishProgress(store: XingyuanStore, wishId: string): Pr
   }
   const agg = aggregateWishProgress(wishTasks)
   const { progress, archived } = wishProgressFromAgg(agg)
-  await store.domain.table('wishes').update(wishId, (wish) => ({
+  // 派生量同步：愿望已被并发删除时静默跳过（业务事实已在别处落库，不该反过来让
+  // 打卡/领取动作失败——那会让「打卡已持久化却回包报错」的窗口扩大）
+  await ignoreMissingKey(() => store.domain.table('wishes').update(wishId, (wish) => ({
     ...wish,
     totalRequiredDays: agg.required,
     totalCompletedDays: agg.completed,
     progress,
     archived,
-  }))
+  })))
 }
 
 /**
@@ -476,6 +528,7 @@ export async function createTask(
   today = todayIso(),
 ): Promise<Task> {
   const dueDate = normalizeDue(input.dueDate)
+  const name = validateTaskName(input.name)
   if (input.dueDate && input.dueDate < today) throw new ToolError('截止日期不能早于今天', 'due_past')
   if (dueDate !== undefined) assertDueWithinHorizon(dueDate, today)
   if (input.wishId !== undefined && store.domain.table('wishes').get(input.wishId) === undefined) {
@@ -485,7 +538,7 @@ export async function createTask(
   const task: Task = {
     taskId: store.newId(),
     wishId: input.wishId,
-    name: input.name,
+    name,
     hint: input.hint,
     dueDate,
     checkInCycle: input.checkInCycle,
@@ -532,8 +585,7 @@ function assertDueWithinHorizon(dueDate: string, today: string): void {
  * 与 performCheckIn/cancelCheckIn 同为自足式写操作：内部完成进度联动。
  */
 export async function claimTask(store: XingyuanStore, taskId: string, today = todayIso()): Promise<Task> {
-  await store.domain.table('tasks').update(taskId, (task) => {
-    if (task === undefined) throw new ToolError(`任务不存在：${taskId}`, 'not_found')
+  await mapMissingKey(() => store.domain.table('tasks').update(taskId, (task) => {
     if (task.status !== 'pending') throw new ToolError('只有待领取状态的任务可以领取', 'already_claimed')
     // 截止日已过的待领取任务拒绝领取：锚点=领取日（晚于截止日）时序列为空，
     // 领取即当场过期关闭——与其领成一个「已过期」任务再回复虚假的「进行中」，
@@ -551,7 +603,7 @@ export async function claimTask(store: XingyuanStore, taskId: string, today = to
       claimDate: today,
       requiredDays: calculateRequiredDays(today, task.dueDate, task.checkInCycle),
     }
-  })
+  }), () => new ToolError(`任务不存在：${taskId}`, 'not_found', { taskId }))
   // 新鲜化收口（completedDays 复核 + 愿望进度联动）；过期关闭已由上方 claim_expired
   // 前置拒绝，syncTaskValue 的过期分支在此不会触发
   const synced = await syncTaskProgress(store, taskId, today)
@@ -579,8 +631,7 @@ export async function updateTask(
     if (dueDate !== undefined && dueDate < today) throw new ToolError('截止日期不能早于今天', 'due_past')
     if (dueDate !== undefined) assertDueWithinHorizon(dueDate, today)
   }
-  await store.domain.table('tasks').update(taskId, (task) => {
-    if (task === undefined) throw new ToolError(`任务不存在：${taskId}`, 'not_found')
+  await mapMissingKey(() => store.domain.table('tasks').update(taskId, (task) => {
     // ''=清除时须真实缺键；undefined=未提及保留原值
     const nextHint = patch.hint !== undefined ? patch.hint.trim() === '' ? undefined : patch.hint : task.hint
     const nextDue = patch.dueDate !== undefined ? dueDate : task.dueDate
@@ -588,7 +639,7 @@ export async function updateTask(
     const { hint: _oldHint, dueDate: _oldDue, ...rest } = task
     const mergedBase: Task = {
       ...rest,
-      name: patch.name ?? task.name,
+      name: patch.name !== undefined ? validateTaskName(patch.name) : task.name,
       ...(nextHint !== undefined ? { hint: nextHint } : {}),
       ...(nextDue !== undefined ? { dueDate: nextDue } : {}),
       checkInCycle: patch.checkInCycle ?? task.checkInCycle,
@@ -600,7 +651,7 @@ export async function updateTask(
       }
     }
     return mergedBase
-  })
+  }), () => new ToolError(`任务不存在：${taskId}`, 'not_found', { taskId }))
   await syncTaskProgress(store, taskId, today)
   const synced = store.domain.table('tasks').get(taskId)!
   if (synced.wishId !== undefined) await syncWishProgress(store, synced.wishId)
@@ -689,6 +740,10 @@ export function planForDay(store: XingyuanStore, date: string): DayPlan {
  * （分类管理面板允许存在零愿望的纯覆盖分类）。
  */
 export async function renameCategory(store: XingyuanStore, oldName: string, newName: string): Promise<Wish[]> {
+  // 新名必须先过分类名口径：本用例逐条 put，漏校验会让写路径闸门在循环中途
+  // 抛 invalid_record——前 N 个愿望已改名、其余未改、颜色覆盖键迁移根本不执行，
+  // 留下一个无回滚的半改状态（工具面另有一处同源预检，见 tools.ts 的确认前校验）。
+  validateCategoryName(newName)
   const renamed: Wish[] = []
   for (const [key, wish] of store.domain.table('wishes').entries()) {
     if (wish.categoryName !== oldName) continue
@@ -756,12 +811,34 @@ export class ToolError extends Error {
   }
 }
 
-/** 自然月首尾（日历月视图用；无参取今天所在月）。 */
+/** 日历/区间读取允许的自然年份窗口（越界即整月逐日物化会拖死进程，见 monthRange 注）。 */
+export const CALENDAR_YEAR_MIN = 1901
+export const CALENDAR_YEAR_MAX = 9999
+
+/** 自然月天数（含闰年 2 月）。不用 Date 计算：Date.UTC 会把 0–99 年映射成 1900–1999。 */
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28
+  return month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31
+}
+
+/**
+ * 自然月首尾（日历月视图用；无参取今天所在月）。
+ *
+ * 年月必须自带闸门：月视图按 [start,end] 逐日物化机会日，`month=0001-06` 这类极端年份
+ * 会展开成数十万格并把进程挂死（读侧没有 rangeMaxDays 钳制）；月份 00/13 则会让
+ * 首尾倒挂。二者都在此响亮拒绝，工具面与路由面共用这一份判定。
+ */
 export function monthRange(month: string | undefined, today: string): [string, string] {
-  const base = month && /^\d{4}-\d{2}$/.test(month) ? `${month}-01` : `${today.slice(0, 7)}-01`
-  const [y, m] = [Number(base.slice(0, 4)), Number(base.slice(5, 7))]
-  const end = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10)
-  return [base, end]
+  const base = month ?? `${today.slice(0, 7)}`
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(base)) {
+    throw new ToolError(`月份格式错误，请使用 yyyy-MM：${base}`, 'bad_date', { month: base })
+  }
+  const y = Number(base.slice(0, 4))
+  const m = Number(base.slice(5, 7))
+  if (y < CALENDAR_YEAR_MIN || y > CALENDAR_YEAR_MAX) {
+    throw new ToolError(`月份年份超出可查询范围（${CALENDAR_YEAR_MIN}–${CALENDAR_YEAR_MAX}）：${base}`, 'bad_date', { month: base })
+  }
+  return [`${base}-01`, `${base}-${String(daysInMonth(y, m)).padStart(2, '0')}`]
 }
 
 // ===== global 槽串行写（lost-update 防护）=====

@@ -7,7 +7,16 @@
  * locale 无关：不切语言，只断言「每个产出词 ∈ 映射表 ∪ 用户数据」与标题逐字同源。
  */
 import { describe, expect, it } from 'vitest'
-import { buildChart, CHART_KEYS, type ChartConfig, type ChartKey } from '../src/preset/charts.js'
+import {
+  buildChart,
+  CHART_KEYS,
+  HOUR_BUCKETS,
+  UNCATEGORIZED_LABEL,
+  UNLINKED_LABEL,
+  WEEKDAY_LABELS,
+  type ChartConfig,
+  type ChartKey,
+} from '../src/preset/charts.js'
 import {
   CHART_DEFAULT_TITLES,
   CHART_LABEL_KEYS,
@@ -101,6 +110,34 @@ describe('图表词表本地化覆盖', () => {
     for (const [zh, key] of Object.entries(CHART_SERIES_KEYS)) {
       expect(localizeChartSeries(zh)).toBe(zh)
       expect(key.startsWith('chart.series.')).toBe(true)
+    }
+  })
+})
+
+/**
+ * 枚举词全覆盖（补产出对拍的盲区）：产出对拍只能覆盖「种子数据当天走到的分支」——
+ * 小时桶只有当前小时那一格出词、星期轴在 14 天窗里可能缺尾、两个兜底分组名要
+ * 特形数据才出现。服务端把这些词常量化导出，此处逐一对照客户端词表：
+ * 服务端改词而映射未跟即红，不必依赖数据碰巧走到那一支。
+ */
+describe('图表内建枚举词全覆盖（不依赖产出分支）', () => {
+  const enumerated = [
+    ...WEEKDAY_LABELS,
+    ...HOUR_BUCKETS.map((bucket) => bucket.label),
+    UNCATEGORIZED_LABEL,
+    UNLINKED_LABEL,
+  ]
+
+  it('枚举词表形状可信（非空、无重复、数量与来源一致）', () => {
+    expect(HOUR_BUCKETS.length).toBeGreaterThanOrEqual(4)
+    expect(enumerated.length).toBe(WEEKDAY_LABELS.length + HOUR_BUCKETS.length + 2)
+    expect(new Set(enumerated).size).toBe(enumerated.length)
+  })
+
+  it('每个内建枚举词都在客户端词表里', () => {
+    const mapped = new Set(Object.keys(CHART_LABEL_KEYS))
+    for (const word of enumerated) {
+      expect(mapped.has(word), `客户端词表缺词：${word}`).toBe(true)
     }
   })
 })

@@ -72,6 +72,11 @@ const XINGYUAN_EVENT_PREFIX = 'xingyuan/'
  * 从而销毁可保留数据的正是那批 v3 旧工件（2026-09-23 修掉的即为此）。
  */
 const IGNORABLE_AWARE_FORMAT_VERSION = 3
+
+/** 某代工件的处置方式（补标 / 去毒）——单一判定，标记比对与实处理共用。 */
+function modeForVersion(version: number): PatchMode {
+  return version >= IGNORABLE_AWARE_FORMAT_VERSION ? 'mark' : 'neutralize'
+}
 /** 工件内明文的防御性上限（远超个人部署可能的会话体积）。 */
 const MAX_PLAINTEXT_BYTES = 512 * 1024 * 1024
 
@@ -422,7 +427,13 @@ export async function repairSessionLogs(options: RepairOptions = {}): Promise<Re
       const statResult = await safeStat(artifact.path)
       if (statResult !== undefined) {
         const marker = await readMarker(dirnameOf(artifact.path))
-        if (marker !== undefined && marker.artifactBytes === statResult.size) {
+        // 增量跳过要求判定身份一致：字节未变但「工件代」或「本界推出的处置模式」不同，
+        // 说明升宿主后该文件需要改判（IGNORABLE_AWARE_FORMAT_VERSION 上下移即此），必须重扫。
+        if (
+          marker !== undefined && marker.artifactBytes === statResult.size
+          && marker.artifactVersion === artifact.version
+          && marker.repairMode === modeForVersion(artifact.version)
+        ) {
           report.eventsMarked += marker.eventsMarked
           continue
         }
@@ -508,10 +519,21 @@ async function locateArtifact(sessionDir: string): Promise<ArtifactRef | undefin
 
 // ===== 自愈标记（增量跳过）=====
 
-/** 标记载荷：工件字节数 + 补标事件数。字节数未变则工件内容未变，可直接跳过。 */
+/**
+ * 标记载荷：工件字节数 + 补标事件数 + **当次判定身份**（工件格式代 + 处理模式）。
+ *
+ * 只记字节数是不够的：本模块的处置方式由「该代迁移边是否接受 ignorable」决定
+ * （{@link IGNORABLE_AWARE_FORMAT_VERSION}，升宿主时按要求上移/下移）。若边界移动后
+ * 旧标记仍然命中（字节恰好未变、或目录里换了另一代的同名工件而大小相同），就会把
+ * 本该改判的工件静默跳过——补标误判为去毒只是少一次改写，去毒误判为补标则让
+ * 会话冷加载失败，代价不对称（见头注）。故身份不符即重扫；旧格式标记（无这两字段）
+ * 一律视为过期并重扫，重扫本身幂等，多花一次解压换判定正确。
+ */
 interface Marker {
   artifactBytes: number
   eventsMarked: number
+  artifactVersion: number
+  repairMode: PatchMode
 }
 
 async function readMarker(sessionDir: string): Promise<Marker | undefined> {
@@ -519,9 +541,16 @@ async function readMarker(sessionDir: string): Promise<Marker | undefined> {
     const parsed = JSON.parse(await readFile(join(sessionDir, MARKER_NAME), 'utf8')) as Partial<Marker>
     if (
       typeof parsed['artifactBytes'] === 'number' && Number.isSafeInteger(parsed['artifactBytes']) && parsed['artifactBytes'] >= 0 &&
-      typeof parsed['eventsMarked'] === 'number' && Number.isSafeInteger(parsed['eventsMarked']) && parsed['eventsMarked'] >= 0
+      typeof parsed['eventsMarked'] === 'number' && Number.isSafeInteger(parsed['eventsMarked']) && parsed['eventsMarked'] >= 0 &&
+      typeof parsed['artifactVersion'] === 'number' && Number.isSafeInteger(parsed['artifactVersion']) && parsed['artifactVersion'] >= 0 &&
+      (parsed['repairMode'] === 'mark' || parsed['repairMode'] === 'neutralize')
     ) {
-      return { artifactBytes: parsed['artifactBytes'], eventsMarked: parsed['eventsMarked'] }
+      return {
+        artifactBytes: parsed['artifactBytes'],
+        eventsMarked: parsed['eventsMarked'],
+        artifactVersion: parsed['artifactVersion'],
+        repairMode: parsed['repairMode'],
+      }
     }
   } catch {}
   return undefined
@@ -576,15 +605,17 @@ async function repairOneFile(
 
   // 分界看「该代迁移边是否接受 ignorable」而非「是否当前代」：v3 工件补标即可被
   // v3→v4 边带进后继代（卡片数据保留），只有更旧代才需要去毒。
-  const outcome = patchPlaintext(
-    plaintext,
-    artifact.version >= IGNORABLE_AWARE_FORMAT_VERSION ? 'mark' : 'neutralize',
-    artifact.version,
-  )
+  const mode = modeForVersion(artifact.version)
+  const outcome = patchPlaintext(plaintext, mode, artifact.version)
   if (outcome.kind === 'skip') return { kind: 'skipped', reason: outcome.reason, detail: outcome.detail }
   // 布局非法时即使无需补标也要重写为合法容器（其余情况才允许 clean 跳过）
   if (outcome.kind === 'clean' && !layoutBroken) {
-    await writeMarker(dirnameOf(artifact.path), { artifactBytes: before.size, eventsMarked: outcome.totalMarked })
+    await writeMarker(dirnameOf(artifact.path), {
+      artifactBytes: before.size,
+      eventsMarked: outcome.totalMarked,
+      artifactVersion: artifact.version,
+      repairMode: mode,
+    })
     return { kind: 'clean', eventsMarked: outcome.eventsMarked, totalMarked: outcome.totalMarked }
   }
 
@@ -628,6 +659,8 @@ async function repairOneFile(
   await writeMarker(dirnameOf(artifact.path), {
     artifactBytes: nextBytes.length,
     eventsMarked: outcome.eventsNeutralized > 0 ? 0 : outcome.totalMarked,
+    artifactVersion: artifact.version,
+    repairMode: mode,
   })
   if (outcome.eventsNeutralized > 0) {
     return { kind: 'patched', sessionId, eventsMarked: 0, eventsNeutralized: outcome.eventsNeutralized, totalMarked: outcome.totalMarked }
