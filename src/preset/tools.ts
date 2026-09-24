@@ -1588,7 +1588,7 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       const done = result.state.steps.filter((s) => s.completed).length
       const skipped = result.state.steps.filter((s) => s.skipped).length
       if (result.finished) {
-        return `「${task.name}」微行动全部完成（完成 ${done} 步、跳过 ${skipped} 步）🎉 计划走完了——现在可以打卡这个任务，告诉我或去「今日」页点打卡都行。`
+        return `「${task.name}」微行动全部完成（完成 ${done} 步、跳过 ${skipped} 步）。\n🎉 计划走完了——现在可以打卡这个任务，告诉我或去「今日」页点打卡都行。`
       }
       const next = result.state.steps.find((s) => s.stepNumber === result.state.currentStepNumber)
       return `第 ${args.stepNumber} 步已${args.action === 'complete' ? '完成 ✓' : '跳过 ↷'}（${done}/${result.state.steps.length} 完成）。下一步 第 ${result.state.currentStepNumber} 步：${next?.instruction ?? ''}`

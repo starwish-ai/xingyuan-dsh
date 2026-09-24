@@ -930,8 +930,14 @@ wishProgress / wishAchievement / continuousCheckin / checkinTimeDistribution / w
 趋势类默认 14 天窗、分布类 30 天、上限 90，均可配（§8 配置面）。
 
 统计口径（改图表前必读，`test/charts.test.ts` 锁定）：
-- 统计类图表只统计今天（含）以前的打卡，**未来预勾不进任何统计桶**（weekComparison 曾把
-  下周预勾按其星期几错算进本周柱）；唯一例外是日历热力图（逐日记录而非聚合统计）；
+- **分桶类**图表只统计今天（含）以前的打卡，**未来预勾不进任何统计桶**（weekComparison 曾把
+  下周预勾按其星期几错算进本周柱）；例外是日历热力图（逐日记录而非聚合统计）；
+- **比率类图表（wishProgress / taskCompletionRate / wishAchievement）不在此列**：它们经
+  `claimedDaysSum` / `freshWishes` 取 `completedDays`，而该计数**含未来预勾**（承诺口径，
+  §5.2 规则 3「预勾 = 承诺当天完成」）。这是**有意的**——比率与愿望页、`xingyuan/wish`
+  事件卡、工具回包共用 `wishProgressFromAgg` 一份公式（§5.2「展示派生位单一来源」），
+  只在图表侧加「今日上界」会让同一愿望在三处显示三个数。要收窄就上移改公式并同步
+  §10 决策 11 与 `test/charts.test.ts`、`test/store.test.ts`，不得在图表侧另写一遍；
 - checkinRateTrend 的**无安排日产出 inactive 空槽而非 0%**（缺失≠零惯例；
   `XingyuanChartDatum.inactive` 为 optional 字段，渲染器跳过画柱、悬停/读屏报「无安排」）；
 - taskCompletionRate 与 wishProgress 均为承诺口径：分母只计已领取任务的应打天数（与愿望
