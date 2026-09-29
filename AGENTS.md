@@ -1,8 +1,39 @@
 # 星愿 Dsh 插件开发文档
 
 > 本文档描述独立项目 `@starwish-ai/xingyuan-dsh` 的架构、核心机制与开发规范，面向后续在本仓库上迭代的开发者。
-> 接口基线：DeepSeek Harness（下称 dsh）`0.1.7-rc.1`。dsh 处于技术预览期，API 可能变动；
-> 升级依赖版本前先核对官方 release notes 与 §12 参考文档。
+> 接口基线：DeepSeek Harness（下称 dsh）**两条版本线并存** —— peer 一律写
+> `^0.1.7-rc.1 || ^0.2.0-rc.1`（16 个 dsh-* peer 同形）。dsh 处于技术预览期，API 可能变动；
+> 升级依赖版本前先核对官方 release notes 与 §12 参考文档。**加一条新版本线必须先逐包核对，
+> 再往 `test/host-baseline.test.ts` 的 `SUPPORTED_DSH_VERSIONS` 里加**——该表同时把没核对过的
+> 下一代（现为 `0.3.0-rc.1`）拦在门外，放开范围＝无声承诺。
+> （0.2.0-rc.1 增量要点（**本仓库已跟进**，2026-09-29 逐包按字节比对 + `typecheck/build/test` 全绿，
+> 业务代码零改动）：
+> ① **本次唯一的破坏点在声明而不在 API**——0.6.5 的 peer 写 `^0.1.7-rc.1`，而闸门用
+> `semver.satisfies('0.2.0-rc.1', '^0.1.7-rc.1', {includePrerelease:true})` 判定为 false，
+> 实测 `dsh --profile web --dump-config` 报 `skipping profile bundle "@starwish-ai/xingyuan-dsh"`
+> → 预设/卡片/标签页/设置页/直开页**整体消失**（数据无损：库在 `~/.dsh/xingyuan/`，§4 硬约束 2）。
+> ② **`dsh-schedule` 被宿主重写**：从「会话内一次性定时器」变成 **Host-wide 持久提醒**——自有
+> `schedule` 存储域与交付历史、新工具 `schedule_update`、新规则 **daily / weekly / cron**、
+> `MIN_EVERY_INTERVAL_SECONDS` 300→60、插件形态由 `name`+`apply` 函数改为 `ScheduleService` 类
+> （default 导出，Config 两项全可选）→ 本包补丁里那条裸 `schedule` 行照旧装载，它要的
+> `agents/sessions/tools/storageDomain/sessionController/sessionPersistence` 在 web profile 全部具备。
+> §10 决策 7 与 §11 首条的「周期提醒做不到 / 仅 session-local」据此当场作废，两节已按新事实改写。
+> ③ 但本包 peer 同时声明两条线而**提醒能力在两版宿主上不同**，所以提示词一侧不得断言能力边界：
+> `REMINDER_GUIDE` 改为「先看 schedule_create 本次实际接受的参数」（`test/prompts.test.ts` 锁死）。
+> ④ 其余相关事实全部核实未变：会话格式仍 **v4**、v3→v4 边仍把 ignorable 未知事件保留成
+> `plugin:<type>`（§5.6 的补标/去毒分界与「代次+模式」标记判定不变）、宿主**仍未**开放插件事件注册接缝
+> （`dsh-session` 只多了 `ToolCallRecovery`）、`retainedBy.mainView` 与 `projectionValues.agentPreset`
+> 取法不变（§5.11，`mainView` 仍由 `dsh-client-ui-session` 经 `SessionReferenceSourceMap` 贡献）、
+> 显示元数据契约（`readPluginMeta`/`iconOf`/`LANGUAGE_ID`）逐字不变、补丁层叠前提不变
+> （`dsh-base` 的 `storage-domain` 行仍只有 `backend` 一键、base/web-app 仍无 `schedule` 行、
+> 内置预设仍为 `preset-standard/-ptc/-minimal/-cordis`、`!!js` 作用域仍有 `dshHomePath`）。
+> ⑤ 语义变化一处：**transcriptView 在 Web 端默认由 `standard` 改 `detailed`**（Desktop 才 standard，
+> 字段同时变可选/`plain`，缺省走客户端默认，legacy `normal`/`expanded` 读作 detailed），
+> 折叠策略没变——仍**只有 `verbose` 不折叠**（见 §11）。
+> ⑥ 官方随包实践规则升版：`cordis-plugin-development/SKILL.md` 39→50 行，新增「禁止手改 profile 的
+> `package.json`/`cordis.patch.yml`、不在 profile 目录跑 pnpm（走 `install_bundle`）」、设计/评审
+> 章节与「Enable a shipped plugin」章节；新参考 `references/user-actions.md`（一个操作两个调用方）
+> 与新技能 `agent-experience`（工具描述纪律）——星愿自查结论见 §5.10 末段。）
 > （0.1.7-rc.1 增量要点（**本仓库已跟进**，2026-09-24 逐包按字节比对 + 真机核对）：宿主新增
 > **DSH peer 兼容闸门**——`dsh-app-boot` 的 `evaluatePluginCompatibility` 对包**声明出来的**
 > `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` peer 跑 `semver.satisfies(宿主版本, 范围, {includePrerelease:true})`，
@@ -78,9 +109,10 @@ agent 选择器出现「星愿」即安装成功。
 | 数据持久化 | 自带 sqlite 后端，`~/.dsh/xingyuan/xingyuan.sqlite` |
 
 技术栈：TypeScript（Node ≥22.5）+ Cordis 插件框架 + React 18（client 半侧）
-+ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/dsh-*` 锁定 `^0.1.7-rc.1`
-  （host 侧 8 + client 半侧 6 + 补丁点名的 dsh-agent-preset / dsh-schedule，共 16 个；
-  rc.1 的兼容闸门只看声明出来的 peer，见 §11）；
++ `node:sqlite` + zod；peer 依赖 `@deepseek-ai/dsh-*` 同时 admit 两条宿主线
+  `^0.1.7-rc.1 || ^0.2.0-rc.1`（host 侧 8 + client 半侧 6 + 补丁点名的 dsh-agent-preset /
+  dsh-schedule，共 16 个；rc.1 起的兼容闸门只看声明出来的 peer，多版本承诺由
+  `test/host-baseline.test.ts` 逐条放行判定锁死，见 §11 与文档头增量要点）；
   `@deepseek-ai/cordis` 跟随宿主 4.x（独立版本线）；`@deepseek-ai/schemastery`
   为 `*`，跟随宿主。
 
@@ -212,7 +244,11 @@ XingYuan-Dsh/
 > 同一条也适用于 `preset-xingyuan`（官方内置预设是 `preset-standard`/`-ptc`/`-minimal`/
 > `-cordis`，改名才会撞）；2) `storage-domain` 裸行整行替换——上游给该行 config 新增键会被本补丁静默丢弃，
 > 且若其他 bundle 也路由 domain，后装者整值覆盖会使星愿数据落回 json 后端
-> （`~/.dsh/storages/`），备份口径随之变化。
+> （`~/.dsh/storages/`），备份口径随之变化；3) `schedule` 行的**目标插件形态**也要核——
+> 0.2.0-rc.1 把它从 `name`+`apply` 函数插件改成 `ScheduleService` 类（default 导出、
+> Config 两项全可选、自有 `schedule` 存储域），裸行照旧装载；它新注入 `ctx.schedule` 服务并
+> 要求 `sessionPersistence`/`sessionController` 等六项依赖，换宿主版本时先确认这些在目标
+> profile 里具备，否则本包插入的那行会无声挂不上。
 
 1. **主行 id 不能与 preset 身份同名**。`xy-bundle` 若也叫 `xingyuan`，会话挂载预设时
    两条组装行互踩（死锁）。0.1.7 起预设身份的落点从目录名变成 `preset-xingyuan` 行的
@@ -818,6 +854,26 @@ Client 包**（practices.md 的头号禁令；`dsh.client.inject` 条目是官�
 真连的 dsh 页面里按 SKILL.md 清单核对（浅/深两主题、并排宿主同类页、控制台无
 `slot entry crashed`）。
 
+**0.2.0-rc.1 升版后的自查（2026-09-29，随包 skills 增量）**：
+- 新参考 `references/user-actions.md`（「一个操作两个调用方」）：同一操作只实现一次、
+  UI 与工具共用同一个宿主服务方法；「把插件 UI 对应用数据与配置的操作暴露给 agent」；
+  「授予/放宽权限的动作保持用户专属」。星愿 §5.4 的 `store.ts` 共用收口正是要求，
+  13 个页面动作里 11 个已有等价工具。**三处缺口留痕待议**：`/api/action/category-color`
+  （分类颜色覆盖）与 `/api/action/memory-clear`（清空全部记忆）无等价工具；偏好项
+  `memoryInjectLimit`/`confirmLang`/`tabVisibilityMode`/`hiddenTabs` 只有设置页可写
+  （`confirmWrites`/`confirmOps` 属「放宽策略」，按同一文档**应保持** UI-only，不算缺口）。
+  补工具属产品决策，本次未做（不加半截实现，也不为过测试而放宽规则）。
+- 新技能 `agent-experience/SKILL.md`（模型面内容纪律：描述行为而非实现、每条事实只说一次、
+  参数规则挂在该参数上、改完量首轮 prompt token）。本包 45 个工具描述里重复的「ID 取列表
+  真实值」纪律与内部机制注记属被点名对象——属可选瘦身，不影响兼容性，记此备查。
+- SKILL.md 另加硬约束：**不得手改 profile 的 `package.json`/`cordis.patch.yml`、不得在
+  profile 目录跑 pnpm**（官方落点是 `install_bundle`）；验收以 installation 结果的
+  `application`/`warnings` 字段为准（而非日志、终端输出、进程列表、页面 boot payload），
+  新行用 `cordis_inspect_query` 确认，**测试中改过的用户设置要恢复**。
+  与本节「本地部署验证」的手拷 `lib/` 回路存在张力：那是仓库自验手段、只覆盖安装副本内容，
+  不动 profile 依赖与补丁文档（偏好那行是宿主写的），正式交付仍走 `dsh plugin`——明知偏离，
+  留此说明。
+
 ### 5.11 标签页显隐（设置 × 会话预设动态注册）
 
 六个会话视图标签不再无条件常驻：默认**跟随会话预设**（仅星愿预设的会话显示；
@@ -984,6 +1040,17 @@ pnpm test      # vitest run
   `dsh.client.inject` 点名的宿主包必须全部进了 peer（漏一个就不受 rc.1 闸门保护）、
   且不得虚标（每个 peer 需有源码 import / 补丁点名 / 对应服务键三选一的证据）。
   0.1.7-rc.1 的闸门只认**声明出来的** peer，这张表就是「覆盖面 = 真实依赖面」的证明。
+  另两面锁「**多版本适配**是声明不是口头」：`SUPPORTED_DSH_VERSIONS`（现为
+  `0.1.7-rc.1 / 0.2.0-rc.1`）里**每一条**宿主线都必须被全部 peer 范围以宿主同判定
+  （`semver.satisfies(线, 范围, {includePrerelease:true})`）放行——0.6.5 只写一条线，
+  用户升 0.2.0-rc.1 后整包被跳过、真机表现为星愿彻底消失；同时钉版必须落在该列表内
+  （防列表与实装脱钩），且**未核对的下一代（`0.3.0-rc.1`）必须被拦住**
+  （放开范围＝无声承诺，加线要先核对再改这张表）。
+- **提示词对宿主能力保持中立**（`prompts.test.ts`）：本包 peer 同时声明两条宿主线，而宿主
+  schedule 的提醒能力在两版上不同（0.1.7 仅一次性/session-local，0.2.0 起有 daily/weekly/cron
+  且 Host-wide 持久），故锁「`REMINDER_GUIDE` 与能力段都不得出现只在一版成立的固定断言」，
+  并要求判定口径写全（先看 `schedule_create` 本次实际接受的参数 + 保留兜底话术）。
+  与 §5.8「受开关门控的工具描述一律不断言」同族，只是载体换成了宿主工具。
 - **显示元数据门禁**（`plugin-display-meta.test.ts`）：按宿主 `package-meta` 的实现参数
   （语言 id 正则、icon 256 KiB/扩展名白名单/不得越出包目录、`${包名}/locale/en.json`
   解析方式、语言文件须同目录）逐条对拍，并在临时 consumer 目录里**用 Node 真实解析**一次
@@ -1040,9 +1107,15 @@ npm provenance 开启）。
 4. **Preset 可选不默认**：工具只挂 preset 层，agent 选择器手动选择；空白会话才能切换 preset。
 5. **BYOK 复用 harness**：模型凭据使用自带「设置 → 模型」，不自建引导流。
 6. **chat-first**：引导与教学在对话里完成；设置卡只承载偏好表单。
-7. **周期提醒不做**：dsh schedule 只有一次性规则（at / every_seconds ≥300s 固定速率，
-   锚定创建时刻），无 daily/weekly/monthly 日历能力；v1 以今日页 + 开场概览兜底，
-   向用户的差异如实说明。（另注：schedule 工具只对装载之后新建的 live 根 agent 可见。）
+7. **提醒能力不在本包写死（2026-09-29 修订）**：宿主 schedule 的能力**随版本不同**——
+   `0.1.7` 只有一次性规则（at / after / every_seconds ≥300s，session-local），`0.2.0` 起是
+   **Host-wide 持久提醒 + daily/weekly/cron**（`MIN_EVERY_INTERVAL_SECONDS` 降到 60，另有
+   `schedule_update`）。本包 peer 同时声明这两条线，所以任何一侧的固定断言都会在另一侧失真：
+   星愿**不自造包装工具、也不在提示词里断言能力边界**，`REMINDER_GUIDE` 一律要求模型
+   「先看 schedule_create 本次实际接受的参数」再作答，不支持周期时按一次性口径如实说明并用
+   今日页 + 开场概览兜底（`test/prompts.test.ts` 的「提醒指南对宿主能力保持中立」锁死）。
+   打卡与宿主提醒的**联动（如按机会日自动设 daily 提醒）属未立项的产品决策**，见 §11 末条。
+   （另注：schedule 工具只对装载之后新建的 live 根 agent 可见。）
 8. **写确认分层（2026-09，ADR-0001）**：总开关 + 六类目明细（创建/打卡/取消/领取/修改/记忆保存），
    默认=分层化前矩阵；删除始终确认、不设开关（破坏性操作不设开关）；总开关关闭=一键静音
    （除删除外）；作用域仅对话侧 HITL，页面侧确认对话框不跟随设置（§5.5 矩阵）。
@@ -1082,8 +1155,11 @@ npm provenance 开启）。
 
 ## 11. 已知限制
 
-- dsh schedule 仅 session-local：提醒只在承载它的会话存活期内触达，到期以
-  `[SCHEDULE REMINDER]` 用户角色 follow-up 呈现，无专属 UI。
+- 提醒的存活范围随宿主版本：`0.1.7` 系 session-local（只在承载它的会话存活期内触达）；
+  `0.2.0` 起为 Host-wide 持久（自有 `schedule` 存储域、交付回原会话、另有宿主自己的任务管理页）。
+  星愿一侧**不承诺任何一种**：能力判定交给工具参数（§10 决策 7）。到期呈现仍是
+  `[SCHEDULE REMINDER]` 用户角色 follow-up，本包无专属提醒 UI；把打卡机会日自动接成宿主
+  daily/weekly 提醒属未立项的产品决策。
 - 设置卡是 schemastery 表单，无自定义按钮/复杂控件。
 - weekly/monthly 不绑定自然周星期几：机会日从领取日起每 7 天/逐自然月推进，
   「每周三健身」类固定星期几需求无法直接表达（§5.2 锚点语义）；提示词层已要求模型
@@ -1128,9 +1204,11 @@ npm provenance 开启）。
   （`TURN_PROCESS_INDEPENDENT_KINDS`：system-prompt/user/steering/turn-process/
   turn-error/turn-max-tokens/turn-tail）为 ui-chat 写死的内置集，**插件无豁免接缝**。
   用户侧开关：设置 → 通用设置 → 「对话显示」——0.1.7-rc.1 起档位是
-  `compact / standard / detailed / verbose` 四档，默认由 compact 改 **standard**，
-  但策略表里**只有 `verbose` 才 `foldCompletedTurns:false`**（`dsh-client-ui-chat/lib/client.js`
-  的策略对象），所以「切到标准/详细」都**仍会**折叠卡片，只有「详尽」不折；
+  `compact / standard / detailed / verbose` 四档，**默认随宿主版本与端别变**
+  （0.1.7-rc.1 全端 `standard`；0.2.0-rc.1 起 Web 端 `detailed`、仅 Desktop `standard`，
+  且该字段改为可选——缺省走客户端默认值，legacy `normal`/`expanded` 读作 detailed），
+  但策略表里**只有 `verbose` 才 `foldCompletedTurns:false`**（两版宿主的 `POLICIES` 表都如此，
+  `dsh-client-ui-chat/lib/client.js`），所以「标准/详细/紧凑」三档**一律**折叠卡片，只有「详尽」不折；
   命名空间 `ui-chat` 字段 `transcriptView` 属宿主设置，插件不得代改；
   单轮可点披露条展开，
   隐藏节点是 `hidden="until-found"`，浏览器页内查找会自动展开。勿当插件缺陷报。
@@ -1151,7 +1229,8 @@ npm provenance 开启）。
   用户自定义值留在 `settings.yaml.imported` 里成为死数据。有意接受重置（2026-09-23 决策），
   不做迁移。
 - **基线越过 0.1.6 后不再兼容旧宿主**：client 半侧硬依赖 0.1.7 的 `configForms` 服务，
-  旧宿主上整半侧不激活。peer 范围已收到 `^0.1.7-rc.1`（含 client 半侧 6 包），
+  旧宿主上整半侧不激活。peer 范围现为 `^0.1.7-rc.1 || ^0.2.0-rc.1`（含 client 半侧 6 包，
+  两条宿主线同时放行——0.6.5 那次只写一条线，用户升 0.2.0-rc.1 后整包被闸门跳过，见文档头），
   且 **0.1.7-rc.1 起它真的是闸门了**：dsh 在装配前用
   `semver.satisfies(宿主版本, peer范围, {includePrerelease:true})` 校验包声明的每个
   `@deepseek-ai/dsh*` peer，不符者**整包静默跳过**（豁免：profile 的 `compatibility.json`
@@ -1165,8 +1244,10 @@ npm provenance 开启）。
   宿主降级为 memory 模式（`ConfigFormSnapshot.mode === 'memory'`、`writable: false`，
   `set()` 直接返回 false 不上 wire）。这是 dsh 的安全约束（settings RPCs are
   loopback-only），设置页只能提示，无法绕过。
-- dsh 技术预览期升级锁版本 `0.1.7-rc.1`（**rc**：settings 与会话格式曾在两周内各换过一次，
-  rc.1 相对 alpha.2 只动了 client 侧三包 + 装载器 + 新增兼容闸门，见文档头注）；
+- dsh 技术预览期，peer 同时声明 `0.1.7-rc.1` 与 `0.2.0-rc.1` 两条线（**rc**：settings 与会话格式
+  曾在两周内各换过一次，schedule 子系统在 0.2.0 又被整体重写，见文档头两条注）；
+  devDependencies 只钉其中最新的一版做 typecheck/测试，另一版靠「范围必须放行 + 逐包字节比对」
+  兜住——**同版本号不同行为仍然只能靠真机回路发现**（§5.11 教训不变）。
   跨版本升级前核对 release notes 与排障索引，并按 §5.10 回路做真机验证。
 
 ## 12. 官方参考文档
@@ -1249,7 +1330,7 @@ Client 包」「只用 `--dsw-alias-*` 令牌」「不在组件外写 DOM / 不 
 | 症状 | 先查 |
 |---|---|
 | 装不上 / git 安装缺 lib / prepare 授权失败 | docs/user/develop/basic/publish |
-| **装/启阶段整包被跳过**（日志：`Plugin <pkg>@<ver> is incompatible with dsh <rt>: peerDependencies {...}`） | 0.1.7-rc.1 新增的 DSH peer 兼容闸门（`dsh-app-boot` 的 `evaluatePluginCompatibility`，semver 含 prerelease）。要么升级插件、要么按提示 `dsh plugin allow-version <pkg@ver> --dsh-version <rt> --accept-risk` 显式豁免（写进 profile 的 `compatibility.json`）；星愿侧防漂移见 `test/host-baseline.test.ts`（§9） |
+| **装/启阶段整包被跳过**（stderr：`skipping profile bundle "<pkg>": Plugin <pkg>@<ver> is incompatible with dsh <rt>: peerDependencies {...}`；星愿实测见 0.6.5 遇 0.2.0-rc.1，预设/卡片/标签页/设置页/直开页整体消失而数据无损） | 0.1.7-rc.1 新增的 DSH peer 兼容闸门（`dsh-app-boot` 的 `evaluatePluginCompatibility`，semver 含 prerelease；**`peerDependenciesMeta.optional` 不参与判定**，声明即受约）。要么升级插件、要么按提示 `dsh plugin allow-version <pkg@ver> --dsh-version <rt> --accept-risk` 显式豁免（写进 profile 的 `compatibility.json`，下次组合生效）；`dsh plugin add` 也在预检处被拒（`nothing was installed`）。星愿侧防漂移见 `test/host-baseline.test.ts`（§9：每条支持线必须放行、未核对的下一代必须拦住） |
 | 插件管理卡 / 设置页插件列表显示包名而非中文名、没有图标 | 显示元数据未导出：宿主**不激活插件**去读 `locale/en.json` 的 `meta.title`/`meta.description` 与 `package.json` 顶层 `icon`，解析不到即静默回落（`ERR_PACKAGE_PATH_NOT_EXPORTED` 也算「没有」）。检查 `exports` 是否暴露 `./locale/*.json` 与 `./package.json`、`files` 是否收录、locale 文件名是否语言 id——门禁 `test/plugin-display-meta.test.ts`（§9） |
 | **client 半侧整半侧不激活**（boot 报 `pending (waiting for service: settingsScope)`） | 宿主是 0.1.7 而插件按 ≤0.1.6 写：`settingsScope`/`installSection` 已彻底撤除，须迁到 `configForms`（§5.8）。第三方插件在 0.1.7 上普遍踩此坑（同机 `modsearch` 报 `scope.settings.register is not a function`） |
 | 设置里没有「星愿」这一项（整页缺席） | `SETTINGS_ENTRY_ID` 与 `cordis.patch.yml` 主行 `id:` 不一致 → `configForms.whileServed` 永不满足、整页不注册（§5.8，无报错）；`dsh --dump-config` 确认该行存在 |
@@ -1262,7 +1343,7 @@ Client 包」「只用 `--dsw-alias-*` 令牌」「不在组件外写 DOM / 不 
 | 卡片不渲染 / 刷新后丢失 | subsystems/conversation（start 唯一、确定性回放）；三个声明合并位是否齐全 |
 | 会话事件没落盘 | exec.agent 是否存在（headless 无 agent 时 append 是 no-op） |
 | 旧会话打不开（`SessionFormatUnsupportedError` / unknown historical event） | **v2 及更早**的迁移链拒绝外部历史事件（v3 起接受 ignorable）：确认 bundle 已升级到含自愈模式的模块（§5.6）；源文件未动，备份在 `~/.dsh/xingyuan/session-backups/` |
-| 提醒没触发 / 周期提醒做不到 | subsystems/schedule（session-local、无日历规则、只装新建 live agent） |
+| 提醒没触发 / 提醒不重复 | 先看 `schedule_create` 本次实际接受的参数（0.1.7 系只有 at/after/every_seconds 且 session-local；0.2.0 起才有 daily/weekly/cron 与 Host-wide 持久）→ subsystems/schedule；工具只对装载之后新建的 live 根 agent 可见 |
 | 数据库打开报版本不符 | subsystems/storage；DOMAIN_VERSION 策略 |
 | preset 不出现 / mount 拒绝 | packages/preset/agent-preset/README.zh.md + 该包 skills/editing-cordis-compositions（**宿主不扫任何目录**，见 §4「Agent Preset 声明行」）。先查 `cordis.patch.yml` 里 `preset-xingyuan` 行在不在（`dsh --dump-config` / `plugin_manager list_plugins` 看该行激活态）；本地 `pnpm test` 的 `preset-declaration.test.ts` 会当场对拍这一行 |
 | HMR 后状态丢失 / 注册残留 | lifecycle effect 清理；是否存在跨重载模块级单例 |

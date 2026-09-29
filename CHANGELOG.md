@@ -5,6 +5,63 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] - 2026-09-29
+
+Adapt to the dsh `0.2.0-rc.1` host line while keeping `0.1.7-rc.1` supported. Upgrading the
+host had made the plugin disappear completely: the compatibility gate introduced in
+0.1.7-rc.1 evaluates only the peers a package *declares*, and `^0.1.7-rc.1` does not admit
+`0.2.0-rc.1`, so dsh skipped the whole bundle — reproduced with
+`dsh --profile web --dump-config`, which printed
+`skipping profile bundle "@starwish-ai/xingyuan-dsh" … is incompatible with dsh 0.2.0-rc.1`.
+Preset, chat cards, session-view tabs, the settings page and the standalone `/xingyuan/*`
+pages all vanished; the SQLite data stayed intact.
+
+### Added
+- `test/host-baseline.test.ts` — two new gates: every supported host version line
+  (`SUPPORTED_DSH_VERSIONS`) must be admitted by **all** dsh peers under the host's own
+  predicate (`semver.satisfies(line, range, {includePrerelease: true})`), the pinned
+  devDependency must be one of those lines, and an unverified next generation
+  (`0.3.0-rc.1`) must still be refused. Widening support therefore stays a deliberate,
+  verified act instead of a silent over-promise.
+- `test/prompts.test.ts` — a gate that the reminder guide and the capabilities section
+  contain no host-version-specific assertion.
+- AGENTS.md §5.10 — self-audit against the skills shipped with 0.2.0-rc.1 (the new
+  `references/user-actions.md` "one operation, two callers" rule and the `agent-experience`
+  skill), recording three UI-only actions that still lack tool equivalents as deliberate,
+  documented deviations rather than shipping half-implementations.
+
+### Changed
+- peerDependencies: all 16 `@deepseek-ai/dsh-*` entries now admit two host lines
+  (`^0.1.7-rc.1 || ^0.2.0-rc.1`) — this is exactly what the gate reads.
+- devDependencies: host baseline moved to `0.2.0-rc.1`. `cordis 4.0.4`,
+  `cordis-plugin-loader 1.0.5` and `schemastery 3.18.4` are unchanged in that release.
+- Reminder guidance (`REMINDER_GUIDE` plus the capabilities line) no longer states a fixed
+  capability. The host rewrote its schedule subsystem in 0.2.0 — one-shot/session-local
+  timers became Host-wide durable reminders with `daily`/`weekly`/`cron`, a
+  `schedule_update` tool, its own storage domain and `every_seconds` lowered to a 60 s
+  minimum — and because this package supports both host lines, any "periodic reminders are
+  impossible" sentence would now be a false statement to users. The guide instead tells the
+  model to read the timing parameters `schedule_create` actually accepts and to answer
+  accordingly.
+- Documentation: AGENTS.md header gains the 0.2.0-rc.1 delta notes; §10 decision 7 and §11
+  are rewritten on the new schedule facts; the transcriptView note now reflects per-host
+  defaults (web defaults to `detailed` from 0.2.0, Desktop `standard`, and only `verbose`
+  avoids folding completed turns); §4's upgrade checklist gained the schedule row's changed
+  plugin shape; the troubleshooting table gained the observed symptom and its remedy.
+
+### Fixed
+- The plugin being unusable on dsh 0.2.0-rc.1. **No business-code change was required**:
+  package-by-package byte comparison between 0.1.7-rc.1 and 0.2.0-rc.1 showed that every
+  host seam this plugin touches is unchanged — session format is still v4, the v3→v4
+  migration edge still preserves ignorable plugin events (so the session-log self-repair
+  boundary stands), `retainedBy.mainView` and `projectionValues.agentPreset` are unchanged,
+  `dsh-host-webserver` / `dsh-settings` / `dsh-storage` / `dsh-storage-domain` /
+  `dsh-system-prompt` / `dsh-user-questions` / `dsh-client-ui-slots` /
+  `dsh-client-ui-renderer` / `dsh-client-store` / `dsh-session-format-catalog` and the
+  `dsh-agent-preset` implementation are byte-identical, and no changed package removed a
+  symbol this package imports. Verified with `pnpm typecheck`, `pnpm build` and the full
+  suite (25 files / 293 tests) against the new baseline.
+
 ## [0.6.5] - 2026-09-24
 
 First stable line on the dsh 0.1.7 host contract. This release re-verifies the plugin

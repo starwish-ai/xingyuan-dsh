@@ -8,12 +8,16 @@
  * compatibility.json + `dsh plugin allow-version`。这推翻了此前「peer 不是闸门」的记录：
  * 现在 peer 范围是唯一能在装/启阶段拦下不兼容升级的机制——而它**只看声明出来的 peer**。
  *
- * 本文件锁三件事：
+ * 本文件锁四件事：
  * 1. 每个 dsh-* peer 的范围必须被 devDependencies 钉住的那一版满足（否则 typecheck
  *    校的不是用户跑的那版，且范围本身写错）；
  * 2. node_modules 里真实解析到的版本 == 钉住版本（防锁文件漂到别代）；
  * 3. peer 集合必须覆盖「补丁里点名的宿主包 + dsh.client.inject 点名的宿主包」——
- *    client 半侧正是 0.1.7-alpha.2→rc.1 唯一真变了代码的那一半，漏声明即闸门不覆盖它。
+ *    client 半侧正是 0.1.7-alpha.2→rc.1 唯一真变了代码的那一半，漏声明即闸门不覆盖它；
+ * 4. **每一条声明支持的宿主版本线都必须被每个 peer 范围放行**，且范围不得放开到
+ *    没核对过的代（0.6.5 那次实况：peer 写 `^0.1.7-rc.1` 而用户升到 0.2.0-rc.1，
+ *    `dsh --dump-config` 直接报 `skipping profile bundle "@starwish-ai/xingyuan-dsh"`，
+ *    星愿整体消失——「适配多版本」只有机械断言每条线才算承诺）。
  */
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
@@ -34,6 +38,15 @@ const pkg = require('../package.json') as {
 /** 受闸门校验的 peer：宿主只查 @deepseek-ai/dsh 与 @deepseek-ai/dsh-* 两类键。 */
 const gatedPeers = Object.entries(pkg.peerDependencies)
   .filter(([name]) => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
+
+/**
+ * 本包声明适配的宿主版本线（逐条按字节核对过接缝的那一版）。
+ * 新增一条支持线 = 先核对再往这里加一项，peer 范围与本列表由下面的断言强制同步。
+ */
+const SUPPORTED_DSH_VERSIONS = ['0.1.7-rc.1', '0.2.0-rc.1'] as const
+
+/** 没核对过的下一代：peer 范围必须仍然拦住它（放开＝无声承诺）。 */
+const UNTESTED_DSH_VERSION = '0.3.0-rc.1'
 
 /**
  * 用宿主补丁的方言读 cordis.patch.yml（`!!js` 与本测试无关，读成不透明表达式节点即可，
@@ -84,6 +97,31 @@ describe('dsh 版本闸门对拍（peer 范围 ↔ 钉住版本 ↔ 实装版本
         semver.satisfies(pinned!, range, { includePrerelease: true }),
         `peer ${name} 范围 ${range} 不被钉住版本 ${pinned} 满足`,
       ).toBe(true)
+    }
+  })
+
+  it('每一条声明支持的宿主版本线都被全部 dsh-* peer 范围放行（闸门实测同判定）', () => {
+    for (const [name, range] of gatedPeers) {
+      for (const version of SUPPORTED_DSH_VERSIONS) {
+        expect(
+          semver.satisfies(version, range, { includePrerelease: true }),
+          `用户跑 dsh ${version} 时整包会被跳过：peer ${name} 范围 ${range} 不满足`,
+        ).toBe(true)
+      }
+      // 钉住的那一版必须也在支持列表里，否则「支持列表」与实装/校验面脱钩
+      expect(
+        SUPPORTED_DSH_VERSIONS.includes(pkg.devDependencies[name] as typeof SUPPORTED_DSH_VERSIONS[number]),
+        `peer ${name} 钉住 ${pkg.devDependencies[name]}，不在已核对的支持版本线 ${SUPPORTED_DSH_VERSIONS.join(' / ')} 内`,
+      ).toBe(true)
+    }
+  })
+
+  it('范围不得放开到没核对过的宿主代（下一代必须显式加线）', () => {
+    for (const [name, range] of gatedPeers) {
+      expect(
+        semver.satisfies(UNTESTED_DSH_VERSION, range, { includePrerelease: true }),
+        `peer ${name} 范围 ${range} 把未核对的 ${UNTESTED_DSH_VERSION} 也放行了`,
+      ).toBe(false)
     }
   })
 

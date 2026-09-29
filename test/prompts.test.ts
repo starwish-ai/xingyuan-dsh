@@ -6,6 +6,8 @@
  * 2) 用语规范禁词锁（§5.2）：11 段静态提示词与全部动态上下文属「模型逐字转述面」，
  *    正文行禁内部词（候选/待结算/口径/锚点/分母/账本）；「教模型别说这些词」的
  *    教学行本身豁免（含「不说」字样）。回填即红。
+ * 3) 提醒指南对宿主 schedule 能力保持中立（本包 peer 同时声明 0.1.7 与 0.2.0 两条宿主线，
+ *    两版宿主的提醒能力不同，任何一侧的固定断言都会在另一侧失真）。
  */
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
@@ -136,5 +138,52 @@ describe('用语规范禁词锁（§5.2：提示词属模型逐字转述面）',
     const { sections } = register(memoryStore())
     const wishGuide = sections.find((section) => section.name.includes('wish'))
     expect(typeof wishGuide?.text === 'string' ? wishGuide.text : '').toContain('领了继续，或删掉就达成')
+  })
+})
+
+/**
+ * 提醒指南的「宿主能力中立」锁（0.2.0-rc.1 迁移）。
+ * 背景：宿主 schedule 子系统在 0.2.0 被重写——一次性/session-local 口径作废，
+ * 现在支持 daily/weekly/cron 且 Host-wide 持久交付；而 0.1.7 那一版仍只有 at/after/every_seconds。
+ * 本包 peer 同时声明这两条版本线，于是提示词**任何一方都不能断言**：
+ * 写「不支持周期提醒」在 0.2.0 上是对用户撒谎，写「支持」在 0.1.7 上是让模型承诺做不到的事
+ * （§5.8「工具描述一律不可断言」同一类坑，只是这次的载体是宿主工具而非本包工具）。
+ * 因此锁：① 固定能力断言一律禁止；② 必须把判定权交给「本次工具实际接受的参数」。
+ */
+describe('提醒指南对宿主能力保持中立（两版宿主都不失真）', () => {
+  function guideText(name: string): string {
+    const { sections } = register(memoryStore())
+    const text = sections.find((section) => section.name === name)?.text
+    return typeof text === 'string' ? text : ''
+  }
+
+  /** 出现过时的固定口径＝红：这些句子只在一版宿主上成立。 */
+  const FORBIDDEN = [
+    /不支持(每天|每周|每月|周期)/,
+    /周期提醒暂不支持/,
+    /仅在当前会话(存活期间)?送达/,
+    /会话结束后提醒不再触达/,
+  ]
+
+  it('xingyuan:reminder-guide 不含任一宿主版本的固定能力断言', () => {
+    const text = guideText('xingyuan:reminder-guide')
+    expect(text).not.toBe('')
+    for (const pattern of FORBIDDEN) {
+      expect(text, `指南含固定断言 ${pattern}，另一版宿主上即失真`).not.toMatch(pattern)
+    }
+  })
+
+  it('xingyuan:capabilities 同样不得把提醒能力写死', () => {
+    for (const pattern of FORBIDDEN) {
+      expect(guideText('xingyuan:capabilities'), `能力段含固定断言 ${pattern}`).not.toMatch(pattern)
+    }
+  })
+
+  it('判定口径写全：先看本次 schedule_create 接受的参数，且保留兜底话术', () => {
+    const text = guideText('xingyuan:reminder-guide')
+    expect(text).toContain('schedule_create')
+    expect(text).toMatch(/实际接受的参数/)
+    expect(text).toMatch(/daily/)
+    expect(text).toMatch(/今日待打卡概览/)
   })
 })

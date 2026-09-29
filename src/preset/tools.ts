@@ -7,8 +7,8 @@
  * - 写确认：总开关（confirmWrites）开启时按类目明细（confirmOps）弹卡——创建/打卡/取消打卡
  *   默认确认，领取/修改/记忆保存默认免确认但可在设置开启；删除（含批量）始终确认；教练风格与画像免确认；
  * - 业务事实：写操作成功即发 xingyuan/* 会话事件驱动卡片（可回放）；
- * - 周期提醒：harness schedule 仅一次性触发，原生 schedule_create 直接可用，
- *   差异在提示词指南中如实告知，不另造包装工具。
+ * - 提醒：不自造包装工具，直接用宿主原生 schedule_*；其能力随宿主版本而不同，
+ *   判定与如实告知的口径集中在提示词的「定时提醒指南」，本层不断言能力边界。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
