@@ -834,6 +834,18 @@ accent 点缀孤点，形似渲染事故）。半透明衍生色一律在 styles
 `dsh plugin add/update` 会用 npm 版覆盖该副本；数据无虞，库固定在
 `~/.dsh/xingyuan/`（§4 硬约束 2）。
 
+> **踩坑实录（2026-09-29）**：发新版后用户执行 `dsh plugin --profile web update
+> @starwish-ai/xingyuan-dsh` **不报错但版本没变**，「Agent 预设」里依然没有星愿。三层原因叠加：
+> ① profile 的 `package.json` 把依赖**精确钉死**（当时是 `"0.6.5-alpha.1"`），pnpm 对精确 pin
+> 的 `update` 就是不动 → 命令成功、副本仍是旧版、旧 peer 仍被闸门跳过（§11 首条症状）；
+> ② 本机 npm registry 默认是 `registry.npmmirror.com`，**新发布版本会滞后**（当时镜像仍停在
+> latest 0.6.5）；③ 装对了也要**重启 `dsh web`**——在跑的进程用的是旧组合结果，不热更新。
+> 正确写法：`dsh plugin --profile web add @starwish-ai/xingyuan-dsh@<ver>
+> --registry=https://registry.npmjs.org`。取证口径：`node -p` 读安装副本的 `version` 与
+> `peerDependencies`，再 `dsh --profile web --dump-config` 看 `xingyuan-sqlite`/`xy-bundle`/
+> `preset-xingyuan` 三行在不在（stderr 出现 `skipping profile bundle "@starwish-ai/xingyuan-dsh"`
+> 即仍被拦）。**别把 `dsh plugin update` 当升级手段**——精确 pin 下它是 no-op。
+
 **宿主官方实践规则（0.1.7-rc.1 起随包发布，星愿按此自查）**：
 `@deepseek-ai/dsh-agent-preset/skills/cordis-plugin-development/references/practices.md`
 （rc.1 新增）+ 同目录 `ui-plugin.md` / `verification.md` / `SKILL.md` 的验收清单。
