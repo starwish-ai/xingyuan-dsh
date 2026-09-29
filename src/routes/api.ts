@@ -29,15 +29,14 @@ import {
   renameCategory,
   saveMemory,
   searchMemories,
+  setCategoryColor,
   updateProfileGlobal,
   updateTask,
   validateCategoryName,
-  validateColorKey,
 } from '../store.js'
 import { addDays, calculateOpportunityDates, findFirstUncheckedOpportunityDate, isIsoDate, todayIso } from '../opportunity.js'
 import { LEVEL_CONFIGS, growthSummary } from '../growth.js'
 import { getMicroAction } from '../micro.js'
-import { mutateGlobal } from '../store.js'
 import { removeTaskCompletely, removeWishCompletely } from '../cascade.js'
 import { ActionError, HttpError } from './errors.js'
 import type { RoutesConfig } from './config.js'
@@ -591,16 +590,6 @@ async function actionUpdateTask(deps: ApiDeps, body: JsonBody): Promise<unknown>
 
 // ===== 分类管理 =====
 
-async function setCategoryOverride(deps: ApiDeps, name: string, colorKey: string | null): Promise<void> {
-  // 读-改-写整体进串行队列：并发改不同分类颜色互不覆盖
-  await mutateGlobal(deps.store, (global) => {
-    const overrides = { ...(global.categoryColors ?? {}) }
-    if (colorKey === null) delete overrides[name]
-    else overrides[name] = colorKey
-    return { ...global, categoryColors: Object.keys(overrides).length > 0 ? overrides : undefined }
-  })
-}
-
 async function actionCategoryRename(deps: ApiDeps, body: JsonBody): Promise<unknown> {
   requireFields(body, ['oldName', 'newName'])
   const oldName = clampStr(body.oldName, 6)
@@ -613,10 +602,9 @@ async function actionCategoryRename(deps: ApiDeps, body: JsonBody): Promise<unkn
 
 async function actionCategoryColor(deps: ApiDeps, body: JsonBody): Promise<unknown> {
   requireFields(body, ['name'])
-  const name = clampStr(body.name, 6)
-  // colorKey 为空串 = 清除覆盖（跟随愿望显式色/哈希兜底）
-  const rawColor = typeof body.colorKey === 'string' && body.colorKey !== '' ? validateColorKey(body.colorKey) : null
-  const colorKey: string | null = rawColor ?? null
-  await setCategoryOverride(deps, name, colorKey)
-  return { ok: true, name, colorKey }
+  const rawColor = typeof body.colorKey === 'string' ? body.colorKey : null
+  // 与对话侧 set_wish_category_color 同一写路径（store 收口）：空白色键 = 清除覆盖，
+  // 分类名与色键的校验也在那一处，两半侧不再各写一份口径
+  const colorKey = await setCategoryColor(deps.store, clampStr(body.name, 6), rawColor)
+  return { ok: true, name: clampStr(body.name, 6), colorKey }
 }

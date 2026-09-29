@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import { xingyuanDomainSpec } from '../src/domain.js'
 import type { XingyuanGlobal, XingyuanStore } from '../src/domain.js'
-import { PREF_DEFAULTS } from '../src/pref-policy.js'
+import { memoryPrefs } from './memory-store.js'
 import { completeMicroStep, getMicroAction, restartMicroAction, startMicroAction } from '../src/micro.js'
 
 function memoryStore(): XingyuanStore {
@@ -21,7 +21,7 @@ function memoryStore(): XingyuanStore {
   return {
     spec: xingyuanDomainSpec,
     domain,
-    prefs: () => PREF_DEFAULTS,
+    ...memoryPrefs(),
     newId: () => 'x',
     checkinKey: (t: string, d: string) => `${t}|${d}`,
   }

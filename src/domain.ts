@@ -9,7 +9,8 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { domainTable, defineDomain, type Domain, type DomainTableSpec, type KvTable, type TableKeyOf, type TableValueOf } from '@deepseek-ai/dsh-storage-domain'
 import { z, type ZodType } from 'zod'
-import type { PrefSettings } from './pref-policy.js'
+import { TAB_VISIBILITY_DEFAULTS } from './tab-policy.js'
+import type { PrefPatch, PrefSettings, UiSettings } from './pref-policy.js'
 
 export const DOMAIN_VERSION = 1
 
@@ -155,6 +156,15 @@ export interface XingyuanStore {
   readonly domain: Domain<typeof xingyuanDomainSpec>
   /** 对话偏好：bundle 主行 volatile Config 的当前解析值（非领域数据），每次调用现取。 */
   prefs(): PrefSettings
+  /** 界面偏好（标签页显隐）的当前解析值，同样每次现取。 */
+  uiPrefs(): UiSettings
+  /**
+   * 偏好写入的唯一路径（bundle 主行经宿主 settings 表单落到 profile 补丁）。
+   * 调用方（对话工具）负责参数校验；本方法只负责落盘，**不承诺成功**——
+   * 宿主可能拒绝（行缺席 / 非 volatile 字段 / 无写权限），调用方须再读
+   * {@link prefs} / {@link uiPrefs} 比对，未生效即如实报错，不得静默当作改成了。
+   */
+  setPrefs(patch: PrefPatch): Promise<void>
   newId(): string
   checkinKey(taskId: string, date: string): string
 }
@@ -244,15 +254,29 @@ function guardDomain(domain: Domain<typeof xingyuanDomainSpec>): Domain<typeof x
   }
 }
 
-/** 由已打开领域构造服务句柄（bundle 入口组装用）。 */
+/**
+ * 由已打开领域构造服务句柄（bundle 入口组装用）。
+ *
+ * 后两个参数默认「读缺省 / 写即抛」：单测与探针桩只需领域读写，偏好写入缺席时
+ * 必须响亮失败而不是静默成功——否则「工具说改好了」就没有反证渠道了。
+ */
 export function makeXingyuanStore(
   domain: Domain<typeof xingyuanDomainSpec>,
   readPrefs: () => PrefSettings,
+  readUiPrefs: () => UiSettings = () => ({
+    tabVisibilityMode: TAB_VISIBILITY_DEFAULTS.tabVisibilityMode,
+    hiddenTabs: [...TAB_VISIBILITY_DEFAULTS.hiddenTabs],
+  }),
+  writePrefs: (patch: PrefPatch) => Promise<void> = async () => {
+    throw new Error('偏好写入未接线：本服务句柄未绑定宿主 settings 表单')
+  },
 ): XingyuanStore {
   return {
     spec: xingyuanDomainSpec,
     domain: guardDomain(domain),
     prefs: readPrefs,
+    uiPrefs: readUiPrefs,
+    setPrefs: writePrefs,
     newId: () => randomUUID(),
     checkinKey: (taskId, date) => `${taskId}|${date}`,
   }

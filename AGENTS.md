@@ -98,7 +98,7 @@ agent 选择器出现「星愿」即安装成功。
 
 | 能力 | 实现位置 |
 |---|---|
-| 对话创建愿望/任务（含查重、推荐任务） | `src/preset/tools.ts`（45 个模型工具，见 §6） |
+| 对话创建愿望/任务（含查重、推荐任务） | `src/preset/tools.ts`（49 个模型工具，见 §6） |
 | 机会日打卡（周期计算、补卡、取消、未来预勾） | `src/opportunity.ts` + `src/store.ts` |
 | 微行动拆解（3–7 步逐步完成/跳过/重开） | `src/micro.ts` |
 | 记忆（增删改查 + 上下文自动注入） | `memories` 表 + `src/preset/prompts.ts` 动态上下文 |
@@ -175,7 +175,7 @@ XingYuan-Dsh/
 │   ├── routes/             # /xingyuan/* HTTP 面（index/api/config/errors/pages-html）
 │   └── preset/             # ↓ 只挂在 preset 层 ↓
 │       ├── side.ts         # preset 侧入口：工具/提示词注册 + 偏好读取（偏好不在此层）
-│       ├── tools.ts        # 45 个模型工具
+│       ├── tools.ts        # 49 个模型工具
 │       ├── prompts.ts      # 11 段系统提示词 + 动态上下文
 │       ├── hitl.ts         # userQuestions 确认封装（文案语言随 confirmLang 偏好）
 │       └── charts.ts       # 15 种 chartKey 数据计算
@@ -452,7 +452,7 @@ once 且无截止日的任务没有机会日序列：进行中阶段只在**今�
 
 ### 5.4 模型工具（preset/tools.ts）
 
-注册模式（全部 45 个工具一致）：
+注册模式（全部 49 个工具一致）：
 
 ```ts
 ctx.tools.register(defineTool({
@@ -495,10 +495,10 @@ ctx.tools.register(defineTool({
 | 创建 | 创建愿望/任务（含批量）+ 微行动拆解 | 确认 |
 | 打卡 / 取消打卡 | check_in_task / cancel_check_in_task | 确认 |
 | 领取 | claim_task（不可逆：锚点重算、误领取恢复=删除重建） | 免确认（用户指令即授权） |
-| 修改 | update_wish / update_task / rename_wish_category | 免确认 |
+| 修改 | update_wish / update_task / rename_wish_category / set_wish_category_color | 免确认 |
 | 记忆保存 | save_memory / update_memory | 免确认 |
-| **删除（锁定）** | 删除愿望/任务/记忆（含批量）+ 微行动重开 | **始终确认，无开关** |
-| 不设门闩 | 微行动步进（口头即授权）、教练风格 / 用户画像（配置偏好） | — |
+| **删除（锁定）** | 删除愿望/任务/记忆（含批量）+ **清空全部记忆** + 微行动重开 | **始终确认，无开关** |
+| 不设门闩 | 微行动步进（口头即授权）、教练风格 / 用户画像 / 偏好设置（`update_xingyuan_settings`）——均属配置偏好；**安全策略本身（confirmWrites/confirmOps）不对 agent 开放** | — |
 
 实现契约（dsh-user-questions 校验过的事实）：
 
@@ -869,14 +869,19 @@ Client 包**（practices.md 的头号禁令；`dsh.client.inject` 条目是官�
 **0.2.0-rc.1 升版后的自查（2026-09-29，随包 skills 增量）**：
 - 新参考 `references/user-actions.md`（「一个操作两个调用方」）：同一操作只实现一次、
   UI 与工具共用同一个宿主服务方法；「把插件 UI 对应用数据与配置的操作暴露给 agent」；
-  「授予/放宽权限的动作保持用户专属」。星愿 §5.4 的 `store.ts` 共用收口正是要求，
-  13 个页面动作里 11 个已有等价工具。**三处缺口留痕待议**：`/api/action/category-color`
-  （分类颜色覆盖）与 `/api/action/memory-clear`（清空全部记忆）无等价工具；偏好项
-  `memoryInjectLimit`/`confirmLang`/`tabVisibilityMode`/`hiddenTabs` 只有设置页可写
-  （`confirmWrites`/`confirmOps` 属「放宽策略」，按同一文档**应保持** UI-only，不算缺口）。
-  补工具属产品决策，本次未做（不加半截实现，也不为过测试而放宽规则）。
+  「授予/放宽权限的动作保持用户专属」。星愿 §5.4 的 `store.ts` 共用收口正是要求。
+  **13 个页面动作现已全部有等价工具**（0.6.7 补最后三处）：
+  ① `category-color` → `set_wish_category_color`（顺带把原先只写在 `routes/api.ts` 里的
+  覆盖写路径上移为 `store.setCategoryColor`——上移前路由只截断不校验，`name:''` 会写出
+  键为空串的幽灵覆盖、从此甩不掉）；② `memory-clear` → `clear_all_memories`（锁定删除
+  类目，始终确认；空库不弹卡）；③ 四项非权限偏好（记忆注入上限 / 确认卡语言 /
+  标签页显隐 / 单标签勾选）→ `get_xingyuan_settings` + `update_xingyuan_settings`，
+  经 bundle 主行的宿主 `settings.update` 落到 profile 补丁，**写后读回比对**：
+  宿主没接受就报 `pref_write_rejected`，绝不允许「说改好了而实际没改」。
+  `confirmWrites`/`confirmOps` **刻意不进工具参数**——同一文档明写「授予或确认权限的
+  动作保持用户专属」，放宽安全策略只能由本人在设置页改（该边界由测试锁住）。
 - 新技能 `agent-experience/SKILL.md`（模型面内容纪律：描述行为而非实现、每条事实只说一次、
-  参数规则挂在该参数上、改完量首轮 prompt token）。本包 45 个工具描述里重复的「ID 取列表
+  参数规则挂在该参数上、改完量首轮 prompt token）。本包 49 个工具描述里重复的「ID 取列表
   真实值」纪律与内部机制注记属被点名对象——属可选瘦身，不影响兼容性，记此备查。
 - SKILL.md 另加硬约束：**不得手改 profile 的 `package.json`/`cordis.patch.yml`、不得在
   profile 目录跑 pnpm**（官方落点是 `install_bundle`）；验收以 installation 结果的
@@ -940,11 +945,11 @@ Client 包**（practices.md 的头号禁令；`dsh.client.inject` 条目是官�
   （控制中心永远可达）、直开 URL `/xingyuan/*`（独立页面）。
 - 测试：`test/tab-policy.test.ts` 对拍策略全分支（三态 × 会话 × 勾选 × 脏值）。
 
-## 6. 工具清单（45 个）
+## 6. 工具清单（49 个）
 
 改动工具面时对照此表增删（新增务必同步 prompts.ts 能力段落与 README 功能列表）。
 
-**愿望（13）**
+**愿望（14）**
 
 | 工具 | 说明 |
 |---|---|
@@ -953,6 +958,7 @@ Client 包**（practices.md 的头号禁令；`dsh.client.inject` 条目是官�
 | get_wish_list / search_wishes / get_latest_wish / get_wish_detail | 读操作，并发安全 |
 | list_wish_categories / list_wish_category_color_keys | 分类与 22 色键枚举 |
 | update_wish / rename_wish_category | 部分更新；改名联动迁移颜色覆盖键 |
+| set_wish_category_color | 分类默认色（写 global 覆盖，与页面「分类管理」同一收口）；空串清除 |
 | delete_wish / batch_delete_wishes | 删除（始终确认；级联清理下属任务/打卡/微行动/颜色覆盖） |
 
 **任务（16）**
@@ -975,13 +981,17 @@ Client 包**（practices.md 的头号禁令；`dsh.client.inject` 条目是官�
 | complete_micro_step | 完成/跳过当前步 |
 | restart_micro_action | 重开（需确认） |
 
-**记忆（6）**
+**记忆（7）**
 
-save_memory / update_memory / search_memory / get_memory / get_all_memories / delete_memory
+save_memory / update_memory / search_memory / get_memory / get_all_memories /
+delete_memory / clear_all_memories（清空全部，**始终确认**；空库直接回不弹卡）
 
-**用户配置（4）**
+**用户配置（6）**
 
 get_coach_config / update_coach_style / get_profile / update_profile（免确认，即时入 global 槽）
++ get_xingyuan_settings / update_xingyuan_settings（读全部偏好；写只放开
+memoryInjectLimit / confirmLang / tabVisibilityMode / hiddenTabs 四项，
+**confirmWrites 与 confirmOps 不进参数**——放宽安全策略只能用户本人在设置页改，见 §5.10）
 
 **统计（3，其中两个为内部工具）**
 
@@ -1022,7 +1032,7 @@ wishProgress / wishAchievement / continuousCheckin / checkinTimeDistribution / w
 |---|---|
 | bundle 主行 Config | rangeDefaultDays(7)、rangeMaxDays(31)、memoryListLimit(500)、repairSessionLogs(true) |
 | preset side Config（无 Web 设置界面，仅组合层可调） | batchWishLimit(50)、batchTaskLimit(100)、chartTrendDays(14)、chartDistributionDays(30)、chartMaxDays(90)、chartRankLimit(10)、chartRankMax(20) |
-| bundle 主行 `xy-bundle` 的 volatile 字段（Web 设置页「写操作确认」「对话偏好」「标签页显示」三卡） | confirmWrites(true)、confirmOps(六类目明细，默认=分层化前矩阵：创建/打卡/取消确认，领取/修改/记忆保存不确认)、memoryInjectLimit(40，5-200 整数，`step(1)` 让服务端也拒绝小数)、confirmLang('zh'，可选 zh/en)、tabVisibilityMode(follow)、hiddenTabs([])——字段表在 pref-settings.ts / ui-settings.ts，行 id 绑定见 §5.8，显隐语义见 §5.11 |
+| bundle 主行 `xy-bundle` 的 volatile 字段（Web 设置页「写操作确认」「对话偏好」「标签页显示」三卡） | confirmWrites(true)、confirmOps(六类目明细，默认=分层化前矩阵：创建/打卡/取消确认，领取/修改/记忆保存不确认)、memoryInjectLimit(40，5-200 整数，`step(1)` 让服务端也拒绝小数)、confirmLang('zh'，可选 zh/en)、tabVisibilityMode(follow)、hiddenTabs([])——字段表在 pref-settings.ts / ui-settings.ts，行 id 绑定见 §5.8，显隐语义见 §5.11。**对话侧可改的只有后四项**（`update_xingyuan_settings`，写后读回比对）；confirmWrites/confirmOps 属放宽安全策略，保持设置页用户专属 |
 
 配置变更的生效路径分两条：**volatile 字段**（上表第三行）走宿主 `loader/volatile-update`
 原地换引用，不重启本行，读取端每次 `.get()` 现取；**非 volatile 字段**改了触发整行
@@ -1076,6 +1086,11 @@ pnpm test      # vitest run
   在测试里可达而真机不可达（§5.11 同一类坑）。
 - **HTTP 壳跨站写闸门**（`routes-shell.test.ts`）：POST 缺 `x-xingyuan-write` 头即 403
   且**先于请求体解析**；头名三处字面量一致（服务端常量 ↔ GUI `api.ts` ↔ 备用页 `pages-html.ts`）。
+- **页面/对话同权门禁**（`tools.test.ts` 的「页面动作的工具面补齐」组 +
+  `write-guards.test.ts` 的「分类颜色覆盖收口」组）：官方 `user-actions.md` 要求 UI 能做的
+  数据与配置操作对 agent 同样开放——13 个页面动作逐个要么有等价工具，要么有「用户专属」的
+  明确理由（`update_xingyuan_settings` 的参数里出现 `confirmWrites`/`confirmOps` 即红）；
+  同时锁住「校验先于确认」「拒绝即不落盘」「写后读回比对」三条，防止工具说改好了而实际没改。
 - **preset 注册门禁**（`preset-declaration.test.ts`）：按 YAML 解析真实 `cordis.patch.yml`
   取 `preset-xingyuan` 声明行（`!!js` 读成宿主同形状的表达式包、不求值），再把它的 config
   交给**真实宿主插件** `@deepseek-ai/dsh-agent-preset`（devDependency 精确锁基线）装载，

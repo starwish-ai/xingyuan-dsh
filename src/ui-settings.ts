@@ -12,19 +12,16 @@
  * 它们出现在 host Config 里只是为了让宿主把它们投影成表单。
  */
 import z from '@deepseek-ai/schemastery'
-import { TAB_VISIBILITY_DEFAULTS } from './tab-policy.js'
+import { TAB_VISIBILITY_DEFAULTS, TAB_VISIBILITY_MODES } from './tab-policy.js'
 
 /**
- * 界面偏好字段表。schemastery 无 z.enum，枚举用 const+union 表达；
- * 默认值与 tab-policy 的 TAB_VISIBILITY_DEFAULTS 同源（测试对拍）。
+ * 界面偏好字段表。schemastery 无 z.enum，枚举用 const+union 表达（与 pref-settings
+ * 的 confirmLang 同形）；默认值与 tab-policy 的 TAB_VISIBILITY_DEFAULTS 同源（测试对拍）。
  */
 export const UiSettingsFields = {
   /** 显隐三态：follow 星愿会话才显示 / show 任何会话都显示 / hide 任何会话不显示。 */
-  tabVisibilityMode: z.union([
-    z.const('follow'),
-    z.const('show'),
-    z.const('hide'),
-  ]).default(TAB_VISIBILITY_DEFAULTS.tabVisibilityMode).volatile(),
+  tabVisibilityMode: z.union(TAB_VISIBILITY_MODES.map((mode) => z.const(mode)))
+    .default(TAB_VISIBILITY_DEFAULTS.tabVisibilityMode).volatile(),
   /**
    * 在「显示」前提下被勾掉的单个标签（空数组 = 六个全显示；脏值容错忽略）。
    *

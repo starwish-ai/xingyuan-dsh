@@ -20,7 +20,7 @@
  *   locale 服务是浏览器专属 seam，工具执行期读不到；故确认卡语言只能由用户在此
  *   显式选择，不能自动跟随界面语言。
  */
-import type { TabVisibilityMode } from './tab-policy.js'
+import type { TabId, TabVisibilityMode } from './tab-policy.js'
 
 /**
  * 偏好落在哪一条 profile 行上：dsh 0.1.7 起「可编辑设置 = 该行的 Config schema 里
@@ -113,6 +113,31 @@ export const PREF_DEFAULTS: PrefSettings = {
 /** 脏值容错：非 zh/en 一律回落 zh（与 tab-policy 的显隐脏值容错同口径）。 */
 export function normalizeConfirmLang(value: unknown): ConfirmLang {
   return value === 'en' ? 'en' : 'zh'
+}
+
+/**
+ * 界面偏好的当前解析值（标签页显隐）。与 {@link PrefSettings} 同挂主行 volatile 字段，
+ * 分两组只为让「对话侧读什么」在类型上如实；脏值收敛走 tab-policy.normalizeHiddenTabs。
+ */
+export interface UiSettings {
+  /** 三态：follow 仅星愿会话显示 / show 所有会话显示 / hide 全部隐藏。 */
+  tabVisibilityMode: TabVisibilityMode
+  /** 在「显示」前提下被勾掉的单个标签（空 = 六个全显示）。 */
+  hiddenTabs: TabId[]
+}
+
+/**
+ * 偏好写入的合法载荷（对话 + 界面两组里**可由对话侧发起**的那几项）。
+ *
+ * 刻意不含 `confirmWrites` / `confirmOps`：它们是「放宽安全策略」的开关，按宿主官方
+ * 实践（dsh-agent-preset skills/references/user-actions.md：授予或确认权限的动作保持
+ * 用户专属）只能由用户在设置页亲自改，工具面不接受、也不提供绕过路径。
+ */
+export interface PrefPatch {
+  memoryInjectLimit?: number
+  confirmLang?: ConfirmLang
+  tabVisibilityMode?: TabVisibilityMode
+  hiddenTabs?: readonly string[]
 }
 
 /**

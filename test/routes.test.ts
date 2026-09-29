@@ -216,3 +216,31 @@ describe('承诺口径：未领取任务不计入今日进度与月历完成判�
     expect(row!.canCheckIn).toBe(false)
   })
 })
+
+/**
+ * 分类颜色动作面（0.6.7 起与对话工具共用 store.setCategoryColor 一份校验）。
+ * 锁两件事：① 页面写入/清除的回显形状不变（客户端按 colorKey 判语义）；
+ * ② 非法入参带稳定 code 出 400——客户端按 code 本地化，不靠中文子串匹配。
+ */
+describe('路由动作面：分类颜色覆盖', () => {
+  it('写入与清除都回显生效值（清除 = colorKey:null）', async () => {
+    const store = memoryStore()
+    await seedWish(store, 'w-color-route')
+    const deps = makeDeps(store)
+    expect(await postApi(deps, '/api/action/category-color', { name: '学习', colorKey: 'blue' }))
+      .toEqual({ ok: true, name: '学习', colorKey: 'blue' })
+    expect(store.domain.global.get().categoryColors).toEqual({ 学习: 'blue' })
+    expect(await postApi(deps, '/api/action/category-color', { name: '学习', colorKey: '' }))
+      .toEqual({ ok: true, name: '学习', colorKey: null })
+    expect(store.domain.global.get().categoryColors).toBeUndefined()
+  })
+
+  it('非法分类名与未知色键各带自己的 code', async () => {
+    const store = memoryStore()
+    const deps = makeDeps(store)
+    await expect(postApi(deps, '/api/action/category-color', { name: 'X', colorKey: 'blue' }))
+      .rejects.toMatchObject({ code: 'bad_category_name' })
+    await expect(postApi(deps, '/api/action/category-color', { name: '学习', colorKey: 'nope' }))
+      .rejects.toMatchObject({ code: 'bad_color_key' })
+  })
+})

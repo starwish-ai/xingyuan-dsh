@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { xingyuanDomainSpec } from '../src/domain.js'
 import type { XingyuanStore } from '../src/domain.js'
-import { PREF_DEFAULTS } from '../src/pref-policy.js'
+import { memoryPrefs } from './memory-store.js'
 import {
   BASE_EXPERIENCE,
   LEVEL_CONFIGS,
@@ -48,7 +48,7 @@ function memoryStore(): XingyuanStore {
   return {
     spec: xingyuanDomainSpec,
     domain,
-    prefs: () => PREF_DEFAULTS,
+    ...memoryPrefs(),
     newId: () => 'x',
     checkinKey: (taskId: string, date: string) => `${taskId}|${date}`,
   }

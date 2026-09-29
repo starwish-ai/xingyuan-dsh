@@ -3,7 +3,8 @@
  * 经 cordis-plugin-loader 以 cordis.yml 语义启动最小完整组合：
  * storage hub → 星愿 sqlite 后端 → 领域路由（xingyuan→sqlite）→
  * system-prompt / user-questions / tools → bundle 主行（领域服务+/xingyuan/* 路由）→ preset 侧工具行。
- * 断言：模型可见工具面注册、领域落库回读、逐行 dispose 清理（工具注销/服务注销/后端注销）。
+ * 断言：模型可见工具面注册、领域落库回读、偏好写入落到主行 id、逐行 dispose 清理
+ * （工具注销/服务注销/后端注销）。
  * 运行前置：pnpm build（preset 侧经 ./lib/preset/side.js 相对路径装载，与发布形态一致）。
  */
 import { mkdtempSync } from 'node:fs'
@@ -18,6 +19,7 @@ import { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import type {} from '@deepseek-ai/dsh-storage'
 import type {} from '@deepseek-ai/dsh-tools'
 import { inject } from '../src/index.js'
+import { SETTINGS_ENTRY_ID } from '../src/pref-policy.js'
 import type { XingyuanStore } from '../src/domain.js'
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -41,6 +43,9 @@ async function untilDefined<T>(get: () => T | undefined, what: string): Promise<
 describe('loader 级组合启动', () => {
   let ctx: Context
   let loader: Loader
+  /** settings 桩的观测面：主行 configure（关掉自动生成页）与 update（对话侧写偏好落点）。 */
+  const settingsCalls: Array<{ ns: string; patch: unknown }> = []
+  const configureCalls: unknown[] = []
 
   /** 装配一行（运行时接受 id 定位；类型层 Omit 掉了它——单一转接点注明）。 */
   async function mount(entry: { id: string; name: string; config?: unknown }): Promise<void> {
@@ -73,6 +78,18 @@ describe('loader 级组合启动', () => {
     // sessions 桩：bundle 主行 inject sessions（会话日志自愈的活会话枚举，session-log-repair.ts）；
     // 组合测试不建真实会话，DSH_HOME 已指向临时目录、扫描天然空转
     ctx.provide('sessions', { list: () => [] })
+    // settings 桩：主行 inject settings（关掉自动生成页 + 对话侧写偏好的落点）。
+    // 真机语义对拍：宿主按**行 id** 索引表单，故 ns 必须等于 SETTINGS_ENTRY_ID——
+    // 两者不一致时设置整页与工具写入会一起静默失效（§5.8 同一类坑）。
+    ctx.provide('settings', {
+      configure: (presentation: unknown) => {
+        configureCalls.push(presentation)
+        return () => undefined
+      },
+      update: async (ns: string, patch: unknown) => {
+        settingsCalls.push({ ns, patch })
+      },
+    })
     await ctx.plugin(Loader)
     loader = ctx.loader
     await mount({ id: 'storage', name: '@deepseek-ai/dsh-storage' })
@@ -108,6 +125,16 @@ describe('loader 级组合启动', () => {
       createdAt: '2026-08-24T00:00:00',
     })
     expect(store.domain.table('wishes').get('w-loader')?.title).toBe('组合测试愿望')
+  })
+
+  it('主行关掉宿主自动生成页，并把对话侧偏好写入落到主行 id', async () => {
+    const store = await untilDefined(() => ctx.xingyuan, 'xingyuan 服务')
+    expect(configureCalls, '本包自带设置整页 → configure({auto:false})').toContainEqual({ auto: false })
+    settingsCalls.length = 0
+    await store.setPrefs({ memoryInjectLimit: 20, hiddenTabs: ['growth'] })
+    expect(settingsCalls).toEqual([
+      { ns: SETTINGS_ENTRY_ID, patch: { memoryInjectLimit: 20, hiddenTabs: ['growth'] } },
+    ])
   })
 
   it('preset 侧经 Loader 注册星愿工具面（模型可见 schemas）', () => {

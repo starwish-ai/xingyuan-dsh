@@ -17,7 +17,9 @@ import {
   createTask,
   createWish,
   monthRange,
+  categoryExists,
   renameCategory,
+  setCategoryColor,
   syncWishProgress,
   updateTask,
   updateWish,
@@ -135,5 +137,41 @@ describe('校验单一口径：任务名与分类改名', () => {
     expect(renamed).toHaveLength(3)
     expect([...([...store.domain.table('wishes').entries()].map(([, w]) => w))].map((w) => w.categoryName))
       .toEqual(['书本', '书本', '书本'])
+  })
+})
+
+/**
+ * 分类颜色覆盖（0.6.7 从路由面上移为 store 收口，供页面动作与对话工具共用）。
+ * 上移前路由只做截断不校验：`name: ''` 会写出一个键为空串的幽灵覆盖，
+ * 从此挂在分类面板上甩不掉；空串色键与「清除覆盖」的语义也必须在同一处判定。
+ */
+describe('写路径守卫：分类颜色覆盖收口', () => {
+  it('空/单字分类名一律拒绝（bad_category_name），且不写出任何覆盖键', async () => {
+    const store = memoryStore()
+    for (const bad of ['', ' ', 'X']) {
+      const error = await setCategoryColor(store, bad, 'blue').then(() => null, (e: unknown) => e)
+      expect(error, `分类名「${bad}」应被拒绝`).toBeTruthy()
+      expect(codeOf(error)).toBe('bad_category_name')
+    }
+    expect(store.domain.global.get().categoryColors, '拒绝即不得留下幽灵键').toBeUndefined()
+  })
+
+  it('未知色键拒绝（bad_color_key）；空串色键 = 清除覆盖而非报错', async () => {
+    const store = memoryStore()
+    const bad = await setCategoryColor(store, '阅读', 'chartreuse').then(() => null, (e: unknown) => e)
+    expect(codeOf(bad)).toBe('bad_color_key')
+    expect(await setCategoryColor(store, '阅读', 'blue')).toBe('blue')
+    expect(store.domain.global.get().categoryColors).toEqual({ 阅读: 'blue' })
+    expect(await setCategoryColor(store, '阅读', '  ')).toBeNull()
+    expect(store.domain.global.get().categoryColors, '覆盖清空后整槽回落 undefined').toBeUndefined()
+  })
+
+  it('categoryExists：同名愿望或纯覆盖分类都算存在（工具面不得把后者当不存在）', async () => {
+    const store = memoryStore()
+    expect(categoryExists(store, '阅读')).toBe(false)
+    await setCategoryColor(store, '阅读', 'blue')
+    expect(categoryExists(store, '阅读'), '零愿望但设过色的分类是合法对象').toBe(true)
+    await createWish(store, { title: '读完《三体》', categoryName: '书本' }, TODAY)
+    expect(categoryExists(store, '书本')).toBe(true)
   })
 })

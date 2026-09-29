@@ -5,6 +5,45 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] - 2026-09-29
+
+Close the parity gap that the host's newly shipped practice rule
+(`dsh-agent-preset/skills/cordis-plugin-development/references/user-actions.md`,
+"one operation, two callers") exposes: three things you could only do on a page now have
+agent-facing equivalents over the same business layer. Model tool count 45 → 49.
+
+### Added
+- `set_wish_category_color` — set or clear a category's default color, the same write path the
+  wish page's 分类管理 panel uses (empty color key clears the override, falling back to the
+  wish's own color or the automatic hash).
+- `clear_all_memories` — clear the whole memory store. This is a locked destructive category:
+  it always confirms regardless of the write-confirmation switches, and an empty store replies
+  without asking.
+- `get_xingyuan_settings` / `update_xingyuan_settings` — read every preference, and change the
+  four non-authorization ones (memory injection limit, confirmation-card language, tab
+  visibility mode, per-tab hidden list). Writes go through the host settings form on the
+  bundle's own row and are **read back and compared**: if the host did not accept them the tool
+  fails with `pref_write_rejected` rather than reporting a change that never happened.
+- The `xingyuan` service gained `uiPrefs()` and `setPrefs(patch)` alongside `prefs()`.
+
+### Changed
+- Category-color writes moved out of `routes/api.ts` into `store.setCategoryColor`, so the page
+  action and the chat tool share one validation and one serialized read-modify-write queue.
+  Previously the route only truncated the category name, so `name: ''` persisted a ghost
+  override keyed by the empty string that could never be cleared from the UI; names are now
+  validated (`bad_category_name`) on both paths. Category existence (wishes ∪ color overrides)
+  likewise has one implementation, `store.categoryExists`.
+- Rejected preference writes never half-apply: out-of-range limits (`bad_memory_limit`), unknown
+  tab ids (`unknown_tab`) and empty patches (`missing_field`) all fail before anything is written.
+- Documentation: AGENTS.md §5.5 confirmation matrix, §6 tool list, §8 configuration table and
+  the §5.10 self-audit against the 0.2.0-rc.1 skills now record the closed gap; both READMEs
+  state the UI/chat parity.
+
+### Security
+- `update_xingyuan_settings` deliberately does **not** accept `confirmWrites` or `confirmOps`.
+  Loosening the write-confirmation policy is an authorization change and stays user-only per
+  the same official rule; a test asserts those keys are absent from the tool's parameters.
+
 ## [0.6.6] - 2026-09-29
 
 Adapt to the dsh `0.2.0-rc.1` host line while keeping `0.1.7-rc.1` supported. Upgrading the

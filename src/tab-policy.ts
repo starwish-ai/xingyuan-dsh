@@ -16,8 +16,11 @@ export const TAB_IDS = ['today', 'wishes', 'tasks', 'calendar', 'growth', 'memor
 
 export type TabId = (typeof TAB_IDS)[number]
 
+/** 显隐模式取值（主行 Config 的 schema 枚举、设置页选项与工具参数三方同源）。 */
+export const TAB_VISIBILITY_MODES = ['follow', 'show', 'hide'] as const
+
 /** 显隐模式：跟随会话 / 始终显示 / 始终隐藏。 */
-export type TabVisibilityMode = 'follow' | 'show' | 'hide'
+export type TabVisibilityMode = typeof TAB_VISIBILITY_MODES[number]
 
 /**
  * 会话列表快照里星愿要读的最小事实面——按「本插件用到什么」收窄，不是宿主类型的复刻：

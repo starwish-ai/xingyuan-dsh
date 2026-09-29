@@ -12,7 +12,9 @@ import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-settings'
 import { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { makeXingyuanStore, xingyuanDomainSpec } from './domain.js'
+import { SETTINGS_ENTRY_ID, type PrefPatch, type UiSettings } from './pref-policy.js'
 import { PrefSettingsFields, readPrefSettings } from './pref-settings.js'
+import { normalizeHiddenTabs } from './tab-policy.js'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { registerXingyuanRoutes } from './routes/index.js'
 import { repairSessionLogs } from './session-log-repair.js'
@@ -73,11 +75,27 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     if (domain) await domain.close()
   })
   // 偏好读取 thunk：每次调用现取 volatile 引用的当前值。它由领域服务持有，
-  // preset 层经 ctx.xingyuan.prefs() 读取。偏好挂在常驻主行上，故不存在
+  // preset 层经 ctx.xingyuan.prefs() / .uiPrefs() 读取。偏好挂在常驻主行上，故不存在
   // 「整页可见而数据缺席」的时序问题（来龙去脉见 src/pref-settings.ts 头注）。
   const readPrefs = () => readPrefSettings(config)
-  // 本插件自带「设置 → 星愿」整页，关掉宿主对这一行的自动生成页
-  ctx.inject(['settings'], (inv) => inv.effect(() => inv.settings.configure({ auto: false }, ctx.fiber)))
+  const readUiPrefs = (): UiSettings => ({
+    tabVisibilityMode: config.tabVisibilityMode.get(),
+    hiddenTabs: normalizeHiddenTabs(config.hiddenTabs.get()),
+  })
+  // 本插件自带「设置 → 星愿」整页，关掉宿主对这一行的自动生成页；
+  // 同一处捕获 settings 表单引用供对话侧写偏好使用（ctx.inject 的回调在后续微任务才跑，
+  // 故只能在回调里取值、在调用时判空——异步间隙访问 ctx.* 会命中 inactive context）。
+  let settingsForms: Context['settings'] | undefined
+  ctx.inject(['settings'], (inv) => {
+    settingsForms = inv.settings
+    inv.effect(() => inv.settings.configure({ auto: false }, ctx.fiber))
+  })
+  // 偏好唯一写路径：宿主按行 id 把 volatile 字段落到 profile 补丁（与设置页 configForms
+  // 同一个表单实例、同一份存储）。这里不做校验也不承诺成功——调用方须读回比对（§5.8）。
+  const writePrefs = async (patch: PrefPatch): Promise<void> => {
+    if (settingsForms === undefined) throw new Error('settings 表单未就绪，无法写入偏好')
+    await settingsForms.update(SETTINGS_ENTRY_ID, patch)
+  }
   // 领域打开后才 provide：注入方（preset 子树）由 cordis inject 语义等待本行
   // 激活完成，早于 provide 的读侧会拿到 undefined
   const opened = await storageDomain.open(xingyuanDomainSpec)
@@ -86,7 +104,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     return
   }
   domain = opened
-  ctx.provide('xingyuan', makeXingyuanStore(opened, readPrefs))
+  ctx.provide('xingyuan', makeXingyuanStore(opened, readPrefs, readUiPrefs, writePrefs))
   // 路由注册经 ctx.effect 挂载：register 返回的 disposer 在卸载/HMR 时注销 /xingyuan
   // 前缀——否则重激活会因重复 (kind,path) 抛错，旧 handler 还会服务已关闭的领域
   ctx.effect(() => registerXingyuanRoutes(webServer, ctx.xingyuan, config))

@@ -15,7 +15,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { registerTools } from '../src/preset/tools.js'
 import type { Config } from '../src/preset/tools.js'
 import { CONFIRM_OP_DEFAULTS, type ConfirmOp } from '../src/pref-policy.js'
-import { createTask, claimTask, performCheckIn } from '../src/store.js'
+import { createTask, claimTask, performCheckIn, saveMemory } from '../src/store.js'
 import { startMicroAction, getMicroAction } from '../src/micro.js'
 import { addDays, todayIso } from '../src/opportunity.js'
 import type { WishRecord, XingyuanStore } from '../src/domain.js'
@@ -377,8 +377,8 @@ describe('工具面机械审计：HITL 超时与 ID 引用纪律（§5.4）', ()
   const HITL_WAITING = [
     'create_wish_with_tasks', 'create_wish', 'create_task', 'batch_create_tasks',
     'delete_wish', 'batch_delete_wishes', 'check_in_task', 'cancel_check_in_task',
-    'delete_task', 'batch_delete_tasks', 'delete_memory',
-    'update_wish', 'update_task', 'rename_wish_category', 'claim_task',
+    'delete_task', 'batch_delete_tasks', 'delete_memory', 'clear_all_memories',
+    'update_wish', 'update_task', 'rename_wish_category', 'set_wish_category_color', 'claim_task',
     'save_memory', 'update_memory',
     'start_micro_action', 'restart_micro_action',
   ] as const
@@ -413,7 +413,7 @@ describe('工具面机械审计：HITL 超时与 ID 引用纪律（§5.4）', ()
     } as unknown as Parameters<typeof registerTools>[0]
     registerTools(ctx, makeConfig(true))
     const byName = new Map(registered.map((def) => [def.name as string, def]))
-    expect(byName.size).toBe(45)
+    expect(byName.size).toBe(49)
     for (const name of HITL_WAITING) {
       const def = byName.get(name)
       expect(def, `${name} 未注册`).toBeDefined()
@@ -681,5 +681,116 @@ describe('工具层：达成闸门翻转联动（2026-09 承诺口径修订—�
     const snapshot = (wishEvent!.data as { wish: Record<string, unknown> }).wish
     expect(snapshot.pendingCount).toBe(2)
     expect(snapshot.settled).toBe(true)
+  })
+})
+
+/**
+ * 页面动作的工具面对拍（0.2.0-rc.1 随包新参考
+ * `dsh-agent-preset/skills/cordis-plugin-development/references/user-actions.md`：
+ * 「一个操作两个调用方」——插件 UI 对应用数据与配置的操作要同样暴露给 agent）。
+ * 三处原先只有页面出口：分类颜色覆盖、清空全部记忆、非权限类偏好写入。
+ * 锁的要点：① 与页面共用同一份存储收口；② 校验先于确认（不让用户白点一次卡）；
+ * ③ 写后要读回比对，宿主没接受就报错，绝不含糊说「改好了」；
+ * ④ 放宽安全策略的开关（confirmWrites/confirmOps）**不进工具参数**。
+ */
+describe('工具层：页面动作的工具面补齐（user-actions 口径）', () => {
+  it('set_wish_category_color 写入 global 覆盖，与页面 category-color 同一份存储', async () => {
+    const store = memoryStore()
+    await seedWish(store, 'w-color')
+    const { run } = setup(store, makeConfig(false))
+    const reply = await run('set_wish_category_color', { categoryName: '学习', colorKey: 'blue' }) as string
+    expect(reply).toContain('blue')
+    expect(store.domain.global.get().categoryColors).toEqual({ 学习: 'blue' })
+  })
+
+  it('set_wish_category_color：空串 = 清除覆盖（页面「跟随愿望」同语义）', async () => {
+    const store = memoryStore()
+    await seedWish(store, 'w-color')
+    const { run } = setup(store, makeConfig(false))
+    await run('set_wish_category_color', { categoryName: '学习', colorKey: 'blue' })
+    const reply = await run('set_wish_category_color', { categoryName: '学习', colorKey: '' }) as string
+    expect(reply, '清除与改色是两种语义，回包不得混为一谈').toContain('恢复自动配色')
+    expect(store.domain.global.get().categoryColors).toBeUndefined()
+  })
+
+  it('set_wish_category_color：分类不存在与未知色键都在弹卡前拒绝', async () => {
+    const store = memoryStore()
+    await seedWish(store, 'w-color')
+    // 开着「修改」类确认再验：校验必须发生在弹卡之前，否则用户白点一次卡
+    const { run, state } = setup(store, makeConfig(true, { update: true }))
+    await expect(run('set_wish_category_color', { categoryName: '没这个分类', colorKey: 'blue' })).rejects.toThrow('不存在')
+    await expect(run('set_wish_category_color', { categoryName: '学习', colorKey: 'chartreuse' })).rejects.toMatchObject({ code: 'bad_color_key' })
+    expect(state.asks, '校验失败不该先弹卡再报错').toBe(0)
+  })
+
+  it('clear_all_memories：确认后清空并回包条数；取消则一条不动；删除类不受总开关影响', async () => {
+    const store = memoryStore()
+    await saveMemory(store, '生日', '3月1日', 'personal', 'high')
+    await saveMemory(store, '职业', '教师', 'personal', 'medium')
+    const ok = setup(store, makeConfig(false))
+    expect(await ok.run('clear_all_memories', {})).toContain('已清空 2 条')
+    expect(store.domain.table('memories').size).toBe(0)
+
+    const keep = memoryStore()
+    await saveMemory(keep, '生日', '3月1日', 'personal', 'high')
+    const no = setup(keep, makeConfig(false), '取消')
+    expect(await no.run('clear_all_memories', {})).toContain('已取消')
+    expect(keep.domain.table('memories').size).toBe(1)
+    expect(no.state.asks, '总开关关闭时删除类仍始终确认（ADR-0001）').toBe(1)
+  })
+
+  it('clear_all_memories：空库直接回，不弹卡', async () => {
+    const { run, state } = setup(memoryStore(), makeConfig(true))
+    expect(await run('clear_all_memories', {})).toContain('无需清空')
+    expect(state.asks).toBe(0)
+  })
+
+  it('update_xingyuan_settings 写入即生效，get_xingyuan_settings 读到同一份', async () => {
+    const store = memoryStore()
+    const { run } = setup(store, makeConfig(false))
+    const reply = await run('update_xingyuan_settings', { memoryInjectLimit: 20, confirmLang: 'en' }) as string
+    expect(reply).toContain('记忆注入上限：20 条')
+    expect(store.prefs().memoryInjectLimit).toBe(20)
+    expect(store.prefs().confirmLang).toBe('en')
+    const shown = await run('get_xingyuan_settings', {}) as string
+    expect(shown).toContain('记忆注入上限：20 条')
+    expect(shown).toContain('确认卡语言：en')
+  })
+
+  it('update_xingyuan_settings：显隐模式与勾项一并生效', async () => {
+    const store = memoryStore()
+    const { run } = setup(store, makeConfig(false))
+    await run('update_xingyuan_settings', { tabVisibilityMode: 'show', hiddenTabs: ['growth', 'memory'] })
+    expect(store.uiPrefs()).toEqual({ tabVisibilityMode: 'show', hiddenTabs: ['growth', 'memory'] })
+  })
+
+  it('update_xingyuan_settings：越界 / 未知标签 / 空参数都带稳定 code 拒绝且不落盘', async () => {
+    const store = memoryStore()
+    const { run } = setup(store, makeConfig(false))
+    await expect(run('update_xingyuan_settings', { memoryInjectLimit: 999 })).rejects.toMatchObject({ code: 'bad_memory_limit' })
+    await expect(run('update_xingyuan_settings', { hiddenTabs: ['bogus'] })).rejects.toMatchObject({ code: 'unknown_tab' })
+    await expect(run('update_xingyuan_settings', {})).rejects.toMatchObject({ code: 'missing_field' })
+    expect(store.prefs().memoryInjectLimit, '拒绝即不得半写').toBe(40)
+    expect(store.uiPrefs().hiddenTabs).toEqual([])
+  })
+
+  it('update_xingyuan_settings：宿主没接受（读回仍旧值）时报 pref_write_rejected，不含糊说改好了', async () => {
+    const base = memoryStore()
+    const store: XingyuanStore = { ...base, setPrefs: async () => undefined }
+    const { run } = setup(store, makeConfig(false))
+    await expect(run('update_xingyuan_settings', { tabVisibilityMode: 'show' })).rejects.toMatchObject({ code: 'pref_write_rejected' })
+  })
+
+  it('放宽安全策略的开关不进工具参数（user-actions：授权类动作保持用户专属）', () => {
+    const { registered } = setup(memoryStore(), makeConfig(false))
+    const def = registered.find((tool) => tool.name === 'update_xingyuan_settings') as unknown as {
+      parameters: Record<string, unknown>
+      description: string
+    }
+    expect(Object.keys(def.parameters)).not.toContain('confirmWrites')
+    expect(Object.keys(def.parameters)).not.toContain('confirmOps')
+    expect(def.description, '描述要给出用户自助入口').toContain('设置 → 星愿')
+    const shown = registered.find((tool) => tool.name === 'get_xingyuan_settings') as unknown as { description: string }
+    expect(shown.description).toContain('只读')
   })
 })

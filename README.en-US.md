@@ -16,8 +16,12 @@ XingYuan is a wish & habit-building companion, shipped as a DeepSeek Harness plu
 - **Micro-actions**: break an overwhelming goal into 3–7 tiny steps and walk through them guided
 - **Growth system**: levels Lv.1–Lv.10, streak bonuses, stat cards, 30-day bar chart
 - **Session view tabs**: Today / Wishes / Tasks / Calendar / Growth / Memory — buttons call action endpoints directly; shown only in XingYuan-preset sessions by default, switchable to always show/hide and per-tab in Settings
-- **Memory**: important memories injected into context (limit configurable), full CRUD
+- **Memory**: important memories injected into context (limit configurable), full CRUD and clear-all
 - **Charts**: 15 chart types rendered as cards
+- **Parity between UI and chat**: anything you can do on a page — check in, claim, delete, rename or
+  recolor a category, clear memories, adjust preferences — you can also ask the assistant to do,
+  through the same business layer with the same result; loosening the write-confirmation policy
+  stays user-only (Settings page) by design
 - **Safe writes**: write confirmation is per-category (create / check-in / undo / claim / edit / save memory); deletion always confirms and cannot be turned off; defaults match previous versions
 - **Theming**: light/dark follows the app theme
 
@@ -57,8 +61,8 @@ that directory — copy the profile file too if you want them on a new machine.
 | Coach style | Gentle / humorous / strict |
 | User profile | Nickname, occupation, interests |
 | Write confirmation | Master switch + per-category toggles (create / check-in / undo / claim / edit / save memory); deletion always confirms and cannot be turned off |
-| Memory injection limit | Max memories injected per turn |
-| Tab visibility | Three modes (follow session / always show / always hide) plus per-tab toggles; defaults to follow session |
+| Memory injection limit | Max memories injected per turn (also settable by saying "use 20 memories" in chat) |
+| Tab visibility | Three modes (follow session / always show / always hide) plus per-tab toggles; defaults to follow session. These four non-authorization preferences are also adjustable in chat |
 | Confirm card language | Language of the in-chat confirmation card (Chinese / English; the platform does not expose UI language to plugins, defaults to Chinese) |
 
 ## Development

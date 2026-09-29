@@ -762,7 +762,37 @@ export async function renameCategory(store: XingyuanStore, oldName: string, newN
   return renamed
 }
 
-/** 记忆全量（新→旧）。 */
+/**
+ * 分类是否存在：同名愿望 ∪ 颜色覆盖键。改名与配色两条路径共用这一口径——
+ * 「零愿望但设过色」的纯覆盖分类在页面分类面板里是合法对象，工具面不得当它不存在。
+ */
+export function categoryExists(store: XingyuanStore, name: string): boolean {
+  for (const [, wish] of store.domain.table('wishes').entries()) {
+    if (wish.categoryName === name) return true
+  }
+  return store.domain.global.get().categoryColors?.[name] !== undefined
+}
+
+/**
+ * 设置或清除分类颜色覆盖（页面 `category-color` 动作与 `set_wish_category_color`
+ * 工具的唯一写路径）。`colorKey` 为 null 或空白 = 清除覆盖，恢复跟随愿望显式色/哈希兜底。
+ * 分类名与色键都在此处过一遍口径：页面历史上靠 clamp 兜着，空串会写出一个键为 ''
+ * 的幽灵覆盖，从此在分类面板里阴魂不散。读-改-写整体进串行队列，并发改不同分类互不覆盖。
+ *
+ * @returns 生效的色键（null = 已清除），供调用方如实回显。
+ */
+export async function setCategoryColor(store: XingyuanStore, name: string, colorKey: string | null): Promise<string | null> {
+  const category = validateCategoryName(name)
+  const trimmed = colorKey?.trim() ?? ''
+  const color = trimmed === '' ? null : validateColorKey(trimmed)!
+  await mutateGlobal(store, (global) => {
+    const overrides = { ...(global.categoryColors ?? {}) }
+    if (color === null) delete overrides[category]
+    else overrides[category] = color
+    return { ...global, categoryColors: Object.keys(overrides).length > 0 ? overrides : undefined }
+  })
+  return color
+}
 export function allMemories(store: XingyuanStore): MemoryRecord[] {
   const list: MemoryRecord[] = []
   for (const [, memory] of store.domain.table('memories').entries()) list.push(memory)

@@ -20,7 +20,9 @@ import { addDays, calculateOpportunityDates, findFirstUncheckedOpportunityDate, 
 import type { XingyuanCheckinEventData, XingyuanMicroEventData, XingyuanTaskEventData, XingyuanWishEventData } from '../events.js'
 import { confirmAction } from './hitl.js'
 import { unclaimedNoteLine } from './prompts.js'
-import type { ConfirmLang, ConfirmOp } from '../pref-policy.js'
+import { CONFIRM_LANGS, CONFIRM_OPS, MEMORY_LIMIT_MAX, MEMORY_LIMIT_MIN } from '../pref-policy.js'
+import type { ConfirmLang, ConfirmOp, PrefPatch } from '../pref-policy.js'
+import { TAB_IDS, TAB_VISIBILITY_MODES, type TabVisibilityMode } from '../tab-policy.js'
 import { buildChart, CHART_KEYS, type ChartKey, type ChartParams } from './charts.js'
 import { growthSummary } from '../growth.js'
 import { MICRO_STEPS_MAX, MICRO_STEPS_MIN, completeMicroStep, restartMicroAction, startMicroAction } from '../micro.js'
@@ -29,9 +31,11 @@ import {
   allMemories,
   anchorOf,
   cancelCheckIn,
+  categoryExists,
   checkinCountIndex,
   checkedDatesOf,
   claimTask,
+  clearMemories,
   createTask,
   createWish,
   CYCLE_LABELS,
@@ -50,11 +54,13 @@ import {
   renameCategory,
   saveMemory,
   searchMemories,
+  setCategoryColor,
   updateProfileGlobal,
   updateTask,
   updateWish,
   ToolError,
   validateCategoryName,
+  validateColorKey,
   validateEstimatedDate,
   validateTaskName,
   validateWishTitle,
@@ -331,6 +337,23 @@ const CANCEL_CHECKIN_NOTE = '无需事先询问用户，直接调用即可；结
 /** 分类颜色白名单（schema enum 与展示色共用同一事实源）。 */
 const COLOR_KEY_ENUM: readonly string[] = CATEGORY_COLOR_KEYS
 const COLOR_KEY_NOTE = `可选值：${CATEGORY_COLOR_KEYS.join('/')}（不传则按分类名自动配色）`
+
+/** 确认类目的中文标签（工具回包呈现用；键集由类型系统强制与 CONFIRM_OPS 对齐）。 */
+const CONFIRM_OP_LABELS: Record<ConfirmOp, string> = {
+  create: '创建',
+  checkin: '打卡',
+  cancelCheckin: '取消打卡',
+  claim: '领取',
+  update: '修改',
+  memorySave: '记忆保存',
+}
+
+/** 标签页显隐三态的说法（与设置页同口径，回包不出现内部词）。 */
+const TAB_MODE_LABELS: Record<TabVisibilityMode, string> = {
+  follow: '仅星愿会话显示',
+  show: '任何会话都显示',
+  hide: '任何会话都不显示',
+}
 
 /**
  * 写操作确认门闩（分层模型见 AGENTS.md §10 决策 8）：
@@ -650,11 +673,8 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     timeoutMs: 600_000,
     async execute(args, exec) {
       // 校验先于确认：分类不存在（无同名愿望且无颜色覆盖）直接报错，不让用户白确认
-      // 一次。存在性 = 愿望 ∪ 覆盖键（覆盖迁移与愿望是否存在解耦，见 store.ts
-      // renameCategory 注释），纯覆盖分类的改名同样合法、如实报告 0 个愿望。
-      const exists = [...store.domain.table('wishes').entries()].some(([, w]) => w.categoryName === args.oldName)
-        || store.domain.global.get().categoryColors?.[args.oldName] !== undefined
-      if (!exists) throw new ToolError(`分类「${args.oldName}」不存在`)
+      // 一次。存在性口径与配色工具共用 store.categoryExists（纯覆盖分类也是合法对象）。
+      if (!categoryExists(store, args.oldName)) throw new ToolError(`分类「${args.oldName}」不存在`)
       // 新名口径先于确认：store.renameCategory 逐条落库，非法新名会在中途被写路径闸门
       // 拒掉，留下「部分愿望已改名、颜色覆盖键未迁移」的半改状态且无回滚
       validateCategoryName(args.newName)
@@ -670,6 +690,39 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
       return renamed.length > 0
         ? `已将 ${renamed.length} 个愿望的分类从「${args.oldName}」改为「${args.newName}」。`
         : `已将分类「${args.oldName}」改名为「${args.newName}」，该分类下没有愿望。`
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'set_wish_category_color',
+    description: '设置分类颜色。何时使用：用户要求给某个愿望分类换颜色（如「把学习分类改成蓝色」），或要求恢复自动配色时调用。与愿望页「分类管理」面板同一写路径：改的是**分类默认色**，该分类下没有单独指定颜色的愿望都会跟着变。分类名不确定时先调 list_wish_categories；色键不确定时先调 list_wish_category_color_keys（22 选 1）。',
+    parameters: {
+      categoryName: { type: 'string', required: true, description: '分类名称，须与现有分类完全一致（区分大小写）。2-6个中文字符' },
+      colorKey: { type: 'string', required: true, description: `颜色标识，取值见 list_wish_category_color_keys（如 blue）。${CLEARABLE_NOTE}示例：blue` },
+    },
+    output: TEXT_OUTPUT,
+    timeoutMs: 600_000,
+    async execute(args, exec) {
+      // 校验与存在性判定都在写之前：分类不存在时不让用户白确认一次，
+      // 非法色键同样先过一遍口径（store 内还会校验，两半侧同源不另写规则）
+      if (!categoryExists(store, args.categoryName)) throw new ToolError(`分类「${args.categoryName}」不存在`)
+      if (args.colorKey.trim() !== '') validateColorKey(args.colorKey)
+      if (confirmGate(config, 'update')) {
+        const clearing = args.colorKey.trim() === ''
+        const approved = await confirmAction(ctx, exec, bi(
+          clearing
+            ? `确定清除分类「${args.categoryName}」的颜色设置，恢复自动配色吗？`
+            : `确定把分类「${args.categoryName}」的颜色设为「${args.colorKey}」吗？该分类下未单独指定颜色的愿望都会跟着变。`,
+          clearing
+            ? `Clear the color of category “${args.categoryName}” and fall back to automatic coloring?`
+            : `Set category “${args.categoryName}” to color “${args.colorKey}”? Wishes in it without an explicit color will follow.`,
+        ))
+        if (!approved) return '已取消颜色设置。'
+      }
+      const applied = await setCategoryColor(store, args.categoryName, args.colorKey)
+      return applied === null
+        ? `已清除分类「${args.categoryName}」的颜色设置，恢复自动配色。`
+        : `已把分类「${args.categoryName}」的颜色设为 ${applied}。`
     },
   }))
 
@@ -1337,6 +1390,26 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
     },
   }))
 
+  ctx.tools.register(defineTool({
+    name: 'clear_all_memories',
+    description: `【清空全部用户信息】使用场景：用户明确要求把已保存的记忆**全部**删掉（如"把你记住我的都删了""清空记忆"）时使用。只删单条请改用 delete_memory。${DELETE_NOTE}条数不确定时先用 get_all_memories 看一眼。`,
+    parameters: {},
+    output: TEXT_OUTPUT,
+    timeoutMs: 600_000,
+    async execute(_args, exec) {
+      const count = allMemories(store).length
+      if (count === 0) return '当前没有已保存的信息，无需清空。'
+      // 删除类目为锁定项：不受 confirmWrites / confirmOps 影响，始终确认（ADR-0001）
+      const approved = await confirmAction(ctx, exec, bi(
+        `确定清空全部 ${count} 条已保存的信息吗？清空后不可恢复，之后我只能重新认识你。`,
+        `Clear all ${count} saved memories? This cannot be undone — I'll have to learn about you again.`,
+      ))
+      if (!approved) return '已取消清空。'
+      const cleared = await clearMemories(store)
+      return `已清空 ${cleared} 条信息。`
+    },
+  }))
+
   // ===== 用户配置（教练风格/画像，免确认）=====
 
   ctx.tools.register(defineTool({
@@ -1399,6 +1472,93 @@ export function registerTools(ctx: Context & { xingyuan: XingyuanStore }, config
         interests: args.interests,
       })
       return '已更新用户画像。'
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'get_xingyuan_settings',
+    description: '读取星愿偏好设置。何时使用：用户问「现在是怎么设置的」「记忆注入多少条」「确认卡是中文还是英文」「标签页是不是只在星愿会话显示」，或在改设置前要先看当前值时使用。返回写操作确认策略（只读）、记忆注入上限、确认卡语言与标签页显隐。',
+    parameters: {},
+    output: TEXT_OUTPUT,
+    isConcurrencySafe: () => true,
+    async execute() {
+      const prefs = store.prefs()
+      const ui = store.uiPrefs()
+      const on = CONFIRM_OPS.filter((key) => prefs.confirmOps[key]).map((key) => CONFIRM_OP_LABELS[key])
+      return [
+        `写操作确认：${prefs.confirmWrites ? '开' : '关（仅删除类仍始终确认）'}`,
+        prefs.confirmWrites ? `　需确认的类目：${on.length > 0 ? on.join('、') : '无'}` : undefined,
+        `　删除（愿望/任务/记忆、含批量与清空）：始终确认，不可关闭`,
+        `记忆注入上限：${prefs.memoryInjectLimit} 条`,
+        `确认卡语言：${prefs.confirmLang}`,
+        `标签页显示：${TAB_MODE_LABELS[ui.tabVisibilityMode]}${ui.hiddenTabs.length > 0 ? `；已勾掉：${ui.hiddenTabs.join('、')}` : ''}`,
+      ].filter((line) => line !== undefined).join('\n')
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'update_xingyuan_settings',
+    description: '修改星愿偏好设置（部分更新：只传用户明确提到的项，未提及不传）。可改四项：memoryInjectLimit（记忆注入条数上限）、confirmLang（对话确认卡语言）、tabVisibilityMode（会话视图标签页显隐）、hiddenTabs（勾掉哪几页）。**写操作确认策略 confirmWrites / confirmOps 不在其中**——那是放宽安全策略，只能由用户本人在「设置 → 星愿」里改，本工具不接受也不提供绕过。何时使用：用户明确要求调整上述偏好（如「以后注入的记忆少一点，设成 20 条」「标签页一直显示」）。改完把新值如实回给用户。',
+    parameters: {
+      memoryInjectLimit: { type: 'integer', description: `每次对话自动注入上下文的记忆条数，${MEMORY_LIMIT_MIN}-${MEMORY_LIMIT_MAX} 的整数。越界直接拒绝、不会静默夹取，请如实告知用户可填区间` },
+      confirmLang: { type: 'string', enum: CONFIRM_LANGS, description: '对话内确认卡的语言：zh 中文 / en 英文。宿主不向插件暴露界面语言，此项独立选择' },
+      tabVisibilityMode: { type: 'string', enum: TAB_VISIBILITY_MODES, description: '会话视图标签页显隐：follow 仅星愿预设的会话显示（默认）/ show 任何会话都显示 / hide 任何会话都不显示' },
+      hiddenTabs: { type: 'array', items: { type: 'string' }, description: `在「显示」前提下被单独勾掉的标签 id，取值 ${TAB_IDS.join(' / ')}；传空数组表示六页全显示，不传则保持现状。未知 id 直接拒绝。注意 hide 或勾掉当前正看着的页面时，界面会自动回到 Chat，需在回复里提示用户` },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args) {
+      const patch: PrefPatch = {}
+      if (args.memoryInjectLimit !== undefined) {
+        const limit = args.memoryInjectLimit
+        if (limit < MEMORY_LIMIT_MIN || limit > MEMORY_LIMIT_MAX) {
+          throw new ToolError(`记忆注入上限须为 ${MEMORY_LIMIT_MIN}-${MEMORY_LIMIT_MAX} 的整数（收到 ${limit}）`, 'bad_memory_limit', { limit })
+        }
+        patch.memoryInjectLimit = limit
+      }
+      if (args.confirmLang !== undefined) patch.confirmLang = args.confirmLang
+      if (args.tabVisibilityMode !== undefined) patch.tabVisibilityMode = args.tabVisibilityMode
+      if (args.hiddenTabs !== undefined) {
+        const unknown = args.hiddenTabs.filter((tab) => !(TAB_IDS as readonly string[]).includes(tab))
+        if (unknown.length > 0) {
+          throw new ToolError(`未知标签 id：${unknown.join('、')}；可选值为 ${TAB_IDS.join(' / ')}`, 'unknown_tab', { tabs: unknown })
+        }
+        patch.hiddenTabs = args.hiddenTabs
+      }
+      if (Object.keys(patch).length === 0) {
+        throw new ToolError('没有要修改的偏好项：至少传一个字段（可先调 get_xingyuan_settings 看当前值）', 'missing_field')
+      }
+      await store.setPrefs(patch)
+      // 写后读回比对：宿主可能拒绝（行缺席 / 字段非 volatile / 表单不可写），
+      // 而「工具说改好了、实际没改」是比报错更糟的结果
+      const prefs = store.prefs()
+      const ui = store.uiPrefs()
+      const mismatch: string[] = []
+      if (patch.memoryInjectLimit !== undefined && prefs.memoryInjectLimit !== patch.memoryInjectLimit) {
+        mismatch.push(`memoryInjectLimit=${prefs.memoryInjectLimit}`)
+      }
+      if (patch.confirmLang !== undefined && prefs.confirmLang !== patch.confirmLang) {
+        mismatch.push(`confirmLang=${prefs.confirmLang}`)
+      }
+      if (patch.tabVisibilityMode !== undefined && ui.tabVisibilityMode !== patch.tabVisibilityMode) {
+        mismatch.push(`tabVisibilityMode=${ui.tabVisibilityMode}`)
+      }
+      if (patch.hiddenTabs !== undefined) {
+        const wanted = [...new Set(patch.hiddenTabs)].sort().join(',')
+        if (ui.hiddenTabs.slice().sort().join(',') !== wanted) mismatch.push(`hiddenTabs=${ui.hiddenTabs.join(',')}`)
+      }
+      if (mismatch.length > 0) {
+        throw new ToolError(
+          `偏好写入未被宿主接受，当前值未变（${mismatch.join('；')}）。请到「设置 → 星愿」检查该行是否可写`,
+          'pref_write_rejected', { mismatch },
+        )
+      }
+      return [
+        patch.memoryInjectLimit !== undefined ? `记忆注入上限：${prefs.memoryInjectLimit} 条` : undefined,
+        patch.confirmLang !== undefined ? `确认卡语言：${prefs.confirmLang}` : undefined,
+        patch.tabVisibilityMode !== undefined || patch.hiddenTabs !== undefined
+          ? `标签页显示：${TAB_MODE_LABELS[ui.tabVisibilityMode]}${ui.hiddenTabs.length > 0 ? `；已勾掉：${ui.hiddenTabs.join('、')}` : ''}`
+          : undefined,
+      ].filter((line) => line !== undefined).join('；') + '。（已生效，无需重启）'
     },
   }))
 
